@@ -1,0 +1,87 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  users     User[]
+  cameras   Camera[]
+  events    Event[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  name           String
+  passwordHash   String
+  role           String       @default("admin")
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+}
+
+model Camera {
+  id              String            @id @default(cuid())
+  name            String
+  location        String
+  streamUrl       String
+  status          String            @default("offline")
+  organizationId  String
+  organization    Organization      @relation(fields: [organizationId], references: [id])
+  venueType       String            @default("retail")
+  resolution      String            @default("1920x1080")
+  fps             Int               @default(30)
+  isMonitoring    Boolean           @default(false)
+  motionThreshold Float             @default(5.0)
+  captureInterval Int               @default(5)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  sessions        AnalysisSession[]
+  events          Event[]
+}
+
+model AnalysisSession {
+  id          String          @id @default(cuid())
+  cameraId    String
+  camera      Camera          @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  startedAt   DateTime        @default(now())
+  endedAt     DateTime?
+  status      String          @default("active")
+  triggerType String          @default("motion")
+  summary     String?
+  frames      AnalysisFrame[]
+}
+
+model AnalysisFrame {
+  id          String          @id @default(cuid())
+  sessionId   String
+  session     AnalysisSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  framePath   String
+  capturedAt  DateTime        @default(now())
+  aiResponse  String?
+  description String?
+  peopleCount Int?
+  objects     String?
+}
+
+model Event {
+  id             String       @id @default(cuid())
+  cameraId       String
+  camera         Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  type           String
+  severity       String       @default("info")
+  description    String
+  timestamp      DateTime     @default(now())
+  metadata       String?
+  sessionId      String?
+}

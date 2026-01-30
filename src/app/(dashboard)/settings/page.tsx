@@ -26,16 +26,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { useAppStore } from '@/lib/store';
+import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 
 export default function SettingsPage() {
-  const { user } = useAppStore();
+  const { data: session } = useSession();
 
   // Profile
-  const [name, setName] = useState(user?.name || '');
-  const [email, setEmail] = useState(user?.email || '');
-  const [company, setCompany] = useState(user?.company || '');
+  const [name, setName] = useState(session?.user?.name || '');
+  const [email, setEmail] = useState(session?.user?.email || '');
+  const [company, setCompany] = useState('');
 
   // Security
   const [currentPassword, setCurrentPassword] = useState('');

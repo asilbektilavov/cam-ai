@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useSession, signOut } from 'next-auth/react';
 import {
   Camera,
   LayoutDashboard,
@@ -29,7 +30,8 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { sidebarOpen, setSidebarOpen, logout, user } = useAppStore();
+  const { data: session } = useSession();
+  const { sidebarOpen, setSidebarOpen } = useAppStore();
 
   return (
     <>
@@ -44,10 +46,8 @@ export function Sidebar() {
       <aside
         className={cn(
           'fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border bg-card transition-all duration-300',
-          // Desktop: always visible, collapsible
           'md:translate-x-0',
           sidebarOpen ? 'w-64' : 'md:w-[68px] w-64',
-          // Mobile: slide in/out
           sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         )}
       >
@@ -61,7 +61,6 @@ export function Sidebar() {
               <span className="text-lg font-bold tracking-tight">CamAI</span>
             )}
           </div>
-          {/* Close button on mobile */}
           <Button
             variant="ghost"
             size="icon"
@@ -81,7 +80,6 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 onClick={() => {
-                  // Close sidebar on mobile after navigation
                   if (window.innerWidth < 768) {
                     setSidebarOpen(false);
                   }
@@ -104,17 +102,14 @@ export function Sidebar() {
 
         {/* User & Logout */}
         <div className="p-3">
-          {sidebarOpen && user && (
+          {sidebarOpen && session?.user && (
             <div className="mb-2 rounded-lg bg-muted/50 px-3 py-2">
-              <p className="text-sm font-medium truncate">{user.name}</p>
-              <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+              <p className="text-sm font-medium truncate">{session.user.name}</p>
+              <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
             </div>
           )}
           <button
-            onClick={() => {
-              logout();
-              window.location.href = '/login';
-            }}
+            onClick={() => signOut({ callbackUrl: '/login' })}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
           >
             <LogOut className="h-5 w-5 shrink-0" />

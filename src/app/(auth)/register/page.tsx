@@ -3,19 +3,19 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { signIn } from 'next-auth/react';
 import { Video, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { register } = useAppStore();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [company, setCompany] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -43,12 +43,36 @@ export default function RegisterPage() {
       return;
     }
 
-    const success = register(name, email, password);
-    if (success) {
-      toast.success('Аккаунт создан!');
-      router.push('/select-venue');
-    } else {
-      toast.error('Ошибка регистрации');
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, company }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast.error(data.error || 'Ошибка регистрации');
+        setLoading(false);
+        return;
+      }
+
+      const result = await signIn('credentials', {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        toast.error('Аккаунт создан, но не удалось войти автоматически');
+        router.push('/login');
+      } else {
+        toast.success('Аккаунт создан!');
+        router.push('/select-venue');
+      }
+    } catch {
+      toast.error('Ошибка сети');
     }
     setLoading(false);
   };
@@ -92,6 +116,16 @@ export default function RegisterPage() {
                 placeholder="your@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="company">Компания</Label>
+              <Input
+                id="company"
+                type="text"
+                placeholder="Название компании (опционально)"
+                value={company}
+                onChange={(e) => setCompany(e.target.value)}
               />
             </div>
             <div className="space-y-2">

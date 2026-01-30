@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Camera,
@@ -21,69 +21,118 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAppStore } from '@/lib/store';
 import { venueConfigs } from '@/lib/venue-config';
 import { cn } from '@/lib/utils';
+import { apiGet } from '@/lib/api-client';
+import { useEventStream } from '@/hooks/use-event-stream';
+import type { DashboardStats } from '@/lib/types';
+
+interface ApiCamera {
+  id: string;
+  name: string;
+  location: string;
+  status: string;
+  streamUrl: string;
+  isMonitoring: boolean;
+}
+
+interface ApiEvent {
+  id: string;
+  cameraId: string;
+  type: string;
+  severity: string;
+  description: string;
+  timestamp: string;
+  camera: { name: string; location: string };
+}
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { selectedVenue, cameras, events } = useAppStore();
+  const { selectedVenue } = useAppStore();
   const [mounted, setMounted] = useState(false);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [cameras, setCameras] = useState<ApiCamera[]>([]);
+  const [events, setEvents] = useState<ApiEvent[]>([]);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [statsData, camerasData, eventsData] = await Promise.all([
+        apiGet<DashboardStats>('/api/dashboard/stats'),
+        apiGet<ApiCamera[]>('/api/cameras'),
+        apiGet<{ events: ApiEvent[] }>('/api/events?limit=6'),
+      ]);
+      setStats(statsData);
+      setCameras(camerasData);
+      setEvents(eventsData.events);
+    } catch (err) {
+      console.error('Failed to fetch dashboard data:', err);
+    }
+  }, []);
+
+  // Real-time updates via SSE
+  useEventStream(useCallback((event) => {
+    if (['session_started', 'session_ended', 'alert', 'frame_analyzed'].includes(event.type)) {
+      fetchData();
+    }
+  }, [fetchData]));
 
   useEffect(() => {
     setMounted(true);
     if (!selectedVenue) {
       router.push('/select-venue');
+      return;
     }
-  }, [selectedVenue, router]);
+    fetchData();
+  }, [selectedVenue, router, fetchData]);
 
   if (!mounted || !selectedVenue) return null;
 
   const venueConfig = venueConfigs.find((v) => v.type === selectedVenue);
-  const onlineCameras = cameras.filter((c) => c.status === 'online').length;
-  const criticalEvents = events.filter((e) => e.severity === 'critical').length;
-  const warningEvents = events.filter((e) => e.severity === 'warning').length;
+  const onlineCameras = stats?.onlineCameras ?? 0;
+  const totalCameras = stats?.totalCameras ?? 0;
 
   const statsCards = [
     {
       title: 'Камеры онлайн',
-      value: `${onlineCameras}/${cameras.length}`,
+      value: `${onlineCameras}/${totalCameras}`,
       icon: Camera,
-      description: `${cameras.length - onlineCameras} офлайн`,
+      description: `${totalCameras - onlineCameras} офлайн`,
       color: 'text-green-500',
       bgColor: 'bg-green-500/10',
     },
     {
       title: 'Обнаружено людей',
-      value: '247',
+      value: String(stats?.peopleDetected ?? 0),
       icon: Users,
-      description: '+12% за последний час',
+      description: 'По данным ИИ-анализа',
       color: 'text-blue-500',
       bgColor: 'bg-blue-500/10',
     },
     {
       title: 'Критические события',
-      value: criticalEvents.toString(),
+      value: String(stats?.criticalEvents ?? 0),
       icon: AlertTriangle,
-      description: `${warningEvents} предупреждений`,
+      description: `${stats?.totalEvents ?? 0} всего событий`,
       color: 'text-red-500',
       bgColor: 'bg-red-500/10',
     },
     {
       title: 'Средняя загрузка',
-      value: '73%',
+      value: stats?.avgOccupancy ? `${stats.avgOccupancy} чел.` : '—',
       icon: Activity,
-      description: 'Пиковые часы: 12:00-15:00',
+      description: 'Среднее кол-во людей на кадр',
       color: 'text-purple-500',
       bgColor: 'bg-purple-500/10',
     },
   ];
 
-  const recentActivity = [
-    { time: '2 мин', text: 'Обнаружено движение — Камера входа', severity: 'warning' as const },
-    { time: '15 мин', text: 'Очередь 5+ человек — Кассовая зона', severity: 'info' as const },
-    { time: '30 мин', text: 'Подозрительное поведение — Торговый зал', severity: 'critical' as const },
-    { time: '45 мин', text: 'Распознан номер A777AA 77 — Парковка', severity: 'info' as const },
-    { time: '1 ч', text: 'Обнаружен VIP клиент — Главный вход', severity: 'info' as const },
-    { time: '1.5 ч', text: 'Камера склада офлайн', severity: 'critical' as const },
-  ];
+  const formatTime = (timestamp: string) => {
+    const diff = Date.now() - new Date(timestamp).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'только что';
+    if (mins < 60) return `${mins} мин назад`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} ч назад`;
+    return `${Math.floor(hours / 24)} дн назад`;
+  };
 
   return (
     <div className="space-y-6">
@@ -127,7 +176,9 @@ export default function DashboardPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>Камеры</CardTitle>
-                <CardDescription>Прямая трансляция с камер</CardDescription>
+                <CardDescription>
+                  {cameras.length > 0 ? 'Прямая трансляция с камер' : 'Добавьте камеры для начала работы'}
+                </CardDescription>
               </div>
               <Button variant="ghost" size="sm" onClick={() => router.push('/cameras')}>
                 Все камеры
@@ -135,52 +186,69 @@ export default function DashboardPage() {
               </Button>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 gap-3">
-                {cameras.slice(0, 4).map((camera) => (
-                  <div
-                    key={camera.id}
-                    className="relative rounded-lg border border-border bg-muted/30 overflow-hidden aspect-video group"
-                  >
-                    {/* Simulated camera feed */}
-                    <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
-                      <Camera className="h-8 w-8 text-gray-600" />
+              {cameras.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <Camera className="h-12 w-12 text-muted-foreground mb-4" />
+                  <p className="text-muted-foreground">Камеры не добавлены</p>
+                  <Button variant="outline" className="mt-4" onClick={() => router.push('/cameras')}>
+                    Добавить камеру
+                  </Button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {cameras.slice(0, 4).map((camera) => (
+                    <div
+                      key={camera.id}
+                      className="relative rounded-lg border border-border bg-muted/30 overflow-hidden aspect-video group"
+                    >
+                      {camera.status === 'online' ? (
+                        <img
+                          src={`/api/cameras/${camera.id}/snapshot?t=${Date.now()}`}
+                          alt={camera.name}
+                          className="absolute inset-0 w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      ) : null}
+                      <div className="absolute inset-0 bg-gradient-to-br from-gray-800/50 to-gray-900/50 flex items-center justify-center">
+                        {camera.status !== 'online' && <Camera className="h-8 w-8 text-gray-600" />}
+                      </div>
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                      <div className="absolute bottom-0 left-0 right-0 p-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-white">{camera.name}</p>
+                            <p className="text-xs text-gray-300">{camera.location}</p>
+                          </div>
+                          <Badge
+                            variant={camera.status === 'online' ? 'default' : 'destructive'}
+                            className="text-[10px]"
+                          >
+                            {camera.status === 'online' ? 'LIVE' : 'OFFLINE'}
+                          </Badge>
+                        </div>
+                      </div>
+                      {camera.isMonitoring && (
+                        <div className="absolute top-2 right-2 flex items-center gap-1">
+                          <div className="flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5">
+                            <Eye className="h-3 w-3 text-green-400" />
+                            <span className="text-[10px] text-green-400">AI</span>
+                          </div>
+                        </div>
+                      )}
+                      {camera.status === 'online' && (
+                        <div className="absolute top-2 left-2">
+                          <div className="flex items-center gap-1">
+                            <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                            <span className="text-[10px] text-red-400 font-medium">REC</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    {/* Camera overlay */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                    <div className="absolute bottom-0 left-0 right-0 p-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-white">{camera.name}</p>
-                          <p className="text-xs text-gray-300">{camera.location}</p>
-                        </div>
-                        <Badge
-                          variant={camera.status === 'online' ? 'default' : 'destructive'}
-                          className="text-[10px]"
-                        >
-                          {camera.status === 'online' ? 'LIVE' : 'OFFLINE'}
-                        </Badge>
-                      </div>
-                    </div>
-                    {/* AI overlay indicators */}
-                    {camera.status === 'online' && (
-                      <div className="absolute top-2 right-2 flex items-center gap-1">
-                        <div className="flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5">
-                          <Eye className="h-3 w-3 text-green-400" />
-                          <span className="text-[10px] text-green-400">AI</span>
-                        </div>
-                      </div>
-                    )}
-                    {camera.status === 'online' && (
-                      <div className="absolute top-2 left-2">
-                        <div className="flex items-center gap-1">
-                          <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                          <span className="text-[10px] text-red-400 font-medium">REC</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -196,29 +264,38 @@ export default function DashboardPage() {
               <CardDescription>Последние обнаруженные события</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {recentActivity.map((item, i) => (
-                  <div key={i} className="flex gap-3 pb-3 border-b border-border last:border-0 last:pb-0">
-                    <div
-                      className={cn(
-                        'mt-1 h-2 w-2 rounded-full shrink-0',
-                        item.severity === 'critical'
-                          ? 'bg-red-500'
-                          : item.severity === 'warning'
-                          ? 'bg-yellow-500'
-                          : 'bg-blue-500'
-                      )}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm leading-snug">{item.text}</p>
-                      <div className="flex items-center gap-1 mt-1">
-                        <Clock className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-xs text-muted-foreground">{item.time} назад</span>
+              {events.length === 0 ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  Нет событий. Начните мониторинг камер для получения событий.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {events.map((event) => (
+                    <div key={event.id} className="flex gap-3 pb-3 border-b border-border last:border-0 last:pb-0">
+                      <div
+                        className={cn(
+                          'mt-1 h-2 w-2 rounded-full shrink-0',
+                          event.severity === 'critical'
+                            ? 'bg-red-500'
+                            : event.severity === 'warning'
+                            ? 'bg-yellow-500'
+                            : 'bg-blue-500'
+                        )}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm leading-snug">{event.description}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{event.camera?.name}</p>
+                        <div className="flex items-center gap-1 mt-1">
+                          <Clock className="h-3 w-3 text-muted-foreground" />
+                          <span className="text-xs text-muted-foreground">
+                            {formatTime(event.timestamp)}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -316,10 +393,10 @@ export default function DashboardPage() {
             <p className="text-sm text-muted-foreground mb-4">Статистика за сегодня</p>
             <div className="space-y-4">
               {[
-                { label: 'Всего посетителей', value: '1,247' },
-                { label: 'Среднее время визита', value: '24 мин' },
-                { label: 'Пиковая загрузка', value: '85%' },
-                { label: 'Инцидентов', value: '3' },
+                { label: 'Всего камер', value: String(stats?.totalCameras ?? 0) },
+                { label: 'Онлайн', value: String(stats?.onlineCameras ?? 0) },
+                { label: 'Всего событий', value: String(stats?.totalEvents ?? 0) },
+                { label: 'Критических', value: String(stats?.criticalEvents ?? 0) },
               ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">{item.label}</span>
@@ -335,10 +412,10 @@ export default function DashboardPage() {
             <p className="text-sm text-muted-foreground mb-4">Система</p>
             <div className="space-y-4">
               {[
-                { label: 'Использование CPU', value: '34%', color: 'text-green-500' },
-                { label: 'Использование RAM', value: '67%', color: 'text-yellow-500' },
-                { label: 'Хранилище', value: '2.4 TB / 5 TB', color: 'text-blue-500' },
-                { label: 'Аптайм', value: '99.97%', color: 'text-green-500' },
+                { label: 'ИИ-анализ', value: stats?.peopleDetected ? 'Активен' : 'Нет данных', color: stats?.peopleDetected ? 'text-green-500' : 'text-muted-foreground' },
+                { label: 'Камеры онлайн', value: `${onlineCameras}/${totalCameras}`, color: onlineCameras > 0 ? 'text-green-500' : 'text-muted-foreground' },
+                { label: 'Обнаружено людей', value: String(stats?.peopleDetected ?? 0), color: 'text-blue-500' },
+                { label: 'Ср. на кадр', value: String(stats?.avgOccupancy ?? 0), color: 'text-blue-500' },
               ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">{item.label}</span>

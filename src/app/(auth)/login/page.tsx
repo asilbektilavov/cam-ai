@@ -3,17 +3,16 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { signIn } from 'next-auth/react';
 import { Video, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAppStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -29,12 +28,17 @@ export default function LoginPage() {
       return;
     }
 
-    const success = login(email, password);
-    if (success) {
+    const result = await signIn('credentials', {
+      email,
+      password,
+      redirect: false,
+    });
+
+    if (result?.error) {
+      toast.error('Неверный email или пароль');
+    } else {
       toast.success('Добро пожаловать!');
       router.push('/select-venue');
-    } else {
-      toast.error('Неверный email или пароль');
     }
     setLoading(false);
   };
@@ -103,7 +107,7 @@ export default function LoginPage() {
 
           <div className="mt-6 p-3 rounded-lg bg-muted/50 text-center">
             <p className="text-xs text-muted-foreground">
-              Для демо-доступа: введите любой email и пароль
+              Демо: admin@demo.com / admin123
             </p>
           </div>
         </CardContent>

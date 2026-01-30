@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
@@ -12,15 +11,8 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated, sidebarOpen } = useAppStore();
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login');
-    }
-  }, [isAuthenticated, router]);
+  const { sidebarOpen } = useAppStore();
 
   // For select-venue page, don't show sidebar
   if (pathname === '/select-venue') {
@@ -34,9 +26,7 @@ export default function DashboardLayout({
       <main
         className={cn(
           'pt-16 transition-all duration-300 min-h-screen',
-          // Desktop: offset by sidebar
           sidebarOpen ? 'md:pl-64' : 'md:pl-[68px]',
-          // Mobile: no offset (sidebar overlays)
           'pl-0'
         )}
       >

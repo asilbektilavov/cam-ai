@@ -19,6 +19,10 @@ export interface Camera {
   fps: number;
   lastActivity: string;
   thumbnail?: string;
+  streamUrl?: string;
+  isMonitoring?: boolean;
+  motionThreshold?: number;
+  captureInterval?: number;
 }
 
 export interface AnalyticsEvent {
