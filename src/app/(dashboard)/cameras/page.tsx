@@ -72,6 +72,9 @@ export default function CamerasPage() {
   const [selectedCamera, setSelectedCamera] = useState<string | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [togglingMonitor, setTogglingMonitor] = useState<string | null>(null);
+  const [snapshotTick, setSnapshotTick] = useState(0);
+  const [editForm, setEditForm] = useState({ streamUrl: '', name: '', location: '' });
+  const [saving, setSaving] = useState(false);
   const [newCamera, setNewCamera] = useState({
     name: '',
     location: '',
@@ -94,6 +97,14 @@ export default function CamerasPage() {
   useEffect(() => {
     fetchCameras();
   }, [fetchCameras]);
+
+  // Auto-refresh snapshots every 3 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSnapshotTick((t) => t + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleTestConnection = async () => {
     if (!newCamera.streamUrl) {
@@ -160,6 +171,31 @@ export default function CamerasPage() {
     } finally {
       setTogglingMonitor(null);
     }
+  };
+
+  const handleSaveSettings = async () => {
+    if (!selectedCamera) return;
+    setSaving(true);
+    try {
+      await apiPatch(`/api/cameras/${selectedCamera}`, {
+        name: editForm.name,
+        location: editForm.location,
+        streamUrl: editForm.streamUrl,
+      });
+      toast.success('Настройки сохранены');
+      setSettingsDialogOpen(false);
+      fetchCameras();
+    } catch {
+      toast.error('Не удалось сохранить');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openSettings = (camera: ApiCamera) => {
+    setSelectedCamera(camera.id);
+    setEditForm({ streamUrl: camera.streamUrl, name: camera.name, location: camera.location });
+    setSettingsDialogOpen(true);
   };
 
   const onlineCameras = cameras.filter((c) => c.status === 'online').length;
@@ -323,35 +359,43 @@ export default function CamerasPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Настройки камеры</DialogTitle>
-            <DialogDescription>
-              {cameras.find((c) => c.id === selectedCamera)?.name}
-            </DialogDescription>
+            <DialogDescription>Редактирование параметров камеры</DialogDescription>
           </DialogHeader>
           {(() => {
             const cam = cameras.find((c) => c.id === selectedCamera);
             if (!cam) return null;
             return (
               <div className="space-y-4 mt-2">
+                <div className="space-y-2">
+                  <Label>Название</Label>
+                  <Input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Расположение</Label>
+                  <Input
+                    value={editForm.location}
+                    onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>URL потока</Label>
+                  <Input
+                    value={editForm.streamUrl}
+                    onChange={(e) => setEditForm({ ...editForm, streamUrl: e.target.value })}
+                    placeholder="http://192.168.1.100:8080"
+                  />
+                </div>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <p className="text-muted-foreground">Статус</p>
                     <p className="font-medium">{cam.status === 'online' ? 'Онлайн' : 'Офлайн'}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground">Расположение</p>
-                    <p className="font-medium">{cam.location}</p>
-                  </div>
-                  <div>
                     <p className="text-muted-foreground">Разрешение</p>
                     <p className="font-medium">{cam.resolution}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">FPS</p>
-                    <p className="font-medium">{cam.fps}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-muted-foreground">URL потока</p>
-                    <p className="font-medium text-xs break-all">{cam.streamUrl}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Порог движения</p>
@@ -365,9 +409,17 @@ export default function CamerasPage() {
                 <div className="flex gap-2">
                   <Button
                     className="flex-1"
+                    onClick={handleSaveSettings}
+                    disabled={saving}
+                  >
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    Сохранить
+                  </Button>
+                  <Button
+                    variant="outline"
                     onClick={() => setSettingsDialogOpen(false)}
                   >
-                    Закрыть
+                    Отмена
                   </Button>
                 </div>
               </div>
@@ -400,9 +452,9 @@ export default function CamerasPage() {
                 {camera.status === 'online' ? (
                   <>
                     <img
-                      src={`/api/cameras/${camera.id}/snapshot?t=${Date.now()}`}
+                      src={`/api/cameras/${camera.id}/snapshot?t=${snapshotTick}`}
                       alt={camera.name}
-                      className="absolute inset-0 w-full h-full object-cover"
+                      className="absolute inset-0 w-full h-full object-cover rotate-180"
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                       }}
@@ -471,10 +523,7 @@ export default function CamerasPage() {
                         )}
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        onClick={() => {
-                          setSelectedCamera(camera.id);
-                          setSettingsDialogOpen(true);
-                        }}
+                        onClick={() => openSettings(camera)}
                         className="cursor-pointer"
                       >
                         <Settings className="h-4 w-4 mr-2" />

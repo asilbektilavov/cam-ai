@@ -51,6 +51,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [cameras, setCameras] = useState<ApiCamera[]>([]);
   const [events, setEvents] = useState<ApiEvent[]>([]);
+  const [snapshotTick, setSnapshotTick] = useState(0);
 
   const fetchData = useCallback(async () => {
     try {
@@ -73,6 +74,14 @@ export default function DashboardPage() {
       fetchData();
     }
   }, [fetchData]));
+
+  // Auto-refresh snapshots every 1 second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSnapshotTick((t) => t + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -203,9 +212,9 @@ export default function DashboardPage() {
                     >
                       {camera.status === 'online' ? (
                         <img
-                          src={`/api/cameras/${camera.id}/snapshot?t=${Date.now()}`}
+                          src={`/api/cameras/${camera.id}/snapshot?t=${snapshotTick}`}
                           alt={camera.name}
-                          className="absolute inset-0 w-full h-full object-cover"
+                          className="absolute inset-0 w-full h-full object-cover rotate-180"
                           onError={(e) => {
                             (e.target as HTMLImageElement).style.display = 'none';
                           }}
