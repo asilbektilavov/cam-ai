@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.gitignore
+*.md
+.env
+.env.local
+prisma/dev.db
+prisma/dev.db-journal
+data/frames
+data/search-photos
+.claude

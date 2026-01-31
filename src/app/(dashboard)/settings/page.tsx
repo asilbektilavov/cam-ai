@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   User,
   Bell,
@@ -11,6 +11,7 @@ import {
   Camera,
   Eye,
   EyeOff,
+  Loader2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,14 +29,46 @@ import {
 } from '@/components/ui/select';
 import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
+import { apiGet, apiPatch, apiPost } from '@/lib/api-client';
+
+interface ProfileData {
+  name: string;
+  email: string;
+  role: string;
+  company: string;
+}
+
+interface NotificationSettings {
+  critical: boolean;
+  warnings: boolean;
+  info: boolean;
+  system: boolean;
+  dailyReport: boolean;
+  weeklyReport: boolean;
+}
+
+interface SystemSettings {
+  language: string;
+  timezone: string;
+  autoRecord: boolean;
+  cloudStorage: boolean;
+  aiQuality: string;
+}
 
 export default function SettingsPage() {
   const { data: session } = useSession();
 
+  // Loading states
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [notifLoading, setNotifLoading] = useState(true);
+  const [systemLoading, setSystemLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
   // Profile
-  const [name, setName] = useState(session?.user?.name || '');
-  const [email, setEmail] = useState(session?.user?.email || '');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
+  const [role, setRole] = useState('');
 
   // Security
   const [currentPassword, setCurrentPassword] = useState('');
@@ -46,7 +79,7 @@ export default function SettingsPage() {
   const [ipRestriction, setIpRestriction] = useState(false);
 
   // Notifications
-  const [notifications, setNotifications] = useState({
+  const [notifications, setNotifications] = useState<NotificationSettings>({
     critical: true,
     warnings: true,
     info: false,
@@ -62,19 +95,76 @@ export default function SettingsPage() {
   const [cloudStorage, setCloudStorage] = useState(true);
   const [aiQuality, setAiQuality] = useState('high');
 
-  const handleSaveProfile = () => {
+  // Load profile data
+  useEffect(() => {
+    apiGet<ProfileData>('/api/settings/profile')
+      .then((data) => {
+        setName(data.name);
+        setEmail(data.email);
+        setRole(data.role);
+        setCompany(data.company);
+      })
+      .catch(() => {
+        // Fallback to session data
+        if (session?.user) {
+          setName(session.user.name || '');
+          setEmail(session.user.email || '');
+        }
+      })
+      .finally(() => setProfileLoading(false));
+  }, [session]);
+
+  // Load notification settings
+  useEffect(() => {
+    apiGet<NotificationSettings>('/api/settings/notifications')
+      .then((data) => setNotifications(data))
+      .catch(() => {})
+      .finally(() => setNotifLoading(false));
+  }, []);
+
+  // Load system settings
+  useEffect(() => {
+    apiGet<SystemSettings>('/api/settings/system')
+      .then((data) => {
+        setLanguage(data.language);
+        setTimezone(data.timezone);
+        setAutoRecord(data.autoRecord);
+        setCloudStorage(data.cloudStorage);
+        setAiQuality(data.aiQuality);
+      })
+      .catch(() => {})
+      .finally(() => setSystemLoading(false));
+  }, []);
+
+  const handleSaveProfile = async () => {
     if (!name || !email) {
       toast.error('Имя и email обязательны');
       return;
     }
-    toast.success('Профиль обновлён');
+    setSaving(true);
+    try {
+      await apiPatch('/api/settings/profile', { name, email, company });
+      toast.success('Профиль обновлён');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка сохранения');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleSaveNotifications = () => {
-    toast.success('Настройки уведомлений сохранены');
+  const handleSaveNotifications = async () => {
+    setSaving(true);
+    try {
+      await apiPatch('/api/settings/notifications', notifications);
+      toast.success('Настройки уведомлений сохранены');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка сохранения');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
     if (!currentPassword) {
       toast.error('Введите текущий пароль');
       return;
@@ -87,14 +177,45 @@ export default function SettingsPage() {
       toast.error('Пароли не совпадают');
       return;
     }
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmNewPassword('');
-    toast.success('Пароль изменён');
+    setSaving(true);
+    try {
+      await apiPost('/api/settings/password', {
+        currentPassword,
+        newPassword,
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      toast.success('Пароль изменён');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка смены пароля');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleSaveSystem = () => {
-    toast.success('Системные настройки сохранены');
+  const handleSaveSystem = async () => {
+    setSaving(true);
+    try {
+      await apiPatch('/api/settings/system', {
+        language,
+        timezone,
+        autoRecord,
+        cloudStorage,
+        aiQuality,
+      });
+      toast.success('Системные настройки сохранены');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка сохранения');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const roleLabels: Record<string, string> = {
+    admin: 'Администратор',
+    operator: 'Оператор',
+    viewer: 'Наблюдатель',
   };
 
   return (
@@ -133,33 +254,41 @@ export default function SettingsPage() {
               <CardDescription>Информация о вашем аккаунте</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="profile-name">Имя</Label>
-                  <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} />
+              {profileLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="profile-email">Email</Label>
-                  <Input id="profile-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="profile-company">Компания</Label>
-                  <Input
-                    id="profile-company"
-                    value={company}
-                    onChange={(e) => setCompany(e.target.value)}
-                    placeholder="Название компании"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Роль</Label>
-                  <Input value="Администратор" disabled />
-                </div>
-              </div>
-              <Button onClick={handleSaveProfile} className="gap-2">
-                <Save className="h-4 w-4" />
-                Сохранить изменения
-              </Button>
+              ) : (
+                <>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="profile-name">Имя</Label>
+                      <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="profile-email">Email</Label>
+                      <Input id="profile-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="profile-company">Компания</Label>
+                      <Input
+                        id="profile-company"
+                        value={company}
+                        onChange={(e) => setCompany(e.target.value)}
+                        placeholder="Название компании"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Роль</Label>
+                      <Input value={roleLabels[role] || role} disabled />
+                    </div>
+                  </div>
+                  <Button onClick={handleSaveProfile} className="gap-2" disabled={saving}>
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Сохранить изменения
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -172,56 +301,64 @@ export default function SettingsPage() {
               <CardDescription>Выберите, о каких событиях вы хотите получать уведомления</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {[
-                {
-                  key: 'critical' as const,
-                  title: 'Критические события',
-                  description: 'Подозрительное поведение, нарушения безопасности',
-                },
-                {
-                  key: 'warnings' as const,
-                  title: 'Предупреждения',
-                  description: 'Длинные очереди, камеры офлайн, нетипичная активность',
-                },
-                {
-                  key: 'info' as const,
-                  title: 'Информационные',
-                  description: 'Подсчёт посетителей, распознавание номеров, VIP-клиенты',
-                },
-                {
-                  key: 'system' as const,
-                  title: 'Системные',
-                  description: 'Обновления, обслуживание, отчёты',
-                },
-                {
-                  key: 'dailyReport' as const,
-                  title: 'Ежедневный отчёт',
-                  description: 'Сводка за день на email в 22:00',
-                },
-                {
-                  key: 'weeklyReport' as const,
-                  title: 'Еженедельный отчёт',
-                  description: 'Подробный отчёт каждый понедельник',
-                },
-              ].map((item) => (
-                <div key={item.key} className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">{item.title}</p>
-                    <p className="text-sm text-muted-foreground">{item.description}</p>
-                  </div>
-                  <Switch
-                    checked={notifications[item.key]}
-                    onCheckedChange={(checked) =>
-                      setNotifications((prev) => ({ ...prev, [item.key]: checked }))
-                    }
-                  />
+              {notifLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
-              ))}
-              <Separator />
-              <Button onClick={handleSaveNotifications} className="gap-2">
-                <Save className="h-4 w-4" />
-                Сохранить
-              </Button>
+              ) : (
+                <>
+                  {[
+                    {
+                      key: 'critical' as const,
+                      title: 'Критические события',
+                      description: 'Подозрительное поведение, нарушения безопасности',
+                    },
+                    {
+                      key: 'warnings' as const,
+                      title: 'Предупреждения',
+                      description: 'Длинные очереди, камеры офлайн, нетипичная активность',
+                    },
+                    {
+                      key: 'info' as const,
+                      title: 'Информационные',
+                      description: 'Подсчёт посетителей, распознавание номеров, VIP-клиенты',
+                    },
+                    {
+                      key: 'system' as const,
+                      title: 'Системные',
+                      description: 'Обновления, обслуживание, отчёты',
+                    },
+                    {
+                      key: 'dailyReport' as const,
+                      title: 'Ежедневный отчёт',
+                      description: 'Сводка за день на email в 22:00',
+                    },
+                    {
+                      key: 'weeklyReport' as const,
+                      title: 'Еженедельный отчёт',
+                      description: 'Подробный отчёт каждый понедельник',
+                    },
+                  ].map((item) => (
+                    <div key={item.key} className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">{item.title}</p>
+                        <p className="text-sm text-muted-foreground">{item.description}</p>
+                      </div>
+                      <Switch
+                        checked={notifications[item.key]}
+                        onCheckedChange={(checked) =>
+                          setNotifications((prev) => ({ ...prev, [item.key]: checked }))
+                        }
+                      />
+                    </div>
+                  ))}
+                  <Separator />
+                  <Button onClick={handleSaveNotifications} className="gap-2" disabled={saving}>
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Сохранить
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -279,7 +416,8 @@ export default function SettingsPage() {
                     {showPasswords ? 'Скрыть пароли' : 'Показать пароли'}
                   </span>
                 </div>
-                <Button onClick={handleChangePassword} variant="outline" className="gap-2">
+                <Button onClick={handleChangePassword} variant="outline" className="gap-2" disabled={saving}>
+                  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
                   Изменить пароль
                 </Button>
               </div>
@@ -326,75 +464,83 @@ export default function SettingsPage() {
               <CardDescription>Общие параметры системы</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Язык интерфейса</Label>
-                  <Select value={language} onValueChange={(v) => { setLanguage(v); toast.info('Язык будет изменён после перезагрузки'); }}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ru">Русский</SelectItem>
-                      <SelectItem value="en">English</SelectItem>
-                      <SelectItem value="uz">O&apos;zbek</SelectItem>
-                    </SelectContent>
-                  </Select>
+              {systemLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
-                <div className="space-y-2">
-                  <Label>Часовой пояс</Label>
-                  <Select value={timezone} onValueChange={setTimezone}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="utc+3">Москва (UTC+3)</SelectItem>
-                      <SelectItem value="utc+5">Ташкент (UTC+5)</SelectItem>
-                      <SelectItem value="utc+6">Алматы (UTC+6)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <Separator />
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Camera className="h-5 w-5 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium">Автозапись</p>
-                      <p className="text-sm text-muted-foreground">Автоматическая запись при детекции</p>
+              ) : (
+                <>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Язык интерфейса</Label>
+                      <Select value={language} onValueChange={setLanguage}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ru">Русский</SelectItem>
+                          <SelectItem value="en">English</SelectItem>
+                          <SelectItem value="uz">O&apos;zbek</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Часовой пояс</Label>
+                      <Select value={timezone} onValueChange={setTimezone}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="utc+3">Москва (UTC+3)</SelectItem>
+                          <SelectItem value="utc+5">Ташкент (UTC+5)</SelectItem>
+                          <SelectItem value="utc+6">Алматы (UTC+6)</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
-                  <Switch checked={autoRecord} onCheckedChange={setAutoRecord} />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Globe className="h-5 w-5 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium">Облачное хранение</p>
-                      <p className="text-sm text-muted-foreground">Сохранять записи в облако</p>
+                  <Separator />
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Camera className="h-5 w-5 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">Автозапись</p>
+                          <p className="text-sm text-muted-foreground">Автоматическая запись при детекции</p>
+                        </div>
+                      </div>
+                      <Switch checked={autoRecord} onCheckedChange={setAutoRecord} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Globe className="h-5 w-5 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">Облачное хранение</p>
+                          <p className="text-sm text-muted-foreground">Сохранять записи в облако</p>
+                        </div>
+                      </div>
+                      <Switch checked={cloudStorage} onCheckedChange={setCloudStorage} />
                     </div>
                   </div>
-                  <Switch checked={cloudStorage} onCheckedChange={setCloudStorage} />
-                </div>
-              </div>
-              <Separator />
-              <div className="space-y-2">
-                <Label>Качество ИИ-анализа</Label>
-                <Select value={aiQuality} onValueChange={setAiQuality}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Экономный (быстрее, менее точно)</SelectItem>
-                    <SelectItem value="medium">Средний (баланс скорости и точности)</SelectItem>
-                    <SelectItem value="high">Высокий (максимальная точность)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button onClick={handleSaveSystem} className="gap-2">
-                <Save className="h-4 w-4" />
-                Сохранить
-              </Button>
+                  <Separator />
+                  <div className="space-y-2">
+                    <Label>Качество ИИ-анализа</Label>
+                    <Select value={aiQuality} onValueChange={setAiQuality}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Экономный (быстрее, менее точно)</SelectItem>
+                        <SelectItem value="medium">Средний (баланс скорости и точности)</SelectItem>
+                        <SelectItem value="high">Высокий (максимальная точность)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button onClick={handleSaveSystem} className="gap-2" disabled={saving}>
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Сохранить
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

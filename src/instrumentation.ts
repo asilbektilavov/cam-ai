@@ -3,6 +3,10 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     const { prisma } = await import('@/lib/prisma');
     const { cameraMonitor } = await import('@/lib/services/camera-monitor');
+    const { notificationDispatcher } = await import('@/lib/services/notification-dispatcher');
+
+    // Start notification dispatcher
+    notificationDispatcher.start();
 
     // Resume monitoring for cameras that had monitoring enabled
     try {

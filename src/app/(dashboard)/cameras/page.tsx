@@ -7,7 +7,6 @@ import {
   MoreVertical,
   Wifi,
   WifiOff,
-  Wrench,
   Eye,
   Trash2,
   Settings,
@@ -18,7 +17,7 @@ import {
   Square,
   Link,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -47,6 +46,10 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api-client';
+import { CameraFeed } from '@/components/camera-feed';
+import { useMotionTracker } from '@/hooks/use-motion-tracker';
+import { useSearchDescriptors } from '@/hooks/use-search-descriptors';
+import { FeatureConfigPanel } from '@/components/smart-features/feature-config-panel';
 
 interface ApiCamera {
   id: string;
@@ -83,6 +86,9 @@ export default function CamerasPage() {
     fps: 30,
   });
 
+  const { hasMotion } = useMotionTracker();
+  const { descriptors: searchDescriptors } = useSearchDescriptors();
+
   const fetchCameras = useCallback(async () => {
     try {
       const data = await apiGet<ApiCamera[]>('/api/cameras');
@@ -98,7 +104,7 @@ export default function CamerasPage() {
     fetchCameras();
   }, [fetchCameras]);
 
-  // Auto-refresh snapshots every 3 seconds
+  // Auto-refresh snapshots every 1 second
   useEffect(() => {
     const interval = setInterval(() => {
       setSnapshotTick((t) => t + 1);
@@ -225,10 +231,10 @@ export default function CamerasPage() {
               Добавить камеру
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Добавить камеру</DialogTitle>
-              <DialogDescription>Подключите камеру по URL (IP Webcam и т.д.)</DialogDescription>
+              <DialogDescription>Поддерживаются RTSP камеры (Hikvision, Dahua и др.) и IP Webcam</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 mt-4">
               <div className="space-y-2">
@@ -248,10 +254,35 @@ export default function CamerasPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>URL потока (IP Webcam)</Label>
+                <Label>Тип камеры</Label>
+                <Select
+                  value={newCamera.streamUrl.startsWith('rtsp://') ? 'rtsp' : 'http'}
+                  onValueChange={(v) => {
+                    if (v === 'rtsp') {
+                      setNewCamera({ ...newCamera, streamUrl: 'rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101' });
+                    } else {
+                      setNewCamera({ ...newCamera, streamUrl: 'http://192.168.1.100:8080' });
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rtsp">RTSP камера (Hikvision, Dahua, Trassir...)</SelectItem>
+                    <SelectItem value="http">IP Webcam (Android)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>URL потока</Label>
                 <div className="flex gap-2">
                   <Input
-                    placeholder="http://192.168.1.100:8080"
+                    placeholder={
+                      newCamera.streamUrl.startsWith('rtsp://')
+                        ? 'rtsp://admin:password@192.168.1.100:554/...'
+                        : 'http://192.168.1.100:8080'
+                    }
                     value={newCamera.streamUrl}
                     onChange={(e) => setNewCamera({ ...newCamera, streamUrl: e.target.value })}
                   />
@@ -269,9 +300,36 @@ export default function CamerasPage() {
                     )}
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Для IP Webcam: откройте приложение, нажмите &laquo;Запустить сервер&raquo; и введите URL
-                </p>
+                {newCamera.streamUrl.startsWith('rtsp://') ? (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                      Шаблоны URL для популярных камер:
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {[
+                        { label: 'Hikvision', url: 'rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101' },
+                        { label: 'Dahua', url: 'rtsp://admin:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=0' },
+                        { label: 'Trassir', url: 'rtsp://admin:password@192.168.1.100:554/live/main' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          className="text-[10px] px-2 py-0.5 rounded-full bg-muted hover:bg-accent transition-colors"
+                          onClick={() => setNewCamera({ ...newCamera, streamUrl: preset.url })}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Замените admin:password на логин/пароль камеры, IP на адрес камеры
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Для IP Webcam: откройте приложение, нажмите «Запустить сервер» и введите URL
+                  </p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -356,10 +414,10 @@ export default function CamerasPage() {
 
       {/* Camera Settings Dialog */}
       <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Настройки камеры</DialogTitle>
-            <DialogDescription>Редактирование параметров камеры</DialogDescription>
+            <DialogDescription>Редактирование параметров и умные функции</DialogDescription>
           </DialogHeader>
           {(() => {
             const cam = cameras.find((c) => c.id === selectedCamera);
@@ -422,6 +480,11 @@ export default function CamerasPage() {
                     Отмена
                   </Button>
                 </div>
+
+                {/* Smart Features */}
+                <div className="border-t pt-4">
+                  <FeatureConfigPanel cameraId={cam.id} />
+                </div>
               </div>
             );
           })()}
@@ -445,112 +508,128 @@ export default function CamerasPage() {
         </Card>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {cameras.map((camera) => (
-            <Card key={camera.id} className="overflow-hidden">
-              {/* Camera Preview */}
-              <div className="relative aspect-video bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
-                {camera.status === 'online' ? (
-                  <>
-                    <img
-                      src={`/api/cameras/${camera.id}/snapshot?t=${snapshotTick}`}
-                      alt={camera.name}
-                      className="absolute inset-0 w-full h-full object-cover rotate-180"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                    <Video className="h-10 w-10 text-gray-600" />
-                  </>
-                ) : (
-                  <Monitor className="h-10 w-10 text-gray-700" />
+          {cameras.map((camera) => {
+            const motionActive = hasMotion(camera.id);
+            return (
+              <Card
+                key={camera.id}
+                className={cn(
+                  'overflow-hidden transition-all duration-300',
+                  motionActive && 'ring-2 ring-green-500 shadow-lg shadow-green-500/20'
                 )}
-                {camera.status === 'online' && (
-                  <>
-                    <div className="absolute top-2 left-2 flex items-center gap-1">
-                      <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                      <span className="text-[10px] text-red-400 font-medium">REC</span>
-                    </div>
-                    {camera.isMonitoring && (
-                      <div className="absolute top-2 right-2">
-                        <div className="flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5">
-                          <Eye className="h-3 w-3 text-green-400" />
-                          <span className="text-[10px] text-green-400">AI</span>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent h-16" />
-                <div className="absolute bottom-2 left-2">
-                  <Badge
-                    variant={camera.status === 'online' ? 'default' : 'destructive'}
-                    className="text-[10px]"
-                  >
-                    {camera.status === 'online' ? 'LIVE' : 'ОФЛАЙН'}
-                  </Badge>
-                </div>
-              </div>
-
-              {/* Camera Info */}
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="font-semibold">{camera.name}</h3>
-                    <p className="text-sm text-muted-foreground">{camera.location}</p>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={() => handleToggleMonitor(camera)}
-                        disabled={togglingMonitor === camera.id}
-                        className="cursor-pointer"
-                      >
-                        {camera.isMonitoring ? (
-                          <>
-                            <Square className="h-4 w-4 mr-2" />
-                            Остановить мониторинг
-                          </>
-                        ) : (
-                          <>
-                            <Play className="h-4 w-4 mr-2" />
-                            Запустить мониторинг
-                          </>
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => openSettings(camera)}
-                        className="cursor-pointer"
-                      >
-                        <Settings className="h-4 w-4 mr-2" />
-                        Настройки
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="text-destructive cursor-pointer"
-                        onClick={() => handleDelete(camera.id)}
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Удалить
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-                <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                  <span>{camera.resolution}</span>
-                  <span>{camera.fps} FPS</span>
-                  {camera.isMonitoring && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      Мониторинг
-                    </Badge>
+              >
+                {/* Camera Preview */}
+                <div className="relative aspect-video bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
+                  {camera.status === 'online' ? (
+                    <>
+                      <CameraFeed
+                        cameraId={camera.id}
+                        snapshotTick={snapshotTick}
+                        className="absolute inset-0 w-full h-full"
+                        showFaceDetection={camera.isMonitoring}
+                        rotateImage={!camera.streamUrl.startsWith('rtsp://')}
+                        searchDescriptors={camera.isMonitoring ? searchDescriptors : undefined}
+                      />
+                      <Video className="h-10 w-10 text-gray-600" />
+                    </>
+                  ) : (
+                    <Monitor className="h-10 w-10 text-gray-700" />
                   )}
+                  {camera.status === 'online' && (
+                    <>
+                      <div className="absolute top-2 left-2 flex items-center gap-1 z-10">
+                        <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                        <span className="text-[10px] text-red-400 font-medium">REC</span>
+                      </div>
+                      {camera.isMonitoring && (
+                        <div className="absolute top-2 right-2 z-10">
+                          <div className="flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5">
+                            <Eye className="h-3 w-3 text-green-400" />
+                            <span className="text-[10px] text-green-400">AI</span>
+                          </div>
+                        </div>
+                      )}
+                      {motionActive && (
+                        <div className="absolute top-2 left-16 z-10">
+                          <div className="flex items-center gap-1 rounded-full bg-green-500/80 px-2 py-0.5 animate-pulse">
+                            <span className="text-[10px] text-white font-bold">ДВИЖЕНИЕ</span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent h-16 z-10" />
+                  <div className="absolute bottom-2 left-2 z-10">
+                    <Badge
+                      variant={camera.status === 'online' ? 'default' : 'destructive'}
+                      className="text-[10px]"
+                    >
+                      {camera.status === 'online' ? 'LIVE' : 'ОФЛАЙН'}
+                    </Badge>
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
+
+                {/* Camera Info */}
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="font-semibold">{camera.name}</h3>
+                      <p className="text-sm text-muted-foreground">{camera.location}</p>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => handleToggleMonitor(camera)}
+                          disabled={togglingMonitor === camera.id}
+                          className="cursor-pointer"
+                        >
+                          {camera.isMonitoring ? (
+                            <>
+                              <Square className="h-4 w-4 mr-2" />
+                              Остановить мониторинг
+                            </>
+                          ) : (
+                            <>
+                              <Play className="h-4 w-4 mr-2" />
+                              Запустить мониторинг
+                            </>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => openSettings(camera)}
+                          className="cursor-pointer"
+                        >
+                          <Settings className="h-4 w-4 mr-2" />
+                          Настройки
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive cursor-pointer"
+                          onClick={() => handleDelete(camera.id)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Удалить
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+                    <span>{camera.resolution}</span>
+                    <span>{camera.fps} FPS</span>
+                    {camera.isMonitoring && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        Мониторинг
+                      </Badge>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>

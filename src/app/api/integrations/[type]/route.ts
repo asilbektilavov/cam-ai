@@ -1,0 +1,81 @@
+import { NextResponse } from 'next/server';
+import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
+import { prisma } from '@/lib/prisma';
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ type: string }> }
+) {
+  const session = await getAuthSession();
+  if (!session) return unauthorized();
+
+  const { type } = await params;
+  const orgId = session.user.organizationId;
+  const body = await request.json();
+
+  const { enabled, config } = body;
+
+  const integration = await prisma.integration.upsert({
+    where: {
+      organizationId_type: { organizationId: orgId, type },
+    },
+    update: {
+      enabled: enabled ?? false,
+      config: config ? JSON.stringify(config) : '{}',
+    },
+    create: {
+      organizationId: orgId,
+      type,
+      name: body.name || type,
+      enabled: enabled ?? false,
+      config: config ? JSON.stringify(config) : '{}',
+    },
+  });
+
+  return NextResponse.json({
+    id: integration.id,
+    type: integration.type,
+    enabled: integration.enabled,
+    config: JSON.parse(integration.config),
+  });
+}
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ type: string }> }
+) {
+  const session = await getAuthSession();
+  if (!session) return unauthorized();
+
+  const { type } = await params;
+  const orgId = session.user.organizationId;
+
+  // Test connection based on type
+  const body = await request.json();
+  const config = body.config || {};
+
+  try {
+    switch (type) {
+      case 'telegram': {
+        if (!config.botToken) return badRequest('Bot Token обязателен');
+        const res = await fetch(`https://api.telegram.org/bot${config.botToken}/getMe`);
+        const data = await res.json();
+        if (!data.ok) return badRequest('Неверный Bot Token');
+        return NextResponse.json({ success: true, botName: data.result.username });
+      }
+      case 'webhook': {
+        if (!config.url) return badRequest('URL обязателен');
+        const res = await fetch(config.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ test: true, source: 'cam-ai' }),
+        });
+        return NextResponse.json({ success: res.ok, status: res.status });
+      }
+      default:
+        return NextResponse.json({ success: true, message: 'Тестирование для этого типа пока недоступно' });
+    }
+  } catch (error) {
+    return badRequest(`Ошибка соединения: ${error instanceof Error ? error.message : 'Unknown'}`);
+  }
+}

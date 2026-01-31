@@ -23,6 +23,8 @@ import { venueConfigs } from '@/lib/venue-config';
 import { cn } from '@/lib/utils';
 import { apiGet } from '@/lib/api-client';
 import { useEventStream } from '@/hooks/use-event-stream';
+import { useMotionTracker } from '@/hooks/use-motion-tracker';
+import { CameraFeed } from '@/components/camera-feed';
 import type { DashboardStats } from '@/lib/types';
 
 interface ApiCamera {
@@ -52,6 +54,8 @@ export default function DashboardPage() {
   const [cameras, setCameras] = useState<ApiCamera[]>([]);
   const [events, setEvents] = useState<ApiEvent[]>([]);
   const [snapshotTick, setSnapshotTick] = useState(0);
+
+  const { hasMotion } = useMotionTracker();
 
   const fetchData = useCallback(async () => {
     try {
@@ -205,57 +209,71 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
-                  {cameras.slice(0, 4).map((camera) => (
-                    <div
-                      key={camera.id}
-                      className="relative rounded-lg border border-border bg-muted/30 overflow-hidden aspect-video group"
-                    >
-                      {camera.status === 'online' ? (
-                        <img
-                          src={`/api/cameras/${camera.id}/snapshot?t=${snapshotTick}`}
-                          alt={camera.name}
-                          className="absolute inset-0 w-full h-full object-cover rotate-180"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      ) : null}
-                      <div className="absolute inset-0 bg-gradient-to-br from-gray-800/50 to-gray-900/50 flex items-center justify-center">
-                        {camera.status !== 'online' && <Camera className="h-8 w-8 text-gray-600" />}
+                  {cameras.slice(0, 4).map((camera) => {
+                    const motionActive = hasMotion(camera.id);
+                    return (
+                      <div
+                        key={camera.id}
+                        className={cn(
+                          'relative rounded-lg border overflow-hidden aspect-video group transition-all duration-300',
+                          motionActive
+                            ? 'border-green-500 ring-1 ring-green-500 shadow-md shadow-green-500/20'
+                            : 'border-border bg-muted/30'
+                        )}
+                      >
+                        {camera.status === 'online' ? (
+                          <CameraFeed
+                            cameraId={camera.id}
+                            snapshotTick={snapshotTick}
+                            className="absolute inset-0 w-full h-full"
+                            showFaceDetection={camera.isMonitoring}
+                          />
+                        ) : (
+                          <div className="absolute inset-0 bg-gradient-to-br from-gray-800/50 to-gray-900/50 flex items-center justify-center">
+                            <Camera className="h-8 w-8 text-gray-600" />
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+                        <div className="absolute bottom-0 left-0 right-0 p-3 z-10">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-medium text-white">{camera.name}</p>
+                              <p className="text-xs text-gray-300">{camera.location}</p>
+                            </div>
+                            <Badge
+                              variant={camera.status === 'online' ? 'default' : 'destructive'}
+                              className="text-[10px]"
+                            >
+                              {camera.status === 'online' ? 'LIVE' : 'OFFLINE'}
+                            </Badge>
+                          </div>
+                        </div>
+                        {camera.isMonitoring && (
+                          <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
+                            <div className="flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5">
+                              <Eye className="h-3 w-3 text-green-400" />
+                              <span className="text-[10px] text-green-400">AI</span>
+                            </div>
+                          </div>
+                        )}
+                        {camera.status === 'online' && (
+                          <div className="absolute top-2 left-2 z-10">
+                            <div className="flex items-center gap-1">
+                              <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                              <span className="text-[10px] text-red-400 font-medium">REC</span>
+                            </div>
+                          </div>
+                        )}
+                        {motionActive && (
+                          <div className="absolute top-2 left-16 z-10">
+                            <div className="flex items-center gap-1 rounded-full bg-green-500/80 px-2 py-0.5 animate-pulse">
+                              <span className="text-[10px] text-white font-bold">ДВИЖЕНИЕ</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                      <div className="absolute bottom-0 left-0 right-0 p-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-white">{camera.name}</p>
-                            <p className="text-xs text-gray-300">{camera.location}</p>
-                          </div>
-                          <Badge
-                            variant={camera.status === 'online' ? 'default' : 'destructive'}
-                            className="text-[10px]"
-                          >
-                            {camera.status === 'online' ? 'LIVE' : 'OFFLINE'}
-                          </Badge>
-                        </div>
-                      </div>
-                      {camera.isMonitoring && (
-                        <div className="absolute top-2 right-2 flex items-center gap-1">
-                          <div className="flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5">
-                            <Eye className="h-3 w-3 text-green-400" />
-                            <span className="text-[10px] text-green-400">AI</span>
-                          </div>
-                        </div>
-                      )}
-                      {camera.status === 'online' && (
-                        <div className="absolute top-2 left-2">
-                          <div className="flex items-center gap-1">
-                            <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                            <span className="text-[10px] text-red-400 font-medium">REC</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>

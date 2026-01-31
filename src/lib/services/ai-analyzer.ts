@@ -3,10 +3,11 @@ import { readFile } from 'fs/promises';
 import { prisma } from '@/lib/prisma';
 import { getFrameAbsolutePath } from './frame-storage';
 import { appEvents, CameraEvent } from './event-emitter';
+import { smartFeaturesEngine } from './smart-features-engine';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-const ANALYSIS_PROMPT = `You are a security camera AI analyst. Analyze this surveillance camera frame and respond ONLY with valid JSON (no markdown, no code blocks).
+const BASE_PROMPT = `You are a security camera AI analyst. Analyze this surveillance camera frame and respond ONLY with valid JSON (no markdown, no code blocks).
 
 JSON format:
 {
@@ -31,6 +32,45 @@ interface AnalysisResult {
     severity: string;
     message: string;
   }>;
+  // Smart feature fields
+  queueLength?: number;
+  loiteringDetected?: boolean;
+  loiteringDetails?: string;
+  staffCount?: number;
+}
+
+async function buildPrompt(cameraId: string): Promise<string> {
+  const features = await smartFeaturesEngine.getActiveFeatures(cameraId);
+  if (features.length === 0) return BASE_PROMPT;
+
+  let prompt = BASE_PROMPT;
+  const extraFields: string[] = [];
+
+  for (const feature of features) {
+    switch (feature.featureType) {
+      case 'queue_monitor':
+        prompt += `\n\nQUEUE MONITORING: This camera monitors a checkout/service area. Count the exact number of people standing in a queue or waiting line. Report this as "queueLength" in your JSON response. If no queue is visible, set to 0.`;
+        extraFields.push('"queueLength": <number of people in queue>');
+        break;
+
+      case 'loitering_detection':
+        prompt += `\n\nLOITERING DETECTION: Watch for people who appear to be lingering, standing idle, or staying in one spot without clear purpose for an extended time. If someone appears to be loitering, set "loiteringDetected" to true and describe the behavior in "loiteringDetails" (in Russian).`;
+        extraFields.push('"loiteringDetected": <true/false>');
+        extraFields.push('"loiteringDetails": "<description if detected, in Russian>"');
+        break;
+
+      case 'workstation_monitor':
+        prompt += `\n\nWORKSTATION MONITORING: This camera monitors a workstation, counter, or desk that must be staffed. Count the number of staff/workers actively present at the station (not customers/visitors). Report as "staffCount".`;
+        extraFields.push('"staffCount": <number of staff at the workstation>');
+        break;
+    }
+  }
+
+  if (extraFields.length > 0) {
+    prompt += `\n\nIMPORTANT: Include these additional fields in your JSON response:\n${extraFields.join('\n')}`;
+  }
+
+  return prompt;
 }
 
 export async function analyzeFrame(
@@ -50,10 +90,13 @@ export async function analyzeFrame(
     const imageBuffer = await readFile(absolutePath);
     const base64Image = imageBuffer.toString('base64');
 
+    // Build dynamic prompt based on active smart features
+    const prompt = await buildPrompt(cameraId);
+
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     const result = await model.generateContent([
-      ANALYSIS_PROMPT,
+      prompt,
       {
         inlineData: {
           mimeType: 'image/jpeg',
@@ -124,6 +167,29 @@ export async function analyzeFrame(
       },
     };
     appEvents.emit('camera-event', event);
+
+    // Evaluate smart features with the analysis results
+    const camera = await prisma.camera.findUnique({
+      where: { id: cameraId },
+      select: { name: true, location: true },
+    });
+
+    if (camera) {
+      void smartFeaturesEngine.evaluate(
+        cameraId,
+        organizationId,
+        camera.name,
+        camera.location,
+        {
+          peopleCount: analysis.peopleCount,
+          description: analysis.description,
+          queueLength: analysis.queueLength,
+          loiteringDetected: analysis.loiteringDetected,
+          loiteringDetails: analysis.loiteringDetails,
+          staffCount: analysis.staffCount,
+        }
+      );
+    }
   } catch (error) {
     console.error(`[AI] Analysis failed for frame ${frameId}:`, error);
   }

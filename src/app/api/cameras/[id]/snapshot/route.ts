@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
+import { fetchSnapshot } from '@/lib/services/motion-detector';
 
 export async function GET(
   _req: NextRequest,
@@ -20,24 +21,11 @@ export async function GET(
   if (!camera) return notFound('Camera not found');
 
   try {
-    const snapshotUrl = camera.streamUrl.replace(/\/$/, '') + '/shot.jpg';
-    const response = await fetch(snapshotUrl, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const imageBuffer = await fetchSnapshot(camera.streamUrl);
 
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: 'Failed to fetch snapshot' },
-        { status: 502 }
-      );
-    }
-
-    const imageBuffer = await response.arrayBuffer();
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
-
-    return new NextResponse(imageBuffer, {
+    return new NextResponse(new Uint8Array(imageBuffer), {
       headers: {
-        'Content-Type': contentType,
+        'Content-Type': 'image/jpeg',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
     });

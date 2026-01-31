@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   BarChart3,
   TrendingUp,
@@ -13,6 +13,9 @@ import {
   Download,
   Filter,
   Check,
+  Loader2,
+  Activity,
+  Camera,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,55 +30,33 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { apiGet } from '@/lib/api-client';
 
-const hourlyData = [
-  { hour: '06', visitors: 12, percentage: 8 },
-  { hour: '07', visitors: 23, percentage: 15 },
-  { hour: '08', visitors: 45, percentage: 30 },
-  { hour: '09', visitors: 67, percentage: 45 },
-  { hour: '10', visitors: 89, percentage: 59 },
-  { hour: '11', visitors: 112, percentage: 75 },
-  { hour: '12', visitors: 134, percentage: 89 },
-  { hour: '13', visitors: 150, percentage: 100 },
-  { hour: '14', visitors: 128, percentage: 85 },
-  { hour: '15', visitors: 98, percentage: 65 },
-  { hour: '16', visitors: 76, percentage: 51 },
-  { hour: '17', visitors: 54, percentage: 36 },
-  { hour: '18', visitors: 43, percentage: 29 },
-  { hour: '19', visitors: 32, percentage: 21 },
-  { hour: '20', visitors: 18, percentage: 12 },
-  { hour: '21', visitors: 8, percentage: 5 },
-];
-
-const zoneHeatmap = [
-  { zone: 'Главный вход', activity: 95, color: 'bg-red-500' },
-  { zone: 'Торговый зал (центр)', activity: 82, color: 'bg-orange-500' },
-  { zone: 'Кассовая зона', activity: 78, color: 'bg-orange-400' },
-  { zone: 'Зона электроники', activity: 65, color: 'bg-yellow-500' },
-  { zone: 'Зона продуктов', activity: 58, color: 'bg-yellow-400' },
-  { zone: 'Примерочные', activity: 42, color: 'bg-green-400' },
-  { zone: 'Складская зона', activity: 25, color: 'bg-green-500' },
-  { zone: 'Запасный выход', activity: 12, color: 'bg-blue-500' },
-];
-
-const eventsByType = [
-  { type: 'Детекция движения', count: 456, trend: '+12%', up: true },
-  { type: 'Подсчёт посетителей', count: 1247, trend: '+8%', up: true },
-  { type: 'Подозрительное поведение', count: 3, trend: '-40%', up: false },
-  { type: 'Длинная очередь', count: 18, trend: '+25%', up: true },
-  { type: 'Нарушение периметра', count: 1, trend: '-67%', up: false },
-  { type: 'Распознавание лиц', count: 89, trend: '+15%', up: true },
-];
-
-const weeklyComparison = [
-  { day: 'Пн', current: 1120, previous: 980 },
-  { day: 'Вт', current: 1080, previous: 1050 },
-  { day: 'Ср', current: 1247, previous: 1100 },
-  { day: 'Чт', current: 0, previous: 1200 },
-  { day: 'Пт', current: 0, previous: 1350 },
-  { day: 'Сб', current: 0, previous: 1500 },
-  { day: 'Вс', current: 0, previous: 890 },
-];
+interface AnalyticsData {
+  period: string;
+  totalEvents: number;
+  totalPeopleDetected: number;
+  eventsByType: Record<string, number>;
+  eventsBySeverity: { critical: number; warning: number; info: number };
+  hourlyData: { hour: string; count: number }[];
+  totalSessions: number;
+  activeSessions: number;
+  totalFrames: number;
+  eventsByCamera: { cameraName: string; count: number }[];
+  recentEvents: {
+    id: string;
+    type: string;
+    severity: string;
+    description: string;
+    timestamp: string;
+    cameraName: string;
+    cameraLocation: string;
+  }[];
+  comparison: {
+    events: { current: number; previous: number };
+    sessions: { current: number; previous: number };
+  };
+}
 
 const periodLabels: Record<string, string> = {
   today: 'Сегодня',
@@ -84,9 +65,36 @@ const periodLabels: Record<string, string> = {
   month: 'Этот месяц',
 };
 
+const typeLabels: Record<string, string> = {
+  motion_detected: 'Детекция движения',
+  alert: 'Алерт безопасности',
+  face_detected: 'Распознавание лиц',
+  people_count: 'Подсчёт людей',
+  suspicious_behavior: 'Подозрительное поведение',
+  queue_detected: 'Длинная очередь',
+};
+
 export default function AnalyticsPage() {
   const [period, setPeriod] = useState('today');
-  const [activeFilters, setActiveFilters] = useState<string[]>(['motion', 'people', 'faces']);
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeFilters, setActiveFilters] = useState<string[]>([]);
+
+  const fetchAnalytics = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await apiGet<AnalyticsData>(`/api/analytics?period=${period}`);
+      setData(result);
+    } catch (err) {
+      console.error('Failed to fetch analytics:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [period]);
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, [fetchAnalytics]);
 
   const toggleFilter = (filter: string) => {
     setActiveFilters((prev) =>
@@ -96,8 +104,58 @@ export default function AnalyticsPage() {
   };
 
   const handleExport = (format: string) => {
-    toast.success(`Экспорт в ${format} начат. Файл скачается автоматически.`);
+    if (format === 'CSV') {
+      const link = document.createElement('a');
+      link.href = `/api/analytics/export?format=csv&period=${period}`;
+      link.download = `analytics-${period}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('CSV-файл скачивается');
+    } else if (format === 'JSON') {
+      const link = document.createElement('a');
+      link.href = `/api/analytics/export?format=json&period=${period}`;
+      link.download = `analytics-${period}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('JSON-файл скачивается');
+    } else {
+      toast.info(`Экспорт в ${format} пока недоступен`);
+    }
   };
+
+  const formatTime = (timestamp: string) => {
+    const diff = Date.now() - new Date(timestamp).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'только что';
+    if (mins < 60) return `${mins} мин назад`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} ч назад`;
+    return `${Math.floor(hours / 24)} дн назад`;
+  };
+
+  const getChangePercent = (current: number, previous: number) => {
+    if (previous === 0) return current > 0 ? '+100%' : '0%';
+    const change = Math.round(((current - previous) / previous) * 100);
+    return change >= 0 ? `+${change}%` : `${change}%`;
+  };
+
+  const maxHourlyCount = data ? Math.max(...data.hourlyData.map((h) => h.count), 1) : 1;
+
+  // Filter events by selected types
+  const filteredEvents = data?.recentEvents.filter((e) => {
+    if (activeFilters.length === 0) return true;
+    return activeFilters.some((f) => e.type.includes(f));
+  }) ?? [];
+
+  // Event type stats
+  const eventTypeStats = data ? Object.entries(data.eventsByType).map(([type, count]) => ({
+    type: typeLabels[type] || type,
+    count,
+  })).sort((a, b) => b.count - a.count) : [];
+
+  const maxEventCount = eventTypeStats.length > 0 ? Math.max(...eventTypeStats.map((e) => e.count)) : 1;
 
   return (
     <div className="space-y-6">
@@ -124,10 +182,9 @@ export default function AnalyticsPage() {
             <DropdownMenuContent align="end">
               {[
                 { id: 'motion', label: 'Детекция движения' },
-                { id: 'people', label: 'Подсчёт людей' },
-                { id: 'faces', label: 'Распознавание лиц' },
+                { id: 'alert', label: 'Алерты' },
+                { id: 'face', label: 'Распознавание лиц' },
                 { id: 'suspicious', label: 'Подозрительное поведение' },
-                { id: 'queue', label: 'Очереди' },
               ].map((f) => (
                 <DropdownMenuItem
                   key={f.id}
@@ -158,10 +215,7 @@ export default function AnalyticsPage() {
               {Object.entries(periodLabels).map(([key, label]) => (
                 <DropdownMenuItem
                   key={key}
-                  onClick={() => {
-                    setPeriod(key);
-                    toast.info(`Период: ${label}`);
-                  }}
+                  onClick={() => setPeriod(key)}
                   className="cursor-pointer"
                 >
                   {key === period && <Check className="h-4 w-4 mr-2" />}
@@ -180,284 +234,330 @@ export default function AnalyticsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleExport('PDF')} className="cursor-pointer">
-                Экспорт в PDF
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => handleExport('CSV')} className="cursor-pointer">
                 Экспорт в CSV
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport('Excel')} className="cursor-pointer">
-                Экспорт в Excel
+              <DropdownMenuItem onClick={() => handleExport('JSON')} className="cursor-pointer">
+                Экспорт в JSON
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          {
-            label: 'Посетителей сегодня',
-            value: '1,247',
-            change: '+12%',
-            up: true,
-            icon: Users,
-          },
-          {
-            label: 'Среднее время визита',
-            value: '24 мин',
-            change: '+3 мин',
-            up: true,
-            icon: Clock,
-          },
-          {
-            label: 'Конверсия',
-            value: '34%',
-            change: '+5%',
-            up: true,
-            icon: TrendingUp,
-          },
-          {
-            label: 'Инцидентов',
-            value: '3',
-            change: '-40%',
-            up: false,
-            icon: AlertTriangle,
-          },
-        ].map((kpi) => (
-          <Card key={kpi.label}>
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between mb-3">
-                <kpi.icon className="h-5 w-5 text-muted-foreground" />
-                <Badge
-                  variant="secondary"
-                  className={cn(
-                    'text-xs',
-                    kpi.up ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
-                  )}
-                >
-                  {kpi.up ? <TrendingUp className="h-3 w-3 mr-1" /> : <TrendingDown className="h-3 w-3 mr-1" />}
-                  {kpi.change}
-                </Badge>
-              </div>
-              <p className="text-2xl font-bold">{kpi.value}</p>
-              <p className="text-sm text-muted-foreground">{kpi.label}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <Tabs defaultValue="overview">
-        <TabsList>
-          <TabsTrigger value="overview">Обзор</TabsTrigger>
-          <TabsTrigger value="heatmap">Тепловая карта</TabsTrigger>
-          <TabsTrigger value="events">События</TabsTrigger>
-          <TabsTrigger value="comparison">Сравнение</TabsTrigger>
-        </TabsList>
-
-        {/* Overview Tab */}
-        <TabsContent value="overview" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="h-5 w-5" />
-                Посещаемость по часам
-              </CardTitle>
-              <CardDescription>Количество обнаруженных посетителей за сегодня</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-end gap-1.5 h-48">
-                {hourlyData.map((item) => (
-                  <div key={item.hour} className="flex-1 flex flex-col items-center gap-1">
-                    <span className="text-[10px] text-muted-foreground">{item.visitors}</span>
-                    <div
-                      className={cn(
-                        'w-full rounded-t-sm transition-all',
-                        item.percentage > 80
-                          ? 'bg-red-500'
-                          : item.percentage > 60
-                          ? 'bg-orange-500'
-                          : item.percentage > 40
-                          ? 'bg-yellow-500'
-                          : 'bg-blue-500'
-                      )}
-                      style={{ height: `${Math.max(item.percentage, 3)}%` }}
-                    />
-                    <span className="text-[10px] text-muted-foreground">{item.hour}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Heatmap Tab */}
-        <TabsContent value="heatmap" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Eye className="h-5 w-5" />
-                Активность по зонам
-              </CardTitle>
-              <CardDescription>Уровень активности в различных зонах помещения</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {zoneHeatmap.map((zone) => (
-                  <div key={zone.zone} className="flex items-center gap-4">
-                    <span className="text-sm w-48 shrink-0">{zone.zone}</span>
-                    <div className="flex-1 h-8 bg-muted rounded-md overflow-hidden">
-                      <div
-                        className={cn('h-full rounded-md transition-all flex items-center px-2', zone.color)}
-                        style={{ width: `${zone.activity}%` }}
-                      >
-                        <span className="text-xs font-medium text-white">{zone.activity}%</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Simulated Heatmap Grid */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Визуальная тепловая карта</CardTitle>
-              <CardDescription>Схематичное представление активности</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-8 gap-1 aspect-[2/1]">
-                {Array.from({ length: 64 }, (_, i) => {
-                  const intensity = Math.random();
-                  return (
-                    <div
-                      key={i}
-                      className={cn(
-                        'rounded-sm',
-                        intensity > 0.8
-                          ? 'bg-red-500/80'
-                          : intensity > 0.6
-                          ? 'bg-orange-500/60'
-                          : intensity > 0.4
-                          ? 'bg-yellow-500/40'
-                          : intensity > 0.2
-                          ? 'bg-green-500/30'
-                          : 'bg-blue-500/20'
-                      )}
-                    />
-                  );
-                })}
-              </div>
-              <div className="flex items-center justify-center gap-4 mt-4 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1">
-                  <div className="h-3 w-3 rounded-sm bg-blue-500/20" />
-                  Низкая
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="h-3 w-3 rounded-sm bg-green-500/30" />
-                  Средняя
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="h-3 w-3 rounded-sm bg-yellow-500/40" />
-                  Высокая
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="h-3 w-3 rounded-sm bg-red-500/80" />
-                  Максимальная
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Events Tab */}
-        <TabsContent value="events" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Статистика событий</CardTitle>
-              <CardDescription>Количество обнаруженных событий по типам за сегодня</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {eventsByType.map((event) => (
-                  <div key={event.type} className="flex items-center gap-4">
-                    <span className="text-sm w-56 shrink-0">{event.type}</span>
-                    <div className="flex-1">
-                      <Progress
-                        value={(event.count / Math.max(...eventsByType.map((e) => e.count))) * 100}
-                        className="h-3"
-                      />
-                    </div>
-                    <span className="text-sm font-semibold w-16 text-right">{event.count}</span>
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : !data ? (
+        <div className="text-center py-12 text-muted-foreground">Не удалось загрузить данные</div>
+      ) : (
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              {
+                label: 'Всего событий',
+                value: data.totalEvents.toLocaleString(),
+                change: getChangePercent(data.comparison.events.current, data.comparison.events.previous),
+                up: data.comparison.events.current >= data.comparison.events.previous,
+                icon: AlertTriangle,
+              },
+              {
+                label: 'Обнаружено людей',
+                value: data.totalPeopleDetected.toLocaleString(),
+                change: data.totalPeopleDetected > 0 ? '+' : '',
+                up: true,
+                icon: Users,
+              },
+              {
+                label: 'Сессий анализа',
+                value: data.totalSessions.toLocaleString(),
+                change: getChangePercent(data.comparison.sessions.current, data.comparison.sessions.previous),
+                up: data.comparison.sessions.current >= data.comparison.sessions.previous,
+                icon: Activity,
+              },
+              {
+                label: 'Кадров обработано',
+                value: data.totalFrames.toLocaleString(),
+                change: data.activeSessions > 0 ? `${data.activeSessions} активных` : 'Нет активных',
+                up: data.activeSessions > 0,
+                icon: Camera,
+              },
+            ].map((kpi) => (
+              <Card key={kpi.label}>
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <kpi.icon className="h-5 w-5 text-muted-foreground" />
                     <Badge
                       variant="secondary"
                       className={cn(
-                        'text-xs w-16 justify-center',
-                        event.up
-                          ? 'text-green-600 dark:text-green-400'
-                          : 'text-red-600 dark:text-red-400'
+                        'text-xs',
+                        kpi.up ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
                       )}
                     >
-                      {event.trend}
+                      {kpi.up ? <TrendingUp className="h-3 w-3 mr-1" /> : <TrendingDown className="h-3 w-3 mr-1" />}
+                      {kpi.change}
                     </Badge>
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+                  <p className="text-2xl font-bold">{kpi.value}</p>
+                  <p className="text-sm text-muted-foreground">{kpi.label}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
 
-        {/* Comparison Tab */}
-        <TabsContent value="comparison" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Сравнение по дням</CardTitle>
-              <CardDescription>Текущая неделя vs. прошлая неделя</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {weeklyComparison.map((day) => (
-                  <div key={day.day} className="space-y-1">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium w-8">{day.day}</span>
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                        <span>Текущая: {day.current || '—'}</span>
-                        <span>Прошлая: {day.previous}</span>
-                      </div>
+          <Tabs defaultValue="overview">
+            <TabsList>
+              <TabsTrigger value="overview">Обзор</TabsTrigger>
+              <TabsTrigger value="events">События</TabsTrigger>
+              <TabsTrigger value="cameras">По камерам</TabsTrigger>
+              <TabsTrigger value="severity">По важности</TabsTrigger>
+            </TabsList>
+
+            {/* Overview Tab - Hourly chart */}
+            <TabsContent value="overview" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <BarChart3 className="h-5 w-5" />
+                    Активность по часам
+                  </CardTitle>
+                  <CardDescription>Количество событий по часам за {periodLabels[period].toLowerCase()}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {data.hourlyData.every((h) => h.count === 0) ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <BarChart3 className="h-12 w-12 text-muted-foreground mb-4" />
+                      <p className="text-muted-foreground">Нет данных за выбранный период</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Начните мониторинг камер для сбора статистики
+                      </p>
                     </div>
-                    <div className="flex gap-1">
-                      <div className="flex-1 h-6 bg-muted rounded-sm overflow-hidden">
-                        <div
-                          className="h-full bg-blue-500 rounded-sm"
-                          style={{ width: `${(day.current / 1500) * 100}%` }}
-                        />
-                      </div>
-                      <div className="flex-1 h-6 bg-muted rounded-sm overflow-hidden">
-                        <div
-                          className="h-full bg-muted-foreground/30 rounded-sm"
-                          style={{ width: `${(day.previous / 1500) * 100}%` }}
-                        />
-                      </div>
+                  ) : (
+                    <div className="flex items-end gap-1.5 h-48">
+                      {data.hourlyData.map((item) => {
+                        const percentage = (item.count / maxHourlyCount) * 100;
+                        return (
+                          <div key={item.hour} className="flex-1 flex flex-col items-center gap-1">
+                            {item.count > 0 && (
+                              <span className="text-[10px] text-muted-foreground">{item.count}</span>
+                            )}
+                            <div
+                              className={cn(
+                                'w-full rounded-t-sm transition-all',
+                                percentage > 80
+                                  ? 'bg-red-500'
+                                  : percentage > 60
+                                  ? 'bg-orange-500'
+                                  : percentage > 40
+                                  ? 'bg-yellow-500'
+                                  : percentage > 0
+                                  ? 'bg-blue-500'
+                                  : 'bg-muted'
+                              )}
+                              style={{ height: `${Math.max(percentage, 2)}%` }}
+                            />
+                            <span className="text-[10px] text-muted-foreground">{item.hour}</span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                ))}
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Events Tab - Event type breakdown */}
+            <TabsContent value="events" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Статистика по типам событий</CardTitle>
+                  <CardDescription>Распределение событий по типам</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {eventTypeStats.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      Нет событий за выбранный период
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {eventTypeStats.map((event) => (
+                        <div key={event.type} className="flex items-center gap-4">
+                          <span className="text-sm w-56 shrink-0">{event.type}</span>
+                          <div className="flex-1">
+                            <Progress
+                              value={(event.count / maxEventCount) * 100}
+                              className="h-3"
+                            />
+                          </div>
+                          <span className="text-sm font-semibold w-16 text-right">{event.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Recent events log */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5" />
+                    Журнал событий
+                  </CardTitle>
+                  <CardDescription>Последние события ({filteredEvents.length})</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {filteredEvents.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      Нет событий за выбранный период
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {filteredEvents.map((event) => (
+                        <div key={event.id} className="flex gap-3 pb-3 border-b border-border last:border-0">
+                          <div
+                            className={cn(
+                              'mt-1 h-2 w-2 rounded-full shrink-0',
+                              event.severity === 'critical'
+                                ? 'bg-red-500'
+                                : event.severity === 'warning'
+                                ? 'bg-yellow-500'
+                                : 'bg-blue-500'
+                            )}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm leading-snug">{event.description}</p>
+                            <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                              <span>{event.cameraName}</span>
+                              <span>{formatTime(event.timestamp)}</span>
+                              <Badge variant="secondary" className="text-[10px]">
+                                {typeLabels[event.type] || event.type}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Cameras Tab */}
+            <TabsContent value="cameras" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Eye className="h-5 w-5" />
+                    Активность по камерам
+                  </CardTitle>
+                  <CardDescription>Количество событий по каждой камере</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {data.eventsByCamera.length === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      Нет данных за выбранный период
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {data.eventsByCamera.map((cam) => {
+                        const maxCam = Math.max(...data.eventsByCamera.map((c) => c.count));
+                        return (
+                          <div key={cam.cameraName} className="flex items-center gap-4">
+                            <span className="text-sm w-48 shrink-0">{cam.cameraName}</span>
+                            <div className="flex-1 h-8 bg-muted rounded-md overflow-hidden">
+                              <div
+                                className="h-full bg-blue-500 rounded-md transition-all flex items-center px-2"
+                                style={{ width: `${Math.max((cam.count / maxCam) * 100, 5)}%` }}
+                              >
+                                <span className="text-xs font-medium text-white">{cam.count}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Severity Tab */}
+            <TabsContent value="severity" className="space-y-6">
+              <div className="grid sm:grid-cols-3 gap-4">
+                <Card>
+                  <CardContent className="p-6 text-center">
+                    <div className="flex h-12 w-12 mx-auto items-center justify-center rounded-full bg-red-500/10 mb-3">
+                      <AlertTriangle className="h-6 w-6 text-red-500" />
+                    </div>
+                    <p className="text-3xl font-bold text-red-500">{data.eventsBySeverity.critical}</p>
+                    <p className="text-sm text-muted-foreground mt-1">Критических</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-6 text-center">
+                    <div className="flex h-12 w-12 mx-auto items-center justify-center rounded-full bg-yellow-500/10 mb-3">
+                      <AlertTriangle className="h-6 w-6 text-yellow-500" />
+                    </div>
+                    <p className="text-3xl font-bold text-yellow-500">{data.eventsBySeverity.warning}</p>
+                    <p className="text-sm text-muted-foreground mt-1">Предупреждений</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-6 text-center">
+                    <div className="flex h-12 w-12 mx-auto items-center justify-center rounded-full bg-blue-500/10 mb-3">
+                      <Eye className="h-6 w-6 text-blue-500" />
+                    </div>
+                    <p className="text-3xl font-bold text-blue-500">{data.eventsBySeverity.info}</p>
+                    <p className="text-sm text-muted-foreground mt-1">Информационных</p>
+                  </CardContent>
+                </Card>
               </div>
-              <div className="flex items-center justify-center gap-6 mt-6 text-xs text-muted-foreground">
-                <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded-sm bg-blue-500" />
-                  Текущая неделя
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded-sm bg-muted-foreground/30" />
-                  Прошлая неделя
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+
+              {/* Severity distribution */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Распределение по важности</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {data.totalEvents === 0 ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      Нет событий за выбранный период
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {[
+                        { label: 'Критические', count: data.eventsBySeverity.critical, color: 'bg-red-500' },
+                        { label: 'Предупреждения', count: data.eventsBySeverity.warning, color: 'bg-yellow-500' },
+                        { label: 'Информационные', count: data.eventsBySeverity.info, color: 'bg-blue-500' },
+                      ].map((item) => (
+                        <div key={item.label} className="flex items-center gap-4">
+                          <span className="text-sm w-40 shrink-0">{item.label}</span>
+                          <div className="flex-1 h-6 bg-muted rounded-md overflow-hidden">
+                            <div
+                              className={cn('h-full rounded-md flex items-center px-2', item.color)}
+                              style={{ width: `${Math.max((item.count / data.totalEvents) * 100, 2)}%` }}
+                            >
+                              {item.count > 0 && (
+                                <span className="text-xs font-medium text-white">{item.count}</span>
+                              )}
+                            </div>
+                          </div>
+                          <span className="text-sm font-semibold w-16 text-right">
+                            {data.totalEvents > 0 ? Math.round((item.count / data.totalEvents) * 100) : 0}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </>
+      )}
     </div>
   );
 }

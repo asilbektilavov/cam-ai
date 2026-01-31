@@ -4,6 +4,7 @@ import { saveFrame } from './frame-storage';
 import { appEvents, CameraEvent } from './event-emitter';
 import { analyzeFrame } from './ai-analyzer';
 import { generateSessionSummary } from './session-summary';
+import { smartFeaturesEngine } from './smart-features-engine';
 
 interface MonitorState {
   cameraId: string;
@@ -57,6 +58,9 @@ class CameraMonitor {
 
     this.monitors.set(cameraId, state);
 
+    // Initialize smart features state for this camera
+    smartFeaturesEngine.initCamera(cameraId);
+
     // Update DB
     await prisma.camera.update({
       where: { id: cameraId },
@@ -86,6 +90,9 @@ class CameraMonitor {
     }
 
     this.monitors.delete(cameraId);
+
+    // Cleanup smart features state
+    smartFeaturesEngine.cleanupCamera(cameraId);
 
     await prisma.camera.update({
       where: { id: cameraId },

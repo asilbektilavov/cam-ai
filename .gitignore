@@ -48,3 +48,11 @@ prisma/dev.db-journal
 
 # frame storage
 /data/frames/
+/data/search-photos/
+
+# sqlite db copies
+dev.db
+dev.db-journal
+
+# claude
+.claude/

@@ -21,8 +21,21 @@ export const appEvents = AppEventEmitter.getInstance();
 
 // Event types
 export interface CameraEvent {
-  type: 'motion_detected' | 'session_started' | 'session_ended' | 'frame_analyzed' | 'alert';
+  type: 'motion_detected' | 'session_started' | 'session_ended' | 'frame_analyzed' | 'alert' | 'smart_alert' | 'person_sighting';
   cameraId: string;
   organizationId: string;
   data: Record<string, unknown>;
+}
+
+// Smart feature alert
+export interface SmartAlert {
+  featureType: string;
+  cameraId: string;
+  cameraName: string;
+  cameraLocation: string;
+  organizationId: string;
+  integrationId: string | null;
+  message: string;
+  severity: 'info' | 'warning' | 'critical';
+  metadata: Record<string, unknown>;
 }

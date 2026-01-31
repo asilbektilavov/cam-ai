@@ -8,13 +8,16 @@ datasource db {
 }
 
 model Organization {
-  id        String   @id @default(cuid())
-  name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
-  users     User[]
-  cameras   Camera[]
-  events    Event[]
+  id           String         @id @default(cuid())
+  name         String
+  slug         String         @unique
+  createdAt    DateTime       @default(now())
+  users        User[]
+  cameras      Camera[]
+  events       Event[]
+  integrations Integration[]
+  searchPersons SearchPerson[]
+  notifications Notification[]
 }
 
 model User {
@@ -26,6 +29,7 @@ model User {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
+  settings       UserSettings?
 }
 
 model Camera {
@@ -46,6 +50,8 @@ model Camera {
   updatedAt       DateTime          @updatedAt
   sessions        AnalysisSession[]
   events          Event[]
+  smartFeatures   SmartFeature[]
+  sightings       PersonSighting[]
 }
 
 model AnalysisSession {
@@ -84,4 +90,99 @@ model Event {
   timestamp      DateTime     @default(now())
   metadata       String?
   sessionId      String?
+}
+
+model UserSettings {
+  id               String  @id @default(cuid())
+  userId           String  @unique
+  user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Notifications
+  notifCritical    Boolean @default(true)
+  notifWarnings    Boolean @default(true)
+  notifInfo        Boolean @default(false)
+  notifSystem      Boolean @default(true)
+  notifDailyReport Boolean @default(false)
+  notifWeeklyReport Boolean @default(true)
+  // System
+  language         String  @default("ru")
+  timezone         String  @default("utc+5")
+  autoRecord       Boolean @default(true)
+  cloudStorage     Boolean @default(true)
+  aiQuality        String  @default("high")
+}
+
+model Integration {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           String
+  name           String
+  enabled        Boolean        @default(false)
+  config         String         @default("{}")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  smartFeatures  SmartFeature[]
+  searchPersons  SearchPerson[]
+  notifications  Notification[]
+
+  @@unique([organizationId, type])
+}
+
+// --- Smart Features ---
+
+model SmartFeature {
+  id            String       @id @default(cuid())
+  cameraId      String
+  camera        Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  featureType   String       // queue_monitor | person_search | loitering_detection | workstation_monitor
+  enabled       Boolean      @default(false)
+  config        String       @default("{}")
+  integrationId String?
+  integration   Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([cameraId, featureType])
+}
+
+model SearchPerson {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  photoPath      String
+  faceDescriptor String           // JSON: number[128]
+  isActive       Boolean          @default(true)
+  integrationId  String?
+  integration    Integration?     @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  createdAt      DateTime         @default(now())
+  sightings      PersonSighting[]
+}
+
+model PersonSighting {
+  id             String       @id @default(cuid())
+  searchPersonId String
+  searchPerson   SearchPerson @relation(fields: [searchPersonId], references: [id], onDelete: Cascade)
+  cameraId       String
+  camera         Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  timestamp      DateTime     @default(now())
+  description    String?
+  confidence     Float
+  framePath      String?
+  notified       Boolean      @default(false)
+}
+
+model Notification {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integrationId  String
+  integration    Integration  @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  featureType    String
+  cameraId       String?
+  message        String
+  status         String       @default("pending") // pending | sent | failed
+  error          String?
+  sentAt         DateTime?
+  createdAt      DateTime     @default(now())
 }

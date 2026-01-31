@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Video,
   X,
+  ScanFace,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,7 @@ import { useAppStore } from '@/lib/store';
 const navItems = [
   { href: '/dashboard', label: 'Дашборд', icon: LayoutDashboard },
   { href: '/cameras', label: 'Камеры', icon: Camera },
+  { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
   { href: '/integrations', label: 'Интеграции', icon: Plug },
   { href: '/settings', label: 'Настройки', icon: Settings },
