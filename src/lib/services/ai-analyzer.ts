@@ -94,7 +94,7 @@ export async function analyzeFrame(
     // Build dynamic prompt based on active smart features
     const prompt = await buildPrompt(cameraId);
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const result = await model.generateContent([
       prompt,
