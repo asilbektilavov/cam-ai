@@ -48,7 +48,7 @@ interface ApiEvent {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { selectedVenue } = useAppStore();
+  const { selectedVenue, selectedBranchId } = useAppStore();
   const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [cameras, setCameras] = useState<ApiCamera[]>([]);
@@ -58,11 +58,12 @@ export default function DashboardPage() {
   const { hasMotion } = useMotionTracker();
 
   const fetchData = useCallback(async () => {
+    const branchParam = selectedBranchId ? `branchId=${selectedBranchId}` : '';
     try {
       const [statsData, camerasData, eventsData] = await Promise.all([
-        apiGet<DashboardStats>('/api/dashboard/stats'),
-        apiGet<ApiCamera[]>('/api/cameras'),
-        apiGet<{ events: ApiEvent[] }>('/api/events?limit=6'),
+        apiGet<DashboardStats>(`/api/dashboard/stats?${branchParam}`),
+        apiGet<ApiCamera[]>(`/api/cameras?${branchParam}`),
+        apiGet<{ events: ApiEvent[] }>(`/api/events?limit=6&${branchParam}`),
       ]);
       setStats(statsData);
       setCameras(camerasData);
@@ -70,7 +71,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Failed to fetch dashboard data:', err);
     }
-  }, []);
+  }, [selectedBranchId]);
 
   // Real-time updates via SSE
   useEventStream(useCallback((event) => {
@@ -94,7 +95,7 @@ export default function DashboardPage() {
       return;
     }
     fetchData();
-  }, [selectedVenue, router, fetchData]);
+  }, [selectedVenue, selectedBranchId, router, fetchData]);
 
   if (!mounted || !selectedVenue) return null;
 

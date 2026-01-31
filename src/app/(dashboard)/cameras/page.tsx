@@ -50,6 +50,7 @@ import { CameraFeed } from '@/components/camera-feed';
 import { useMotionTracker } from '@/hooks/use-motion-tracker';
 import { useSearchDescriptors } from '@/hooks/use-search-descriptors';
 import { FeatureConfigPanel } from '@/components/smart-features/feature-config-panel';
+import { useAppStore } from '@/lib/store';
 
 interface ApiCamera {
   id: string;
@@ -88,17 +89,19 @@ export default function CamerasPage() {
 
   const { hasMotion } = useMotionTracker();
   const { descriptors: searchDescriptors } = useSearchDescriptors();
+  const { selectedBranchId } = useAppStore();
 
   const fetchCameras = useCallback(async () => {
     try {
-      const data = await apiGet<ApiCamera[]>('/api/cameras');
+      const branchParam = selectedBranchId ? `?branchId=${selectedBranchId}` : '';
+      const data = await apiGet<ApiCamera[]>(`/api/cameras${branchParam}`);
       setCameras(data);
     } catch (err) {
       console.error('Failed to fetch cameras:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedBranchId]);
 
   useEffect(() => {
     fetchCameras();
@@ -140,8 +143,12 @@ export default function CamerasPage() {
       toast.error('Заполните все обязательные поля');
       return;
     }
+    if (!selectedBranchId) {
+      toast.error('Выберите филиал');
+      return;
+    }
     try {
-      await apiPost('/api/cameras', newCamera);
+      await apiPost('/api/cameras', { ...newCamera, branchId: selectedBranchId });
       toast.success(`Камера "${newCamera.name}" добавлена`);
       setNewCamera({ name: '', location: '', streamUrl: '', resolution: '1920x1080', fps: 30 });
       setDialogOpen(false);

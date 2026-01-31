@@ -1,9 +1,19 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { registerRateLimiter, getClientIp } from '@/lib/rate-limit';
 
 export async function POST(request: Request) {
   try {
+    const ip = getClientIp(request);
+    const rl = registerRateLimiter.check(ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: `Слишком много попыток. Повторите через ${rl.retryAfterSeconds} сек.` },
+        { status: 429, headers: { 'Retry-After': String(rl.retryAfterSeconds) } }
+      );
+    }
+
     const { name, email, password, company } = await request.json();
 
     if (!name || !email || !password) {
@@ -13,9 +23,16 @@ export async function POST(request: Request) {
       );
     }
 
-    if (password.length < 6) {
+    if (password.length < 8) {
       return NextResponse.json(
-        { error: 'Пароль должен содержать минимум 6 символов' },
+        { error: 'Пароль должен содержать минимум 8 символов' },
+        { status: 400 }
+      );
+    }
+
+    if (!/[a-zA-Zа-яА-Я]/.test(password) || !/[0-9]/.test(password)) {
+      return NextResponse.json(
+        { error: 'Пароль должен содержать буквы и цифры' },
         { status: 400 }
       );
     }
@@ -40,6 +57,13 @@ export async function POST(request: Request) {
         data: {
           name: company || name,
           slug,
+        },
+      });
+
+      await tx.branch.create({
+        data: {
+          name: 'Главный офис',
+          organizationId: org.id,
         },
       });
 

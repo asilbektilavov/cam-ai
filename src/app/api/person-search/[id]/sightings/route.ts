@@ -49,6 +49,7 @@ export async function POST(
       cameraName: camera.name,
       cameraLocation: camera.location,
       organizationId: orgId,
+      branchId: camera.branchId,
       integrationId: person.integrationId,
       severity: 'critical',
       message: `Обнаружен разыскиваемый: ${person.name} (камера: ${camera.name}, ${camera.location}). Точность: ${Math.round(confidence * 100)}%`,
@@ -67,6 +68,7 @@ export async function POST(
     type: 'person_sighting',
     cameraId,
     organizationId: orgId,
+    branchId: camera.branchId,
     data: {
       personId: person.id,
       personName: person.name,

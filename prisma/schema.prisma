@@ -13,11 +13,26 @@ model Organization {
   slug         String         @unique
   createdAt    DateTime       @default(now())
   users        User[]
+  branches     Branch[]
   cameras      Camera[]
   events       Event[]
   integrations Integration[]
   searchPersons SearchPerson[]
   notifications Notification[]
+}
+
+model Branch {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  address        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  cameras        Camera[]
+  events         Event[]
+
+  @@unique([organizationId, name])
 }
 
 model User {
@@ -40,6 +55,8 @@ model Camera {
   status          String            @default("offline")
   organizationId  String
   organization    Organization      @relation(fields: [organizationId], references: [id])
+  branchId        String
+  branch          Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
   venueType       String            @default("retail")
   resolution      String            @default("1920x1080")
   fps             Int               @default(30)
@@ -84,6 +101,8 @@ model Event {
   camera         Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
+  branchId       String?
+  branch         Branch?      @relation(fields: [branchId], references: [id])
   type           String
   severity       String       @default("info")
   description    String

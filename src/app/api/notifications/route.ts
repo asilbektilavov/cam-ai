@@ -13,11 +13,13 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 100);
   const status = searchParams.get('status'); // pending | sent | failed
   const featureType = searchParams.get('featureType');
+  const branchId = searchParams.get('branchId');
 
   const where = {
     organizationId: orgId,
     ...(status && { status }),
     ...(featureType && { featureType }),
+    ...(branchId && { cameraId: { in: (await prisma.camera.findMany({ where: { branchId }, select: { id: true } })).map(c => c.id) } }),
   };
 
   const [notifications, total] = await Promise.all([

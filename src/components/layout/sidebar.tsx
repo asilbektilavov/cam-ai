@@ -15,6 +15,8 @@ import {
   Video,
   X,
   ScanFace,
+  BookOpen,
+  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -22,7 +24,9 @@ import { Separator } from '@/components/ui/separator';
 import { useAppStore } from '@/lib/store';
 
 const navItems = [
+  { href: '/onboarding', label: 'Начало работы', icon: BookOpen },
   { href: '/dashboard', label: 'Дашборд', icon: LayoutDashboard },
+  { href: '/branches', label: 'Филиалы', icon: Building2 },
   { href: '/cameras', label: 'Камеры', icon: Camera },
   { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
@@ -75,27 +79,29 @@ export function Sidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 space-y-1 p-3">
-          {navItems.map((item) => {
+          {navItems.map((item, index) => {
             const isActive = pathname === item.href;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => {
-                  if (window.innerWidth < 768) {
-                    setSidebarOpen(false);
-                  }
-                }}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                )}
-              >
-                <item.icon className="h-5 w-5 shrink-0" />
-                {sidebarOpen && <span>{item.label}</span>}
-              </Link>
+              <div key={item.href}>
+                <Link
+                  href={item.href}
+                  onClick={() => {
+                    if (window.innerWidth < 768) {
+                      setSidebarOpen(false);
+                    }
+                  }}
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                  )}
+                >
+                  <item.icon className="h-5 w-5 shrink-0" />
+                  {sidebarOpen && <span>{item.label}</span>}
+                </Link>
+                {index === 0 && <Separator className="my-2" />}
+              </div>
             );
           })}
         </nav>

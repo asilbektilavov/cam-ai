@@ -82,7 +82,6 @@ class SmartFeaturesEngine {
   async evaluate(
     cameraId: string,
     organizationId: string,
-    branchId: string,
     cameraName: string,
     cameraLocation: string,
     analysis: {
@@ -106,13 +105,13 @@ class SmartFeaturesEngine {
     for (const feature of features) {
       switch (feature.featureType) {
         case 'queue_monitor':
-          this.evaluateQueue(feature, state, cameraId, organizationId, branchId, cameraName, cameraLocation, analysis);
+          this.evaluateQueue(feature, state, cameraId, organizationId, cameraName, cameraLocation, analysis);
           break;
         case 'workstation_monitor':
-          this.evaluateWorkstation(feature, state, cameraId, organizationId, branchId, cameraName, cameraLocation, analysis);
+          this.evaluateWorkstation(feature, state, cameraId, organizationId, cameraName, cameraLocation, analysis);
           break;
         case 'loitering_detection':
-          this.evaluateLoitering(feature, state, cameraId, organizationId, branchId, cameraName, cameraLocation, analysis);
+          this.evaluateLoitering(feature, state, cameraId, organizationId, cameraName, cameraLocation, analysis);
           break;
       }
     }
@@ -123,7 +122,6 @@ class SmartFeaturesEngine {
     state: CameraState,
     cameraId: string,
     organizationId: string,
-    branchId: string,
     cameraName: string,
     cameraLocation: string,
     analysis: { queueLength?: number; peopleCount: number }
@@ -142,7 +140,6 @@ class SmartFeaturesEngine {
         cameraName,
         cameraLocation,
         organizationId,
-        branchId,
         integrationId: feature.integrationId,
         severity: queueLength > maxQueueLength * 2 ? 'critical' : 'warning',
         message: `Очередь превышена: ${queueLength} чел. (порог: ${maxQueueLength})`,
@@ -150,7 +147,7 @@ class SmartFeaturesEngine {
       };
 
       appEvents.emit('smart-alert', alert);
-      this.emitCameraEvent('smart_alert', cameraId, organizationId, branchId, { ...alert });
+      this.emitCameraEvent('smart_alert', cameraId, organizationId, { ...alert });
     }
   }
 
@@ -159,7 +156,6 @@ class SmartFeaturesEngine {
     state: CameraState,
     cameraId: string,
     organizationId: string,
-    branchId: string,
     cameraName: string,
     cameraLocation: string,
     analysis: { staffCount?: number; peopleCount: number }
@@ -185,7 +181,6 @@ class SmartFeaturesEngine {
           cameraName,
           cameraLocation,
           organizationId,
-          branchId,
           integrationId: feature.integrationId,
           severity: 'warning',
           message: `Рабочее место пустует уже ${minutes} мин. (требуется мин. ${minPeople} чел.)`,
@@ -193,7 +188,7 @@ class SmartFeaturesEngine {
         };
 
         appEvents.emit('smart-alert', alert);
-        this.emitCameraEvent('smart_alert', cameraId, organizationId, branchId, { ...alert });
+        this.emitCameraEvent('smart_alert', cameraId, organizationId, { ...alert });
       }
     } else {
       // Staff present — reset timer
@@ -207,7 +202,6 @@ class SmartFeaturesEngine {
     state: CameraState,
     cameraId: string,
     organizationId: string,
-    branchId: string,
     cameraName: string,
     cameraLocation: string,
     analysis: { loiteringDetected?: boolean; loiteringDetails?: string }
@@ -231,7 +225,6 @@ class SmartFeaturesEngine {
           cameraName,
           cameraLocation,
           organizationId,
-          branchId,
           integrationId: feature.integrationId,
           severity: 'warning',
           message: `Обнаружено праздношатание: человек находится на одном месте более ${minutes} мин.${analysis.loiteringDetails ? ` (${analysis.loiteringDetails})` : ''}`,
@@ -239,7 +232,7 @@ class SmartFeaturesEngine {
         };
 
         appEvents.emit('smart-alert', alert);
-        this.emitCameraEvent('smart_alert', cameraId, organizationId, branchId, { ...alert });
+        this.emitCameraEvent('smart_alert', cameraId, organizationId, { ...alert });
       }
     } else {
       // No loitering — reset
@@ -252,10 +245,9 @@ class SmartFeaturesEngine {
     type: CameraEvent['type'],
     cameraId: string,
     organizationId: string,
-    branchId: string,
     data: Record<string, unknown>
   ): void {
-    const event: CameraEvent = { type, cameraId, organizationId, branchId, data };
+    const event: CameraEvent = { type, cameraId, organizationId, data };
     appEvents.emit('camera-event', event);
   }
 }

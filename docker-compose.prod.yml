@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  cam-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cam-ai-app
+    restart: unless-stopped
+    expose:
+      - "3000"
+    env_file:
+      - .env
+    volumes:
+      - cam-ai-data:/app/data
+      - cam-ai-db:/app/prisma
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    container_name: cam-ai-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - certbot-webroot:/var/www/certbot:ro
+      - certbot-certs:/etc/letsencrypt:ro
+      - nginx-ssl:/etc/nginx/ssl:ro
+    depends_on:
+      cam-ai:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health-nginx"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  certbot:
+    image: certbot/certbot
+    container_name: cam-ai-certbot
+    volumes:
+      - certbot-webroot:/var/www/certbot
+      - certbot-certs:/etc/letsencrypt
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 12h & wait $${!}; certbot renew --webroot -w /var/www/certbot --quiet; done'"
+
+volumes:
+  cam-ai-data:
+    driver: local
+  cam-ai-db:
+    driver: local
+  certbot-webroot:
+    driver: local
+  certbot-certs:
+    driver: local
+  nginx-ssl:
+    driver: local

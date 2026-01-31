@@ -14,9 +14,11 @@ export async function GET(req: NextRequest) {
   const cameraId = searchParams.get('cameraId');
   const type = searchParams.get('type');
   const severity = searchParams.get('severity');
+  const branchId = searchParams.get('branchId');
 
   const where = {
     organizationId: orgId,
+    ...(branchId && { branchId }),
     ...(cameraId && { cameraId }),
     ...(type && { type }),
     ...(severity && { severity }),

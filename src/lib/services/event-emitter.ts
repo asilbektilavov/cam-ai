@@ -24,6 +24,7 @@ export interface CameraEvent {
   type: 'motion_detected' | 'session_started' | 'session_ended' | 'frame_analyzed' | 'alert' | 'smart_alert' | 'person_sighting';
   cameraId: string;
   organizationId: string;
+  branchId: string;
   data: Record<string, unknown>;
 }
 
@@ -34,6 +35,7 @@ export interface SmartAlert {
   cameraName: string;
   cameraLocation: string;
   organizationId: string;
+  branchId: string;
   integrationId: string | null;
   message: string;
   severity: 'info' | 'warning' | 'critical';

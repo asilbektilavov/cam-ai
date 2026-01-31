@@ -9,6 +9,7 @@ export async function GET(request: Request) {
   const orgId = session.user.organizationId;
   const { searchParams } = new URL(request.url);
   const period = searchParams.get('period') || 'today';
+  const branchId = searchParams.get('branchId');
 
   const now = new Date();
   let startDate: Date;
@@ -43,6 +44,7 @@ export async function GET(request: Request) {
   const events = await prisma.event.findMany({
     where: {
       organizationId: orgId,
+      ...(branchId && { branchId }),
       timestamp: { gte: startDate },
     },
     include: { camera: true },
@@ -52,7 +54,7 @@ export async function GET(request: Request) {
   // Get analysis sessions in period
   const sessions = await prisma.analysisSession.findMany({
     where: {
-      camera: { organizationId: orgId },
+      camera: { organizationId: orgId, ...(branchId && { branchId }) },
       startedAt: { gte: startDate },
     },
     include: {
@@ -140,13 +142,14 @@ export async function GET(request: Request) {
   const prevEvents = await prisma.event.count({
     where: {
       organizationId: orgId,
+      ...(branchId && { branchId }),
       timestamp: { gte: prevStart, lt: startDate },
     },
   });
 
   const prevSessions = await prisma.analysisSession.count({
     where: {
-      camera: { organizationId: orgId },
+      camera: { organizationId: orgId, ...(branchId && { branchId }) },
       startedAt: { gte: prevStart, lt: startDate },
     },
   });

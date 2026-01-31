@@ -9,6 +9,7 @@ import { smartFeaturesEngine } from './smart-features-engine';
 interface MonitorState {
   cameraId: string;
   organizationId: string;
+  branchId: string;
   streamUrl: string;
   motionThreshold: number;
   captureInterval: number;
@@ -46,6 +47,7 @@ class CameraMonitor {
     const state: MonitorState = {
       cameraId,
       organizationId: camera.organizationId,
+      branchId: camera.branchId,
       streamUrl: camera.streamUrl,
       motionThreshold: camera.motionThreshold,
       captureInterval: camera.captureInterval,
@@ -174,6 +176,7 @@ class CameraMonitor {
       framePath,
       state.cameraId,
       state.organizationId,
+      state.branchId,
       session.id
     );
 
@@ -182,6 +185,7 @@ class CameraMonitor {
       type: 'session_started',
       cameraId: state.cameraId,
       organizationId: state.organizationId,
+      branchId: state.branchId,
       data: { sessionId: session.id },
     };
     appEvents.emit('camera-event', event);
@@ -191,6 +195,7 @@ class CameraMonitor {
       data: {
         cameraId: state.cameraId,
         organizationId: state.organizationId,
+        branchId: state.branchId,
         type: 'motion_detected',
         severity: 'info',
         description: 'Обнаружено движение, начата сессия анализа',
@@ -235,6 +240,7 @@ class CameraMonitor {
       framePath,
       state.cameraId,
       state.organizationId,
+      state.branchId,
       state.activeSessionId
     );
 
@@ -242,6 +248,7 @@ class CameraMonitor {
       type: 'frame_analyzed',
       cameraId: state.cameraId,
       organizationId: state.organizationId,
+      branchId: state.branchId,
       data: {
         sessionId: state.activeSessionId,
         frameId: analysisFrame.id,
@@ -276,6 +283,7 @@ class CameraMonitor {
       type: 'session_ended',
       cameraId: state.cameraId,
       organizationId: state.organizationId,
+      branchId: state.branchId,
       data: { sessionId: state.activeSessionId },
     };
     appEvents.emit('camera-event', event);

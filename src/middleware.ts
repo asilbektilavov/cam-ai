@@ -8,5 +8,8 @@ export const config = {
     '/integrations/:path*',
     '/settings/:path*',
     '/select-venue/:path*',
+    '/branches/:path*',
+    '/person-search/:path*',
+    '/onboarding/:path*',
   ],
 };

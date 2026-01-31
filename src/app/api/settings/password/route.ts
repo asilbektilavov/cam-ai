@@ -11,8 +11,11 @@ export async function POST(request: Request) {
   const { currentPassword, newPassword } = body;
 
   if (!currentPassword) return badRequest('Введите текущий пароль');
-  if (!newPassword || newPassword.length < 6) {
-    return badRequest('Пароль должен содержать минимум 6 символов');
+  if (!newPassword || newPassword.length < 8) {
+    return badRequest('Пароль должен содержать минимум 8 символов');
+  }
+  if (!/[a-zA-Zа-яА-Я]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+    return badRequest('Пароль должен содержать буквы и цифры');
   }
 
   const user = await prisma.user.findUnique({

@@ -7,6 +7,10 @@ interface AppState {
   selectedVenue: VenueType | null;
   setSelectedVenue: (venue: VenueType) => void;
 
+  // Branch
+  selectedBranchId: string | null;
+  setSelectedBranchId: (id: string | null) => void;
+
   // Sidebar
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
@@ -19,6 +23,10 @@ export const useAppStore = create<AppState>()(
       selectedVenue: null,
       setSelectedVenue: (venue: VenueType) => set({ selectedVenue: venue }),
 
+      // Branch
+      selectedBranchId: null,
+      setSelectedBranchId: (id) => set({ selectedBranchId: id }),
+
       // Sidebar
       sidebarOpen: true,
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
@@ -27,6 +35,7 @@ export const useAppStore = create<AppState>()(
       name: 'cam-ai-storage',
       partialize: (state) => ({
         selectedVenue: state.selectedVenue,
+        selectedBranchId: state.selectedBranchId,
       }),
     }
   )

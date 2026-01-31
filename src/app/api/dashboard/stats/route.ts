@@ -1,22 +1,32 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
 
   const orgId = session.user.organizationId;
+  const branchId = new URL(req.url).searchParams.get('branchId');
+
+  const cameraWhere = {
+    organizationId: orgId,
+    ...(branchId && { branchId }),
+  };
+  const eventWhere = {
+    organizationId: orgId,
+    ...(branchId && { branchId }),
+  };
 
   const [totalCameras, onlineCameras, totalEvents, criticalEvents, recentFrames] =
     await Promise.all([
-      prisma.camera.count({ where: { organizationId: orgId } }),
-      prisma.camera.count({ where: { organizationId: orgId, status: 'online' } }),
-      prisma.event.count({ where: { organizationId: orgId } }),
-      prisma.event.count({ where: { organizationId: orgId, severity: 'critical' } }),
+      prisma.camera.count({ where: cameraWhere }),
+      prisma.camera.count({ where: { ...cameraWhere, status: 'online' } }),
+      prisma.event.count({ where: eventWhere }),
+      prisma.event.count({ where: { ...eventWhere, severity: 'critical' } }),
       prisma.analysisFrame.findMany({
         where: {
-          session: { camera: { organizationId: orgId } },
+          session: { camera: cameraWhere },
           peopleCount: { not: null },
         },
         select: { peopleCount: true },

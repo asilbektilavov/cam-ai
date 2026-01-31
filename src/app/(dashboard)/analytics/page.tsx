@@ -31,6 +31,7 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { apiGet } from '@/lib/api-client';
+import { useAppStore } from '@/lib/store';
 
 interface AnalyticsData {
   period: string;
@@ -79,18 +80,20 @@ export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
+  const { selectedBranchId } = useAppStore();
 
   const fetchAnalytics = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await apiGet<AnalyticsData>(`/api/analytics?period=${period}`);
+      const branchParam = selectedBranchId ? `&branchId=${selectedBranchId}` : '';
+      const result = await apiGet<AnalyticsData>(`/api/analytics?period=${period}${branchParam}`);
       setData(result);
     } catch (err) {
       console.error('Failed to fetch analytics:', err);
     } finally {
       setLoading(false);
     }
-  }, [period]);
+  }, [period, selectedBranchId]);
 
   useEffect(() => {
     fetchAnalytics();

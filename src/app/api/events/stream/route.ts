@@ -4,18 +4,20 @@ import { appEvents, CameraEvent } from '@/lib/services/event-emitter';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
 
   const orgId = session.user.organizationId;
+  const branchId = new URL(request.url).searchParams.get('branchId');
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
       const handler = (event: CameraEvent) => {
-        // Only send events for this organization
+        // Only send events for this organization (and branch if specified)
         if (event.organizationId !== orgId) return;
+        if (branchId && event.branchId !== branchId) return;
 
         const data = JSON.stringify(event);
         controller.enqueue(encoder.encode(`data: ${data}\n\n`));

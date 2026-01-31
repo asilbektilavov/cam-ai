@@ -4,10 +4,9 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { useTheme } from 'next-themes';
-import { Bell, Moon, Sun, Search, Menu } from 'lucide-react';
+import { Bell, Moon, Sun, Search, Menu, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   Dialog,
@@ -22,14 +21,23 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useAppStore } from '@/lib/store';
+import { useBranches } from '@/hooks/use-branches';
 import { cn } from '@/lib/utils';
 
 export function Header() {
   const router = useRouter();
   const { data: session } = useSession();
   const { theme, setTheme } = useTheme();
-  const { sidebarOpen, setSidebarOpen } = useAppStore();
+  const { sidebarOpen, setSidebarOpen, selectedBranchId, setSelectedBranchId } = useAppStore();
+  const { branches, isLoading: branchesLoading } = useBranches();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -54,6 +62,26 @@ export function Header() {
           >
             <Menu className="h-5 w-5" />
           </Button>
+
+          {/* Branch Switcher */}
+          {!branchesLoading && branches.length > 0 && (
+            <Select
+              value={selectedBranchId || undefined}
+              onValueChange={(val) => setSelectedBranchId(val)}
+            >
+              <SelectTrigger size="sm" className="w-[160px] md:w-[200px]">
+                <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <SelectValue placeholder="Филиал" />
+              </SelectTrigger>
+              <SelectContent>
+                {branches.map((branch) => (
+                  <SelectItem key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
           {/* Search */}
           <div className="relative w-full max-w-md hidden sm:block">
