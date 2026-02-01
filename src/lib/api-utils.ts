@@ -20,3 +20,15 @@ export function badRequest(message: string) {
 export function notFound(message = 'Not found') {
   return NextResponse.json({ error: message }, { status: 404 });
 }
+
+export function parseRemoteBranchId(branchId: string | null): {
+  isRemote: boolean;
+  localBranchId: string | null;
+  remoteInstanceId: string | null;
+} {
+  if (!branchId) return { isRemote: false, localBranchId: null, remoteInstanceId: null };
+  if (branchId.startsWith('remote:')) {
+    return { isRemote: true, localBranchId: null, remoteInstanceId: branchId.slice(7) };
+  }
+  return { isRemote: false, localBranchId: branchId, remoteInstanceId: null };
+}

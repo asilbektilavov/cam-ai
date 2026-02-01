@@ -9,8 +9,10 @@ import {
   Camera,
   MapPin,
   Loader2,
+  Globe,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -41,6 +43,20 @@ interface Branch {
   address: string | null;
   createdAt: string;
   _count: { cameras: number };
+  isRemote?: boolean;
+  status?: 'online' | 'offline';
+  lastSyncAt?: string;
+}
+
+function formatSyncAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'только что';
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  const days = Math.floor(hours / 24);
+  return `${days} дн назад`;
 }
 
 export default function BranchesPage() {
@@ -208,11 +224,22 @@ export default function BranchesPage() {
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <Building2 className="h-5 w-5 text-primary" />
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${branch.isRemote ? 'bg-blue-500/10' : 'bg-primary/10'}`}>
+                      {branch.isRemote ? (
+                        <Globe className="h-5 w-5 text-blue-500" />
+                      ) : (
+                        <Building2 className="h-5 w-5 text-primary" />
+                      )}
                     </div>
                     <div className="min-w-0">
-                      <h3 className="font-semibold truncate">{branch.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold truncate">{branch.name}</h3>
+                        {branch.isRemote && (
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                            Удалённый
+                          </Badge>
+                        )}
+                      </div>
                       {branch.address && (
                         <div className="flex items-center gap-1 mt-0.5">
                           <MapPin className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -221,26 +248,44 @@ export default function BranchesPage() {
                           </p>
                         </div>
                       )}
+                      {branch.isRemote && (
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className={`inline-block h-2 w-2 rounded-full ${branch.status === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <span className="text-xs text-muted-foreground">
+                            {branch.status === 'online' ? 'Онлайн' : 'Офлайн'}
+                          </span>
+                          {branch.lastSyncAt && (
+                            <>
+                              <span className="text-xs text-muted-foreground">·</span>
+                              <span className="text-xs text-muted-foreground">
+                                Последняя синхр.: {formatSyncAgo(branch.lastSyncAt)}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => openEdit(branch)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={() => setDeleteId(branch.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  {!branch.isRemote && (
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => openEdit(branch)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={() => setDeleteId(branch.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 mt-4 pt-3 border-t">

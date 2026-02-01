@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getAuthSession, unauthorized } from '@/lib/api-utils';
+import { getAuthSession, unauthorized, parseRemoteBranchId } from '@/lib/api-utils';
 
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
@@ -14,17 +14,61 @@ export async function GET(req: NextRequest) {
   const cameraId = searchParams.get('cameraId');
   const type = searchParams.get('type');
   const severity = searchParams.get('severity');
-  const branchId = searchParams.get('branchId');
+  const rawBranchId = searchParams.get('branchId');
+  const { isRemote, localBranchId, remoteInstanceId } = parseRemoteBranchId(rawBranchId);
+
+  // If filtering by a remote instance, only return remote events
+  if (isRemote && remoteInstanceId) {
+    const remoteWhere = {
+      remoteInstanceId,
+      ...(type && { type }),
+      ...(severity && { severity }),
+    };
+
+    const [remoteEvents, remoteTotal] = await Promise.all([
+      prisma.remoteEvent.findMany({
+        where: remoteWhere,
+        orderBy: { timestamp: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: { remoteInstance: { select: { branchName: true } } },
+      }),
+      prisma.remoteEvent.count({ where: remoteWhere }),
+    ]);
+
+    const events = remoteEvents.map((e) => ({
+      id: e.id,
+      cameraId: null,
+      type: e.type,
+      severity: e.severity,
+      description: e.description,
+      timestamp: e.timestamp,
+      metadata: e.metadata,
+      camera: { name: e.cameraName, location: e.cameraLocation },
+      branchName: e.remoteInstance.branchName,
+      isRemote: true,
+    }));
+
+    return NextResponse.json({
+      events,
+      pagination: {
+        page,
+        limit,
+        total: remoteTotal,
+        totalPages: Math.ceil(remoteTotal / limit),
+      },
+    });
+  }
 
   const where = {
     organizationId: orgId,
-    ...(branchId && { branchId }),
+    ...(localBranchId && { branchId: localBranchId }),
     ...(cameraId && { cameraId }),
     ...(type && { type }),
     ...(severity && { severity }),
   };
 
-  const [events, total] = await Promise.all([
+  const [localEvents, localTotal] = await Promise.all([
     prisma.event.findMany({
       where,
       include: { camera: { select: { name: true, location: true } } },
@@ -35,13 +79,59 @@ export async function GET(req: NextRequest) {
     prisma.event.count({ where }),
   ]);
 
+  // On central without branch filter, merge remote events
+  if (process.env.INSTANCE_ROLE === 'central' && !localBranchId) {
+    const remoteWhere = {
+      ...(type && { type }),
+      ...(severity && { severity }),
+    };
+
+    const [remoteEvents, remoteTotal] = await Promise.all([
+      prisma.remoteEvent.findMany({
+        where: remoteWhere,
+        orderBy: { timestamp: 'desc' },
+        take: limit,
+        include: { remoteInstance: { select: { branchName: true } } },
+      }),
+      prisma.remoteEvent.count({ where: remoteWhere }),
+    ]);
+
+    const mergedEvents = [
+      ...localEvents.map((e) => ({ ...e, isRemote: false })),
+      ...remoteEvents.map((e) => ({
+        id: e.id,
+        cameraId: null,
+        type: e.type,
+        severity: e.severity,
+        description: e.description,
+        timestamp: e.timestamp,
+        metadata: e.metadata,
+        camera: { name: e.cameraName, location: e.cameraLocation },
+        branchName: e.remoteInstance.branchName,
+        isRemote: true,
+      })),
+    ]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, limit);
+
+    return NextResponse.json({
+      events: mergedEvents,
+      pagination: {
+        page,
+        limit,
+        total: localTotal + remoteTotal,
+        totalPages: Math.ceil((localTotal + remoteTotal) / limit),
+      },
+    });
+  }
+
   return NextResponse.json({
-    events,
+    events: localEvents,
     pagination: {
       page,
       limit,
-      total,
-      totalPages: Math.ceil(total / limit),
+      total: localTotal,
+      totalPages: Math.ceil(localTotal / limit),
     },
   });
 }

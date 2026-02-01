@@ -1,21 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getAuthSession, unauthorized } from '@/lib/api-utils';
+import { getAuthSession, unauthorized, parseRemoteBranchId } from '@/lib/api-utils';
 
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
 
   const orgId = session.user.organizationId;
-  const branchId = new URL(req.url).searchParams.get('branchId');
+  const rawBranchId = new URL(req.url).searchParams.get('branchId');
+  const { isRemote, localBranchId, remoteInstanceId } = parseRemoteBranchId(rawBranchId);
+
+  // If filtering by a remote instance, only return remote data
+  if (isRemote && remoteInstanceId) {
+    const [remoteCameras, remoteOnline, remoteEvents, remoteCritical] = await Promise.all([
+      prisma.remoteCamera.count({ where: { remoteInstanceId } }),
+      prisma.remoteCamera.count({ where: { remoteInstanceId, status: 'online' } }),
+      prisma.remoteEvent.count({ where: { remoteInstanceId } }),
+      prisma.remoteEvent.count({ where: { remoteInstanceId, severity: 'critical' } }),
+    ]);
+
+    return NextResponse.json({
+      totalCameras: remoteCameras,
+      onlineCameras: remoteOnline,
+      totalEvents: remoteEvents,
+      criticalEvents: remoteCritical,
+      peopleDetected: 0,
+      avgOccupancy: 0,
+    });
+  }
 
   const cameraWhere = {
     organizationId: orgId,
-    ...(branchId && { branchId }),
+    ...(localBranchId && { branchId: localBranchId }),
   };
   const eventWhere = {
     organizationId: orgId,
-    ...(branchId && { branchId }),
+    ...(localBranchId && { branchId: localBranchId }),
   };
 
   const [totalCameras, onlineCameras, totalEvents, criticalEvents, recentFrames] =
@@ -40,11 +60,31 @@ export async function GET(req: NextRequest) {
     0
   );
 
+  let finalTotalCameras = totalCameras;
+  let finalOnlineCameras = onlineCameras;
+  let finalTotalEvents = totalEvents;
+  let finalCriticalEvents = criticalEvents;
+
+  // On central instance without branch filter, merge remote data
+  if (process.env.INSTANCE_ROLE === 'central' && !localBranchId) {
+    const [remoteCameras, remoteOnline, remoteEvents, remoteCritical] = await Promise.all([
+      prisma.remoteCamera.count(),
+      prisma.remoteCamera.count({ where: { status: 'online' } }),
+      prisma.remoteEvent.count(),
+      prisma.remoteEvent.count({ where: { severity: 'critical' } }),
+    ]);
+
+    finalTotalCameras += remoteCameras;
+    finalOnlineCameras += remoteOnline;
+    finalTotalEvents += remoteEvents;
+    finalCriticalEvents += remoteCritical;
+  }
+
   return NextResponse.json({
-    totalCameras,
-    onlineCameras,
-    totalEvents,
-    criticalEvents,
+    totalCameras: finalTotalCameras,
+    onlineCameras: finalOnlineCameras,
+    totalEvents: finalTotalEvents,
+    criticalEvents: finalCriticalEvents,
     peopleDetected,
     avgOccupancy: recentFrames.length
       ? Math.round(peopleDetected / recentFrames.length)

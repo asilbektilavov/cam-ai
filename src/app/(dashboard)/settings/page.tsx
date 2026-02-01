@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   User,
   Bell,
@@ -12,6 +12,9 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  RefreshCw,
+  Link2,
+  Server,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 import { apiGet, apiPatch, apiPost } from '@/lib/api-client';
@@ -53,6 +57,22 @@ interface SystemSettings {
   autoRecord: boolean;
   cloudStorage: boolean;
   aiQuality: string;
+}
+
+interface SyncInstance {
+  id: string;
+  name: string;
+  status: 'online' | 'offline';
+  lastSyncAt: string | null;
+  cameraCount: number;
+}
+
+interface SyncStatus {
+  role: 'central' | 'satellite' | 'standalone';
+  instances?: SyncInstance[];
+  syncTarget?: string;
+  queueSize?: number;
+  lastSyncAt?: string | null;
 }
 
 export default function SettingsPage() {
@@ -94,6 +114,21 @@ export default function SettingsPage() {
   const [autoRecord, setAutoRecord] = useState(true);
   const [cloudStorage, setCloudStorage] = useState(true);
   const [aiQuality, setAiQuality] = useState('high');
+
+  // Sync
+  const [syncLoading, setSyncLoading] = useState(true);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+
+  const fetchSyncStatus = useCallback(() => {
+    apiGet<SyncStatus>('/api/sync/status')
+      .then((data) => setSyncStatus(data))
+      .catch(() => setSyncStatus(null))
+      .finally(() => setSyncLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchSyncStatus();
+  }, [fetchSyncStatus]);
 
   // Load profile data
   useEffect(() => {
@@ -243,6 +278,10 @@ export default function SettingsPage() {
           <TabsTrigger value="system" className="gap-2">
             <Palette className="h-4 w-4" />
             Система
+          </TabsTrigger>
+          <TabsTrigger value="sync" className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Синхронизация
           </TabsTrigger>
         </TabsList>
 
@@ -539,6 +578,114 @@ export default function SettingsPage() {
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     Сохранить
                   </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Sync */}
+        <TabsContent value="sync">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <RefreshCw className="h-5 w-5" />
+                Синхронизация
+              </CardTitle>
+              <CardDescription>Статус синхронизации между экземплярами системы</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {syncLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : !syncStatus ? (
+                <p className="text-sm text-muted-foreground">Не удалось загрузить статус синхронизации</p>
+              ) : syncStatus.role === 'standalone' ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <Server className="h-12 w-12 text-muted-foreground mb-3" />
+                  <p className="text-sm text-muted-foreground">
+                    Автономный режим — синхронизация не настроена
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Роль:</span>
+                    <Badge variant="outline">
+                      {syncStatus.role === 'central' ? 'Центральный сервер' : 'Сателлит'}
+                    </Badge>
+                  </div>
+
+                  {syncStatus.role === 'central' && syncStatus.instances && (
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-medium">Подключённые экземпляры</h4>
+                      {syncStatus.instances.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Нет подключённых экземпляров</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {syncStatus.instances.map((inst) => (
+                            <div
+                              key={inst.id}
+                              className="flex items-center justify-between rounded-lg border p-3"
+                            >
+                              <div className="flex items-center gap-3">
+                                <span
+                                  className={`inline-block h-2.5 w-2.5 rounded-full ${
+                                    inst.status === 'online' ? 'bg-green-500' : 'bg-red-500'
+                                  }`}
+                                />
+                                <div>
+                                  <p className="text-sm font-medium">{inst.name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {inst.lastSyncAt
+                                      ? `Синхр.: ${new Date(inst.lastSyncAt).toLocaleString('ru-RU')}`
+                                      : 'Ещё не синхронизировался'}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Camera className="h-4 w-4 text-muted-foreground" />
+                                <span className="text-sm text-muted-foreground">{inst.cameraCount}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {syncStatus.role === 'satellite' && (
+                    <div className="space-y-4">
+                      {syncStatus.syncTarget && (
+                        <div className="space-y-1">
+                          <span className="text-sm font-medium">Центральный сервер</span>
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Link2 className="h-4 w-4 shrink-0" />
+                            <span className="truncate">{syncStatus.syncTarget}</span>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-4">
+                        {syncStatus.queueSize !== undefined && (
+                          <div className="space-y-1">
+                            <span className="text-sm font-medium">Очередь</span>
+                            <p className="text-sm text-muted-foreground">
+                              {syncStatus.queueSize} событий
+                            </p>
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          <span className="text-sm font-medium">Последняя синхронизация</span>
+                          <p className="text-sm text-muted-foreground">
+                            {syncStatus.lastSyncAt
+                              ? new Date(syncStatus.lastSyncAt).toLocaleString('ru-RU')
+                              : 'Ещё не выполнялась'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </CardContent>

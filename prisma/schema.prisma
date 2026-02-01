@@ -205,3 +205,59 @@ model Notification {
   sentAt         DateTime?
   createdAt      DateTime     @default(now())
 }
+
+// --- Multi-Branch Sync ---
+
+model RemoteInstance {
+  id             String         @id @default(cuid())
+  organizationId String
+  instanceId     String         @unique
+  name           String
+  branchName     String
+  address        String?
+  lastSyncAt     DateTime?
+  status         String         @default("unknown") // online | offline | unknown
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  remoteEvents   RemoteEvent[]
+  remoteCameras  RemoteCamera[]
+}
+
+model RemoteEvent {
+  id               String         @id @default(cuid())
+  remoteInstanceId String
+  remoteInstance   RemoteInstance @relation(fields: [remoteInstanceId], references: [id], onDelete: Cascade)
+  originalId       String
+  cameraName       String
+  cameraLocation   String
+  type             String
+  severity         String         @default("info")
+  description      String
+  timestamp        DateTime
+  metadata         String?
+  syncedAt         DateTime       @default(now())
+
+  @@unique([remoteInstanceId, originalId])
+}
+
+model RemoteCamera {
+  id               String         @id @default(cuid())
+  remoteInstanceId String
+  remoteInstance   RemoteInstance @relation(fields: [remoteInstanceId], references: [id], onDelete: Cascade)
+  originalId       String
+  name             String
+  location         String
+  status           String         @default("offline")
+  isMonitoring     Boolean        @default(false)
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([remoteInstanceId, originalId])
+}
+
+model SyncQueue {
+  id        String   @id @default(cuid())
+  payload   String
+  attempts  Int      @default(0)
+  lastError String?
+  createdAt DateTime @default(now())
+}

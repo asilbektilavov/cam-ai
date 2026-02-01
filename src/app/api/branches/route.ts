@@ -16,6 +16,32 @@ export async function GET() {
     orderBy: { createdAt: 'asc' },
   });
 
+  // On central, append remote instances as virtual branches
+  if (process.env.INSTANCE_ROLE === 'central') {
+    const remoteInstances = await prisma.remoteInstance.findMany({
+      include: { _count: { select: { remoteCameras: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const TEN_MINUTES = 10 * 60 * 1000;
+    const remoteBranches = remoteInstances.map((ri) => ({
+      id: `remote:${ri.id}`,
+      organizationId: ri.organizationId,
+      name: ri.branchName,
+      address: ri.address,
+      createdAt: ri.createdAt,
+      updatedAt: ri.updatedAt,
+      isRemote: true,
+      status: ri.lastSyncAt && Date.now() - ri.lastSyncAt.getTime() < TEN_MINUTES
+        ? 'online'
+        : 'offline',
+      lastSyncAt: ri.lastSyncAt,
+      _count: { cameras: ri._count.remoteCameras },
+    }));
+
+    return NextResponse.json([...branches, ...remoteBranches]);
+  }
+
   return NextResponse.json(branches);
 }
 

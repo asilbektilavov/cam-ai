@@ -26,5 +26,21 @@ export async function register() {
     } catch (error) {
       console.error('[Init] Failed to resume camera monitoring:', error);
     }
+
+    // Start sync worker on satellite instances
+    if (
+      process.env.INSTANCE_ROLE === 'satellite' &&
+      process.env.SYNC_TO &&
+      process.env.SYNC_KEY
+    ) {
+      const { syncWorker } = await import('@/lib/services/sync-worker');
+      syncWorker.start();
+    }
+
+    // Auto-generate INSTANCE_ID if not set
+    if (!process.env.INSTANCE_ID) {
+      const { randomUUID } = await import('crypto');
+      process.env.INSTANCE_ID = randomUUID();
+    }
   }
 }

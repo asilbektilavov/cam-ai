@@ -5,6 +5,15 @@ set -euo pipefail
 # CamAI — Установка для клиента
 # Использование:
 #   bash install-client.sh --key AIzaSy... --company "Магазин Ромашка" --telegram 7123456:AAF...
+#
+# Мульти-филиал:
+#   Центральный:
+#     bash install-client.sh --key ... --company "Ромашка" --central --sync-key "secret" \
+#       --tunnel eyJhIjoi... --domain romashka.camvision.com
+#
+#   Спутник:
+#     bash install-client.sh --key ... --company "Ромашка Алмазар" \
+#       --sync-to "https://romashka.camvision.com" --sync-key "secret"
 # ============================================
 
 RED='\033[0;31m'
@@ -24,6 +33,11 @@ ADMIN_EMAIL="admin@cam-ai.local"
 COMPANY_NAME="CamAI"
 INSTALL_DIR="/opt/cam-ai"
 TELEGRAM_BOT_TOKEN=""
+INSTANCE_ROLE=""
+SYNC_TO=""
+SYNC_KEY=""
+TUNNEL_TOKEN=""
+TUNNEL_DOMAIN=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -32,9 +46,25 @@ while [[ $# -gt 0 ]]; do
     --company) COMPANY_NAME="$2"; shift 2;;
     --dir) INSTALL_DIR="$2"; shift 2;;
     --telegram) TELEGRAM_BOT_TOKEN="$2"; shift 2;;
+    --central) INSTANCE_ROLE="central"; shift;;
+    --sync-to) SYNC_TO="$2"; INSTANCE_ROLE="satellite"; shift 2;;
+    --sync-key) SYNC_KEY="$2"; shift 2;;
+    --tunnel) TUNNEL_TOKEN="$2"; shift 2;;
+    --domain) TUNNEL_DOMAIN="$2"; shift 2;;
     *) shift;;
   esac
 done
+
+# Валидация sync флагов
+if [ "$INSTANCE_ROLE" = "central" ] && [ -z "$SYNC_KEY" ]; then
+    error "Для центрального сервера нужен --sync-key"
+fi
+if [ "$INSTANCE_ROLE" = "satellite" ] && [ -z "$SYNC_KEY" ]; then
+    error "Для спутника нужен --sync-key"
+fi
+if [ -n "$TUNNEL_TOKEN" ] && [ -z "$TUNNEL_DOMAIN" ]; then
+    error "Для Cloudflare Tunnel нужен --domain"
+fi
 
 echo ""
 echo -e "${BLUE}${BOLD}╔══════════════════════════════════════╗${NC}"
@@ -146,16 +176,50 @@ volumes:
     driver: local
 COMPOSE_EOF
 
+# Добавляю cloudflared контейнер если указан --tunnel
+if [ -n "$TUNNEL_TOKEN" ]; then
+    log "Добавляю Cloudflare Tunnel..."
+    # Вставляю cloudflared сервис перед volumes
+    sed -i '/^volumes:/i\
+  cloudflared:\
+    image: cloudflare/cloudflared:latest\
+    container_name: cam-ai-tunnel\
+    restart: unless-stopped\
+    command: tunnel run\
+    environment:\
+      - TUNNEL_TOKEN='"$TUNNEL_TOKEN"'\
+    depends_on:\
+      - cam-ai\
+    labels:\
+      - "com.centurylinklabs.watchtower.scope=cam-ai"\
+' docker-compose.yml
+fi
+
 # ---- 6. Создаю .env ----
+# Определяю NEXTAUTH_URL
+if [ -n "$TUNNEL_DOMAIN" ]; then
+    NEXTAUTH_URL="https://${TUNNEL_DOMAIN}"
+else
+    NEXTAUTH_URL="http://${LOCAL_IP}"
+fi
+
+# Генерирую INSTANCE_ID
+INSTANCE_ID=$(openssl rand -hex 8)
+
 cat > .env << ENV_EOF
 DATABASE_URL=file:./dev.db
 NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-NEXTAUTH_URL=http://${LOCAL_IP}
+NEXTAUTH_URL=${NEXTAUTH_URL}
 GEMINI_API_KEY=${GEMINI_API_KEY}
 SETUP_ADMIN_EMAIL=${ADMIN_EMAIL}
 SETUP_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 SETUP_COMPANY_NAME=${COMPANY_NAME}
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+INSTANCE_ROLE=${INSTANCE_ROLE}
+INSTANCE_ID=${INSTANCE_ID}
+SYNC_TO=${SYNC_TO}
+SYNC_KEY=${SYNC_KEY}
+CLOUDFLARE_TUNNEL_TOKEN=${TUNNEL_TOKEN}
 ENV_EOF
 
 chmod 600 .env
@@ -192,7 +256,7 @@ BACKUP_CMD="0 3 * * * docker exec cam-ai-app sqlite3 /app/prisma/dev.db \".backu
 (crontab -l 2>/dev/null | grep -v "cam-ai-app"; echo "$BACKUP_CMD") | crontab - 2>/dev/null || true
 
 # ---- 10. Готово! ----
-APP_URL="http://${LOCAL_IP}"
+APP_URL="${NEXTAUTH_URL}"
 
 echo ""
 echo -e "${GREEN}${BOLD}╔══════════════════════════════════════╗${NC}"
@@ -200,10 +264,33 @@ echo -e "${GREEN}${BOLD}║     CamAI УСТАНОВЛЕН УСПЕШНО!      
 echo -e "${GREEN}${BOLD}╚══════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  ${BOLD}Адрес:${NC}    ${BLUE}${APP_URL}${NC}"
-echo -e "  ${BOLD}mDNS:${NC}     ${BLUE}http://cam-ai.local${NC}"
+if [ -z "$TUNNEL_DOMAIN" ]; then
+    echo -e "  ${BOLD}mDNS:${NC}     ${BLUE}http://cam-ai.local${NC}"
+fi
 echo -e "  ${BOLD}Логин:${NC}    ${ADMIN_EMAIL}"
 echo -e "  ${BOLD}Пароль:${NC}   ${ADMIN_PASSWORD}"
 echo ""
+
+# Показываю информацию о синхронизации
+if [ "$INSTANCE_ROLE" = "central" ]; then
+    echo -e "  ${BOLD}Роль:${NC}     ${GREEN}Центральный сервер${NC}"
+    echo -e "  ${BOLD}Sync Key:${NC} ${SYNC_KEY}"
+    echo -e "  ${BOLD}ID:${NC}       ${INSTANCE_ID}"
+    if [ -n "$TUNNEL_DOMAIN" ]; then
+        echo -e "  ${BOLD}Домен:${NC}    ${BLUE}https://${TUNNEL_DOMAIN}${NC}"
+    fi
+    echo ""
+    echo -e "  ${YELLOW}Передайте SYNC_KEY и URL спутникам:${NC}"
+    echo -e "  ${YELLOW}  --sync-to \"${APP_URL}\" --sync-key \"${SYNC_KEY}\"${NC}"
+    echo ""
+elif [ "$INSTANCE_ROLE" = "satellite" ]; then
+    echo -e "  ${BOLD}Роль:${NC}     ${BLUE}Спутник${NC}"
+    echo -e "  ${BOLD}Центр:${NC}    ${SYNC_TO}"
+    echo -e "  ${BOLD}ID:${NC}       ${INSTANCE_ID}"
+    echo -e "  ${BOLD}Синхр.:${NC}   каждые 5 мин"
+    echo ""
+fi
+
 echo -e "  ${BOLD}Обновления:${NC} автоматически (каждые 24 часа)"
 echo -e "  ${BOLD}Бэкап:${NC}    ежедневно в 3:00"
 echo ""
