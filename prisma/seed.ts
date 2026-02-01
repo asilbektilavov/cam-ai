@@ -5,22 +5,35 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
-  const passwordHash = await bcrypt.hash('admin123', 10);
+  const email = process.env.SETUP_ADMIN_EMAIL || 'admin@demo.com';
+  const password = process.env.SETUP_ADMIN_PASSWORD || 'admin123';
+  const companyName = process.env.SETUP_COMPANY_NAME || 'Demo Company';
 
-  const org = await prisma.organization.upsert({
-    where: { slug: 'demo-company' },
-    update: {},
-    create: {
-      name: 'Demo Company',
-      slug: 'demo-company',
+  const slug = companyName
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/gi, '-')
+    .replace(/^-|-$/g, '')
+    + '-' + Date.now().toString(36);
+
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  // Check if any organization exists (skip seed if already set up)
+  const existingOrg = await prisma.organization.findFirst();
+  if (existingOrg) {
+    console.log('Database already seeded, skipping.');
+    return;
+  }
+
+  const org = await prisma.organization.create({
+    data: {
+      name: companyName,
+      slug,
     },
   });
 
-  await prisma.user.upsert({
-    where: { email: 'admin@demo.com' },
-    update: {},
-    create: {
-      email: 'admin@demo.com',
+  await prisma.user.create({
+    data: {
+      email,
       name: 'Администратор',
       passwordHash,
       role: 'admin',
@@ -28,7 +41,14 @@ async function main() {
     },
   });
 
-  console.log('Seed completed: org =', org.id, ', user = admin@demo.com / admin123');
+  await prisma.branch.create({
+    data: {
+      name: 'Главный офис',
+      organizationId: org.id,
+    },
+  });
+
+  console.log(`Seed completed: ${email} / ${password} (org: ${companyName})`);
 }
 
 main()

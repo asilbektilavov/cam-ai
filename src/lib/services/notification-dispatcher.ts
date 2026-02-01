@@ -38,7 +38,18 @@ class NotificationDispatcher {
       }
 
       const config = JSON.parse(integration.config) as Record<string, string>;
-      const message = this.formatMessage(alert);
+
+      // Resolve branch name for the message
+      let branchName: string | null = null;
+      if (alert.branchId) {
+        const branch = await prisma.branch.findUnique({
+          where: { id: alert.branchId },
+          select: { name: true },
+        });
+        branchName = branch?.name || null;
+      }
+
+      const message = this.formatMessage(alert, branchName);
 
       // Create notification record
       const notification = await prisma.notification.create({
@@ -55,7 +66,7 @@ class NotificationDispatcher {
       try {
         switch (integration.type) {
           case 'telegram':
-            await this.sendTelegram(config, message);
+            await this.sendTelegram(config, message, alert);
             break;
           case 'webhook':
             await this.sendWebhook(config, alert, message);
@@ -91,7 +102,7 @@ class NotificationDispatcher {
     }
   }
 
-  private formatMessage(alert: SmartAlert): string {
+  private formatMessage(alert: SmartAlert, branchName?: string | null): string {
     const featureLabels: Record<string, string> = {
       queue_monitor: 'Контроль очередей',
       person_search: 'Поиск человека',
@@ -108,20 +119,35 @@ class NotificationDispatcher {
     const icon = severityIcons[alert.severity] || '📢';
     const feature = featureLabels[alert.featureType] || alert.featureType;
 
-    return [
+    const lines = [
       `${icon} ${feature}`,
       `📷 ${alert.cameraName} (${alert.cameraLocation})`,
-      ``,
-      alert.message,
-      ``,
-      `🕐 ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}`,
-    ].join('\n');
+    ];
+
+    if (branchName) {
+      lines.push(`🏢 ${branchName}`);
+    }
+
+    lines.push('', alert.message, '', `🕐 ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}`);
+
+    return lines.join('\n');
   }
 
-  private async sendTelegram(config: Record<string, string>, message: string): Promise<void> {
-    const { botToken, chatId } = config;
+  private async sendTelegram(config: Record<string, string>, message: string, alert: SmartAlert): Promise<void> {
+    const botToken = process.env.TELEGRAM_BOT_TOKEN || config.botToken;
+    const { chatId } = config;
     if (!botToken || !chatId) {
       throw new Error('Telegram: botToken и chatId обязательны');
+    }
+
+    // Filter by branch notification settings
+    if (config.notifyBranches) {
+      try {
+        const allowedBranches = JSON.parse(config.notifyBranches) as string[];
+        if (allowedBranches.length > 0 && !allowedBranches.includes(alert.branchId)) {
+          return;
+        }
+      } catch { /* invalid JSON — send anyway */ }
     }
 
     const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {

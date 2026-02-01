@@ -16,6 +16,8 @@ import {
   Play,
   Square,
   Link,
+  Search,
+  ChevronRight,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -86,6 +88,15 @@ export default function CamerasPage() {
     resolution: '1920x1080',
     fps: 30,
   });
+  const [scanning, setScanning] = useState(false);
+  const [scanDialogOpen, setScanDialogOpen] = useState(false);
+  const [discoveredCameras, setDiscoveredCameras] = useState<Array<{
+    ip: string;
+    ports: number[];
+    protocol: string;
+    suggestedUrl: string;
+    brand?: string;
+  }>>([]);
 
   const { hasMotion } = useMotionTracker();
   const { descriptors: searchDescriptors } = useSearchDescriptors();
@@ -136,6 +147,37 @@ export default function CamerasPage() {
     } finally {
       setTestingConnection(false);
     }
+  };
+
+  const handleScanNetwork = async () => {
+    setScanning(true);
+    setScanDialogOpen(true);
+    setDiscoveredCameras([]);
+    try {
+      const data = await apiGet<Array<{
+        ip: string;
+        ports: number[];
+        protocol: string;
+        suggestedUrl: string;
+        brand?: string;
+      }>>('/api/cameras/discover');
+      setDiscoveredCameras(data);
+    } catch {
+      toast.error('Не удалось просканировать сеть');
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleSelectDiscovered = (cam: { ip: string; suggestedUrl: string; brand?: string }) => {
+    setNewCamera({
+      ...newCamera,
+      name: cam.brand || 'Камера',
+      streamUrl: cam.suggestedUrl,
+      location: `IP: ${cam.ip}`,
+    });
+    setScanDialogOpen(false);
+    setDialogOpen(true);
   };
 
   const handleAdd = async () => {
@@ -231,6 +273,11 @@ export default function CamerasPage() {
           <h1 className="text-2xl font-bold">Камеры</h1>
           <p className="text-muted-foreground">Управление камерами видеонаблюдения</p>
         </div>
+        <div className="flex gap-2">
+          <Button variant="outline" className="gap-2" onClick={handleScanNetwork} disabled={scanning}>
+            {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Поиск камер
+          </Button>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button className="gap-2">
@@ -380,7 +427,47 @@ export default function CamerasPage() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
+
+      {/* Scan Results Dialog */}
+      <Dialog open={scanDialogOpen} onOpenChange={setScanDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Поиск камер в сети</DialogTitle>
+            <DialogDescription>Сканирование локальной сети на наличие камер</DialogDescription>
+          </DialogHeader>
+          <div className="mt-4 space-y-2 max-h-80 overflow-y-auto">
+            {scanning ? (
+              <div className="flex flex-col items-center py-8 gap-3">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Сканирование сети...</p>
+              </div>
+            ) : discoveredCameras.length === 0 ? (
+              <div className="flex flex-col items-center py-8 gap-2 text-center">
+                <Search className="h-8 w-8 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Камеры не найдены в сети</p>
+                <p className="text-xs text-muted-foreground">Убедитесь, что камеры подключены к той же сети</p>
+              </div>
+            ) : (
+              discoveredCameras.map((cam, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSelectDiscovered(cam)}
+                  className="w-full flex items-center justify-between p-3 rounded-lg border hover:bg-accent transition-colors text-left"
+                >
+                  <div>
+                    <p className="font-medium text-sm">{cam.brand || 'Камера'}</p>
+                    <p className="text-xs text-muted-foreground">{cam.ip} — порты: {cam.ports.join(', ')}</p>
+                    <p className="text-xs text-muted-foreground truncate max-w-[300px]">{cam.suggestedUrl}</p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                </button>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">

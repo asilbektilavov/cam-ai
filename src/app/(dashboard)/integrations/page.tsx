@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   MessageCircle,
   Hash,
@@ -19,6 +19,8 @@ import {
   ExternalLink,
   Settings,
   Loader2,
+  Send,
+  Unlink,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,7 +38,7 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { apiGet, apiPatch, apiPost } from '@/lib/api-client';
+import { apiGet, apiPatch, apiPost, apiDelete } from '@/lib/api-client';
 
 interface IntegrationItem {
   id: string;
@@ -46,6 +48,14 @@ interface IntegrationItem {
   description: string;
   enabled: boolean;
   config: Record<string, string>;
+}
+
+interface TelegramStatus {
+  configured: boolean;
+  botUsername: string | null;
+  connected: boolean;
+  chatId: string | null;
+  branches: Array<{ id: string; name: string; notifyEnabled: boolean }>;
 }
 
 const iconMap: Record<string, React.ElementType> = {
@@ -71,10 +81,6 @@ const categoryLabels: Record<string, string> = {
 };
 
 const configFields: Record<string, { key: string; label: string; placeholder: string }[]> = {
-  telegram: [
-    { key: 'botToken', label: 'Bot Token', placeholder: '123456:ABC-DEF1234...' },
-    { key: 'chatId', label: 'Chat ID', placeholder: '-1001234567890' },
-  ],
   slack: [
     { key: 'webhookUrl', label: 'Webhook URL', placeholder: 'https://hooks.slack.com/...' },
     { key: 'channel', label: 'Канал', placeholder: '#alerts' },
@@ -115,31 +121,45 @@ export default function IntegrationsPage() {
   const [testing, setTesting] = useState(false);
   const togglingRef = useRef<Set<string>>(new Set());
 
-  // Load integrations from API
+  // Telegram state
+  const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null);
+  const [tgLoading, setTgLoading] = useState(true);
+  const [tgConnecting, setTgConnecting] = useState(false);
+  const [tgDisconnecting, setTgDisconnecting] = useState(false);
+  const [tgTestingSend, setTgTestingSend] = useState(false);
+
+  const loadTelegramStatus = useCallback(async () => {
+    try {
+      const data = await apiGet<TelegramStatus>('/api/integrations/telegram/status');
+      setTgStatus(data);
+    } catch {
+      // Telegram status not available
+    } finally {
+      setTgLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     apiGet<IntegrationItem[]>('/api/integrations')
       .then((data) => setIntegrations(data))
       .catch(() => toast.error('Не удалось загрузить интеграции'))
       .finally(() => setLoading(false));
-  }, []);
+
+    loadTelegramStatus();
+  }, [loadTelegramStatus]);
 
   const handleToggle = async (type: string, name: string, currentEnabled: boolean) => {
     if (togglingRef.current.has(type)) return;
     togglingRef.current.add(type);
 
-    // Optimistic update
     setIntegrations((prev) =>
       prev.map((i) => (i.type === type ? { ...i, enabled: !currentEnabled } : i))
     );
 
     try {
-      await apiPatch(`/api/integrations/${type}`, {
-        enabled: !currentEnabled,
-        name,
-      });
+      await apiPatch(`/api/integrations/${type}`, { enabled: !currentEnabled, name });
       toast.success(currentEnabled ? `${name} отключён` : `${name} подключён`);
     } catch {
-      // Revert on error
       setIntegrations((prev) =>
         prev.map((i) => (i.type === type ? { ...i, enabled: currentEnabled } : i))
       );
@@ -196,6 +216,66 @@ export default function IntegrationsPage() {
       toast.error(err instanceof Error ? err.message : 'Ошибка тестового соединения');
     } finally {
       setTesting(false);
+    }
+  };
+
+  // Telegram handlers
+  const handleTgConnect = async () => {
+    setTgConnecting(true);
+    try {
+      const result = await apiPost<{ success: boolean; chatId: string }>('/api/integrations/telegram/connect', {});
+      if (result.success) {
+        toast.success('Telegram подключён!');
+        await loadTelegramStatus();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Не удалось подключить');
+    } finally {
+      setTgConnecting(false);
+    }
+  };
+
+  const handleTgDisconnect = async () => {
+    setTgDisconnecting(true);
+    try {
+      await apiDelete('/api/integrations/telegram/connect');
+      toast.success('Telegram отключён');
+      await loadTelegramStatus();
+    } catch {
+      toast.error('Ошибка отключения');
+    } finally {
+      setTgDisconnecting(false);
+    }
+  };
+
+  const handleTgBranchToggle = async (branchId: string, enabled: boolean) => {
+    if (!tgStatus) return;
+
+    const newBranches = tgStatus.branches.map((b) =>
+      b.id === branchId ? { ...b, notifyEnabled: enabled } : b
+    );
+    setTgStatus({ ...tgStatus, branches: newBranches });
+
+    const notifyBranches = newBranches.filter((b) => b.notifyEnabled).map((b) => b.id);
+    try {
+      await apiPatch('/api/integrations/telegram/branches', { notifyBranches });
+    } catch {
+      toast.error('Ошибка сохранения настроек');
+      await loadTelegramStatus();
+    }
+  };
+
+  const handleTgTestSend = async () => {
+    setTgTestingSend(true);
+    try {
+      await apiPost('/api/integrations/telegram', {
+        config: { botToken: '', chatId: tgStatus?.chatId },
+      });
+      toast.success('Тестовое сообщение отправлено');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка отправки');
+    } finally {
+      setTgTestingSend(false);
     }
   };
 
@@ -256,7 +336,108 @@ export default function IntegrationsPage() {
         })}
       </div>
 
-      {/* Integrations by Category */}
+      {/* Telegram — Special Card */}
+      <Card className={cn('transition-all', tgStatus?.connected && 'border-green-500/30 bg-green-500/5')}>
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                'flex h-10 w-10 items-center justify-center rounded-lg',
+                tgStatus?.connected ? 'bg-green-500/10 text-green-500' : 'bg-muted text-muted-foreground'
+              )}>
+                <MessageCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-semibold flex items-center gap-2">
+                  Telegram
+                  {tgStatus?.connected && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                </h3>
+                <Badge variant="secondary" className="text-[10px] mt-0.5">Уведомления</Badge>
+              </div>
+            </div>
+            {tgStatus?.connected && (
+              <Badge variant="default" className="bg-green-500">Подключено</Badge>
+            )}
+          </div>
+
+          {tgLoading ? (
+            <div className="flex items-center gap-2 py-4">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm text-muted-foreground">Загрузка...</span>
+            </div>
+          ) : !tgStatus?.configured ? (
+            // State 1: Not configured
+            <div className="text-sm text-muted-foreground">
+              <p>Telegram бот не настроен.</p>
+              <p className="mt-1">Попросите техника указать <code className="bg-muted px-1.5 py-0.5 rounded text-xs">--telegram</code> при установке.</p>
+            </div>
+          ) : !tgStatus.connected ? (
+            // State 2: Configured but not connected
+            <div className="space-y-3">
+              <div className="text-sm space-y-2">
+                <p className="font-medium">Подключите Telegram за 3 шага:</p>
+                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                  <li>
+                    Откройте бота{' '}
+                    <a
+                      href={`https://t.me/${tgStatus.botUsername}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:underline font-medium"
+                    >
+                      @{tgStatus.botUsername}
+                    </a>
+                    {' '}в Telegram
+                  </li>
+                  <li>Нажмите <strong>/start</strong></li>
+                  <li>Вернитесь сюда и нажмите кнопку ниже</li>
+                </ol>
+              </div>
+              <Button onClick={handleTgConnect} disabled={tgConnecting} className="gap-2">
+                {tgConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+                Подключить
+              </Button>
+            </div>
+          ) : (
+            // State 3: Connected
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Бот: <span className="font-medium text-foreground">@{tgStatus.botUsername}</span>
+              </p>
+
+              {tgStatus.branches.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Уведомления по филиалам:</p>
+                  <div className="space-y-2">
+                    {tgStatus.branches.map((branch) => (
+                      <div key={branch.id} className="flex items-center justify-between">
+                        <span className="text-sm">{branch.name}</span>
+                        <Switch
+                          checked={branch.notifyEnabled}
+                          onCheckedChange={(checked) => handleTgBranchToggle(branch.id, checked)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={handleTgTestSend} disabled={tgTestingSend} className="gap-1.5">
+                  {tgTestingSend ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Тест
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleTgDisconnect} disabled={tgDisconnecting} className="gap-1.5 text-destructive hover:text-destructive">
+                  {tgDisconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
+                  Отключить
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Other Integrations */}
       <Tabs defaultValue="all">
         <TabsList>
           <TabsTrigger value="all">Все</TabsTrigger>
@@ -270,6 +451,7 @@ export default function IntegrationsPage() {
           <TabsContent key={tab} value={tab}>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
               {integrations
+                .filter((i) => i.type !== 'telegram')
                 .filter((i) => tab === 'all' || i.category === tab)
                 .map((integration) => {
                   const Icon = iconMap[integration.type] || Circle;
@@ -350,12 +532,8 @@ export default function IntegrationsPage() {
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              Настройка {currentConfigIntegration?.name}
-            </DialogTitle>
-            <DialogDescription>
-              Введите данные для подключения
-            </DialogDescription>
+            <DialogTitle>Настройка {currentConfigIntegration?.name}</DialogTitle>
+            <DialogDescription>Введите данные для подключения</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
             {currentFields.map((field) => (
@@ -371,19 +549,11 @@ export default function IntegrationsPage() {
               </div>
             ))}
             <div className="flex gap-2 pt-2">
-              <Button
-                className="flex-1"
-                onClick={handleSaveConfig}
-                disabled={saving}
-              >
+              <Button className="flex-1" onClick={handleSaveConfig} disabled={saving}>
                 {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Сохранить
               </Button>
-              <Button
-                variant="outline"
-                onClick={handleTestConnection}
-                disabled={testing}
-              >
+              <Button variant="outline" onClick={handleTestConnection} disabled={testing}>
                 {testing && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Тест
               </Button>
@@ -412,15 +582,6 @@ export default function IntegrationsPage() {
             <div className="mt-4 text-muted-foreground mb-2"># Экспорт аналитики</div>
             <div className="text-green-500">GET</div>{' '}
             <span>/api/analytics/export?format=csv&period=week</span>
-            <div className="mt-4 text-muted-foreground mb-2"># Управление интеграциями</div>
-            <div className="text-yellow-500">PATCH</div>{' '}
-            <span>/api/integrations/telegram</span>
-            <div className="mt-2 text-muted-foreground">
-              {'{'}<br />
-              {'  "enabled": true,'}<br />
-              {'  "config": { "botToken": "...", "chatId": "..." }'}<br />
-              {'}'}
-            </div>
           </div>
         </CardContent>
       </Card>

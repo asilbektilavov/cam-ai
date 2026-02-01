@@ -54,6 +54,8 @@ RUN chown -R nextjs:nodejs /app/data /app/prisma
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
+LABEL com.centurylinklabs.watchtower.scope="cam-ai"
+
 USER nextjs
 
 EXPOSE 3000
