@@ -117,8 +117,8 @@ fi
 
 # ---- Run migrations + seed ----
 log "Миграции и seed планов..."
-docker compose -f docker-compose.saas.yml exec -T app npx prisma migrate deploy 2>/dev/null || true
-docker compose -f docker-compose.saas.yml exec -T app npx tsx prisma/seed-plans.ts 2>/dev/null || true
+docker compose -f docker-compose.saas.yml exec -T app node node_modules/prisma/build/index.js migrate deploy 2>/dev/null || true
+docker compose -f docker-compose.saas.yml exec -T app node prisma/compiled/seed-plans.js 2>/dev/null || true
 
 # ---- Summary ----
 echo ""
