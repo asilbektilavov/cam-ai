@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAppStore } from '@/lib/store';
+import { useAppStore, useStoreHydrated } from '@/lib/store';
 import { venueConfigs } from '@/lib/venue-config';
 import { cn } from '@/lib/utils';
 import { apiGet } from '@/lib/api-client';
@@ -49,6 +49,7 @@ interface ApiEvent {
 export default function DashboardPage() {
   const router = useRouter();
   const { selectedVenue, selectedBranchId } = useAppStore();
+  const hydrated = useStoreHydrated();
   const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [cameras, setCameras] = useState<ApiCamera[]>([]);
@@ -89,13 +90,14 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!hydrated) return;
     setMounted(true);
     if (!selectedVenue) {
       router.push('/select-venue');
       return;
     }
     fetchData();
-  }, [selectedVenue, selectedBranchId, router, fetchData]);
+  }, [hydrated, selectedVenue, selectedBranchId, router, fetchData]);
 
   if (!mounted || !selectedVenue) return null;
 
