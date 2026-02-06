@@ -57,6 +57,19 @@ export async function POST(req: NextRequest) {
     return badRequest('Название филиала обязательно');
   }
 
+  // Check plan branch limit
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    include: { plan: true, _count: { select: { branches: true } } },
+  });
+  const maxBranches = org?.plan?.maxBranches ?? 1;
+  if (org && org._count.branches >= maxBranches) {
+    return NextResponse.json(
+      { error: `Лимит тарифа: максимум ${maxBranches} филиалов. Обновите тариф в настройках.` },
+      { status: 403 }
+    );
+  }
+
   const branch = await prisma.branch.create({
     data: {
       name,

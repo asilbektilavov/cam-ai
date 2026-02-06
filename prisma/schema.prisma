@@ -17,9 +17,27 @@ model Plan {
   maxBranches     Int
   maxUsers        Int
   pricePerCamera  Int            @default(0) // cents per month
+  stripePriceId   String?        // Stripe Price ID for this plan
   features        String         @default("{}") // JSON
   createdAt       DateTime       @default(now())
   organizations   Organization[]
+  subscriptions   Subscription[]
+}
+
+model Subscription {
+  id                   String       @id @default(cuid())
+  organizationId       String       @unique
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planId               String
+  plan                 Plan         @relation(fields: [planId], references: [id])
+  stripeSubscriptionId String?      @unique
+  status               String       @default("active") // active, past_due, canceled, trialing
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean      @default(false)
+  cameraQuantity       Int          @default(0)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
 }
 
 model AgentToken {
@@ -91,9 +109,10 @@ model Organization {
   slug             String         @unique
   planId           String?
   plan             Plan?          @relation(fields: [planId], references: [id])
-  stripeCustomerId String?
+  stripeCustomerId String?        @unique
   trialEndsAt      DateTime?
   createdAt        DateTime       @default(now())
+  subscription     Subscription?
   users            User[]
   branches         Branch[]
   cameras          Camera[]

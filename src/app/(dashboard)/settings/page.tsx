@@ -15,6 +15,11 @@ import {
   RefreshCw,
   Link2,
   Server,
+  CreditCard,
+  Check,
+  X,
+  ExternalLink,
+  Zap,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,9 +36,39 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 import { apiGet, apiPatch, apiPost } from '@/lib/api-client';
+
+interface BillingPlan {
+  id: string;
+  name: string;
+  displayName: string;
+  maxCameras: number;
+  maxBranches: number;
+  maxUsers: number;
+  pricePerCamera: number;
+  features: string;
+}
+
+interface BillingData {
+  currentPlan: BillingPlan;
+  subscription: {
+    id: string;
+    status: string;
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd: boolean;
+    cameraQuantity: number;
+  } | null;
+  usage: {
+    cameras: number;
+    branches: number;
+    users: number;
+  };
+  trialEndsAt: string | null;
+  plans: BillingPlan[];
+}
 
 interface ProfileData {
   name: string;
@@ -115,6 +150,12 @@ export default function SettingsPage() {
   const [cloudStorage, setCloudStorage] = useState(true);
   const [aiQuality, setAiQuality] = useState('high');
 
+  // Billing
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billing, setBilling] = useState<BillingData | null>(null);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
+
   // Sync
   const [syncLoading, setSyncLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -129,6 +170,48 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchSyncStatus();
   }, [fetchSyncStatus]);
+
+  // Load billing data
+  const fetchBilling = useCallback(() => {
+    setBillingLoading(true);
+    apiGet<BillingData>('/api/billing')
+      .then((data) => setBilling(data))
+      .catch(() => setBilling(null))
+      .finally(() => setBillingLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchBilling();
+  }, [fetchBilling]);
+
+  const handleCheckout = async (planId: string) => {
+    setCheckoutLoading(planId);
+    try {
+      const data = await apiPost<{ url?: string; upgraded?: boolean }>('/api/billing/checkout', { planId });
+      if (data.upgraded) {
+        toast.success('Тариф обновлён');
+        fetchBilling();
+      } else if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка оплаты');
+    } finally {
+      setCheckoutLoading(null);
+    }
+  };
+
+  const handlePortal = async () => {
+    setPortalLoading(true);
+    try {
+      const data = await apiPost<{ url: string }>('/api/billing/portal', {});
+      window.location.href = data.url;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка открытия портала');
+    } finally {
+      setPortalLoading(false);
+    }
+  };
 
   // Load profile data
   useEffect(() => {
@@ -278,6 +361,10 @@ export default function SettingsPage() {
           <TabsTrigger value="system" className="gap-2">
             <Palette className="h-4 w-4" />
             Система
+          </TabsTrigger>
+          <TabsTrigger value="billing" className="gap-2">
+            <CreditCard className="h-4 w-4" />
+            Тариф
           </TabsTrigger>
           <TabsTrigger value="sync" className="gap-2">
             <RefreshCw className="h-4 w-4" />
@@ -582,6 +669,172 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Billing */}
+        <TabsContent value="billing">
+          <div className="space-y-6">
+            {billingLoading ? (
+              <Card>
+                <CardContent className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </CardContent>
+              </Card>
+            ) : !billing ? (
+              <Card>
+                <CardContent className="py-8 text-center text-muted-foreground">
+                  Не удалось загрузить данные тарифа
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                {/* Current plan card */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center justify-between">
+                      <span>Текущий тариф</span>
+                      <Badge variant={billing.currentPlan.name === 'free' ? 'secondary' : 'default'}>
+                        {billing.currentPlan.displayName}
+                      </Badge>
+                    </CardTitle>
+                    <CardDescription>
+                      {billing.subscription?.status === 'active' && billing.subscription.currentPeriodEnd && (
+                        <>
+                          {billing.subscription.cancelAtPeriodEnd
+                            ? `Действует до ${new Date(billing.subscription.currentPeriodEnd).toLocaleDateString('ru-RU')}`
+                            : `Следующее продление: ${new Date(billing.subscription.currentPeriodEnd).toLocaleDateString('ru-RU')}`}
+                        </>
+                      )}
+                      {billing.subscription?.status === 'past_due' && (
+                        <span className="text-destructive">Оплата просрочена</span>
+                      )}
+                      {billing.trialEndsAt && !billing.subscription && (
+                        <>Пробный период до {new Date(billing.trialEndsAt).toLocaleDateString('ru-RU')}</>
+                      )}
+                      {!billing.subscription && !billing.trialEndsAt && 'Бесплатный тариф'}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid sm:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Камеры</span>
+                          <span className="font-medium">{billing.usage.cameras} / {billing.currentPlan.maxCameras}</span>
+                        </div>
+                        <Progress value={(billing.usage.cameras / billing.currentPlan.maxCameras) * 100} />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Филиалы</span>
+                          <span className="font-medium">{billing.usage.branches} / {billing.currentPlan.maxBranches}</span>
+                        </div>
+                        <Progress value={(billing.usage.branches / billing.currentPlan.maxBranches) * 100} />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Пользователи</span>
+                          <span className="font-medium">{billing.usage.users} / {billing.currentPlan.maxUsers}</span>
+                        </div>
+                        <Progress value={(billing.usage.users / billing.currentPlan.maxUsers) * 100} />
+                      </div>
+                    </div>
+                    {billing.subscription && (
+                      <Button variant="outline" onClick={handlePortal} disabled={portalLoading} className="gap-2">
+                        {portalLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+                        Управление подпиской
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Plans */}
+                <div className="grid sm:grid-cols-3 gap-4">
+                  {billing.plans.map((plan) => {
+                    const isCurrent = plan.id === billing.currentPlan.id;
+                    const features: string[] = (() => {
+                      try { return JSON.parse(plan.features); } catch { return []; }
+                    })();
+                    const featureLabels: Record<string, string> = {
+                      basic_analytics: 'Базовая аналитика',
+                      advanced_analytics: 'Продвинутая аналитика',
+                      person_search: 'Поиск лиц',
+                      queue_monitor: 'Мониторинг очередей',
+                      heatmaps: 'Тепловые карты',
+                      telegram_alerts: 'Telegram-алерты',
+                      email_alerts: 'Email-оповещения',
+                      webhook: 'Webhook',
+                      api_access: 'API доступ',
+                      custom_ai_models: 'Свои ИИ-модели',
+                      sla: 'SLA 99.9%',
+                      dedicated_support: 'Выделенная поддержка',
+                    };
+
+                    return (
+                      <Card key={plan.id} className={isCurrent ? 'border-primary' : ''}>
+                        <CardHeader>
+                          <CardTitle className="flex items-center justify-between">
+                            <span>{plan.displayName}</span>
+                            {isCurrent && <Badge>Текущий</Badge>}
+                          </CardTitle>
+                          <CardDescription>
+                            {plan.pricePerCamera > 0 ? (
+                              <span className="text-2xl font-bold text-foreground">
+                                ${plan.pricePerCamera / 100}
+                                <span className="text-sm font-normal text-muted-foreground">/камера/мес</span>
+                              </span>
+                            ) : (
+                              <span className="text-2xl font-bold text-foreground">$0</span>
+                            )}
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="space-y-2 text-sm">
+                            <div className="flex items-center gap-2">
+                              <Camera className="h-4 w-4 text-muted-foreground" />
+                              <span>До {plan.maxCameras} камер</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Server className="h-4 w-4 text-muted-foreground" />
+                              <span>{plan.maxBranches} филиалов</span>
+                            </div>
+                          </div>
+                          <Separator />
+                          <div className="space-y-1.5">
+                            {features.map((f: string) => (
+                              <div key={f} className="flex items-center gap-2 text-sm">
+                                <Check className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                                <span>{featureLabels[f] || f}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {!isCurrent && plan.name !== 'free' && (
+                            <Button
+                              className="w-full gap-2"
+                              onClick={() => handleCheckout(plan.id)}
+                              disabled={!!checkoutLoading}
+                            >
+                              {checkoutLoading === plan.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Zap className="h-4 w-4" />
+                              )}
+                              {plan.pricePerCamera > billing.currentPlan.pricePerCamera ? 'Улучшить' : 'Выбрать'}
+                            </Button>
+                          )}
+                          {isCurrent && plan.name !== 'free' && (
+                            <Button variant="outline" className="w-full" disabled>
+                              <Check className="h-4 w-4 mr-2" />
+                              Текущий тариф
+                            </Button>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
         </TabsContent>
 
         {/* Sync */}

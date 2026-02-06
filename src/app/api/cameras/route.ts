@@ -40,6 +40,19 @@ export async function POST(req: NextRequest) {
   });
   if (!branch) return badRequest('Invalid branchId');
 
+  // Check plan camera limit
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    include: { plan: true, _count: { select: { cameras: true } } },
+  });
+  const maxCameras = org?.plan?.maxCameras ?? 2;
+  if (org && org._count.cameras >= maxCameras) {
+    return NextResponse.json(
+      { error: `Лимит тарифа: максимум ${maxCameras} камер. Обновите тариф в настройках.` },
+      { status: 403 }
+    );
+  }
+
   const camera = await prisma.camera.create({
     data: {
       name,
