@@ -3,22 +3,106 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model Organization {
-  id           String         @id @default(cuid())
+// ==================== SaaS Models ====================
+
+model Plan {
+  id              String         @id @default(cuid())
+  name            String         @unique  // free, pro, enterprise
+  displayName     String
+  maxCameras      Int
+  maxBranches     Int
+  maxUsers        Int
+  pricePerCamera  Int            @default(0) // cents per month
+  features        String         @default("{}") // JSON
+  createdAt       DateTime       @default(now())
+  organizations   Organization[]
+}
+
+model AgentToken {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  token          String       @unique
+  name           String       @default("Default Agent")
+  createdAt      DateTime     @default(now())
+  lastUsedAt     DateTime?
+  agentId        String?      @unique
+  agent          Agent?       @relation(fields: [agentId], references: [id])
+}
+
+model Agent {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  status         String        @default("offline") // online, offline
+  lastSeenAt     DateTime?
+  version        String?
+  ipAddress      String?
+  branchId       String?
+  branch         Branch?       @relation(fields: [branchId], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  agentToken     AgentToken?
+  agentCameras   AgentCamera[]
+  agentEvents    AgentEvent[]
+}
+
+model AgentCamera {
+  id           String   @id @default(cuid())
+  agentId      String
+  agent        Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  originalId   String
   name         String
-  slug         String         @unique
-  createdAt    DateTime       @default(now())
-  users        User[]
-  branches     Branch[]
-  cameras      Camera[]
-  events       Event[]
-  integrations Integration[]
-  searchPersons SearchPerson[]
-  notifications Notification[]
+  location     String
+  status       String   @default("offline")
+  isMonitoring Boolean  @default(false)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([agentId, originalId])
+}
+
+model AgentEvent {
+  id             String   @id @default(cuid())
+  agentId        String
+  agent          Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  originalId     String
+  cameraName     String
+  cameraLocation String
+  type           String
+  severity       String   @default("info")
+  description    String
+  timestamp      DateTime
+  metadata       String?
+  syncedAt       DateTime @default(now())
+
+  @@unique([agentId, originalId])
+}
+
+// ==================== Core Models ====================
+
+model Organization {
+  id               String         @id @default(cuid())
+  name             String
+  slug             String         @unique
+  planId           String?
+  plan             Plan?          @relation(fields: [planId], references: [id])
+  stripeCustomerId String?
+  trialEndsAt      DateTime?
+  createdAt        DateTime       @default(now())
+  users            User[]
+  branches         Branch[]
+  cameras          Camera[]
+  events           Event[]
+  integrations     Integration[]
+  searchPersons    SearchPerson[]
+  notifications    Notification[]
+  agentTokens      AgentToken[]
+  agents           Agent[]
 }
 
 model Branch {
@@ -31,6 +115,7 @@ model Branch {
   updatedAt      DateTime @updatedAt
   cameras        Camera[]
   events         Event[]
+  agents         Agent[]
 
   @@unique([organizationId, name])
 }
@@ -40,7 +125,7 @@ model User {
   email          String       @unique
   name           String
   passwordHash   String
-  role           String       @default("admin")
+  role           String       @default("admin") // admin, superadmin
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
@@ -115,14 +200,12 @@ model UserSettings {
   id               String  @id @default(cuid())
   userId           String  @unique
   user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // Notifications
   notifCritical    Boolean @default(true)
   notifWarnings    Boolean @default(true)
   notifInfo        Boolean @default(false)
   notifSystem      Boolean @default(true)
   notifDailyReport Boolean @default(false)
   notifWeeklyReport Boolean @default(true)
-  // System
   language         String  @default("ru")
   timezone         String  @default("utc+5")
   autoRecord       Boolean @default(true)
@@ -147,13 +230,11 @@ model Integration {
   @@unique([organizationId, type])
 }
 
-// --- Smart Features ---
-
 model SmartFeature {
   id            String       @id @default(cuid())
   cameraId      String
   camera        Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
-  featureType   String       // queue_monitor | person_search | loitering_detection | workstation_monitor
+  featureType   String
   enabled       Boolean      @default(false)
   config        String       @default("{}")
   integrationId String?
@@ -170,7 +251,7 @@ model SearchPerson {
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
   photoPath      String
-  faceDescriptor String           // JSON: number[128]
+  faceDescriptor String
   isActive       Boolean          @default(true)
   integrationId  String?
   integration    Integration?     @relation(fields: [integrationId], references: [id], onDelete: SetNull)
@@ -200,13 +281,13 @@ model Notification {
   featureType    String
   cameraId       String?
   message        String
-  status         String       @default("pending") // pending | sent | failed
+  status         String       @default("pending")
   error          String?
   sentAt         DateTime?
   createdAt      DateTime     @default(now())
 }
 
-// --- Multi-Branch Sync ---
+// ==================== Multi-Branch Sync (legacy, kept for on-premise) ====================
 
 model RemoteInstance {
   id             String         @id @default(cuid())
@@ -216,7 +297,7 @@ model RemoteInstance {
   branchName     String
   address        String?
   lastSyncAt     DateTime?
-  status         String         @default("unknown") // online | offline | unknown
+  status         String         @default("unknown")
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   remoteEvents   RemoteEvent[]

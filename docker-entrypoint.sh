@@ -7,8 +7,12 @@ echo "=== CamAI Starting ==="
 echo "[1/2] Applying database migrations..."
 npx prisma migrate deploy 2>/dev/null || echo "  Migrations already up to date"
 
+# Seed plans (idempotent)
+echo "[2/3] Seeding plans..."
+npx tsx prisma/seed-plans.ts 2>/dev/null || echo "  Plans already seeded"
+
 # Seed default data if database is fresh
-echo "[2/2] Checking seed data..."
+echo "[3/3] Checking seed data..."
 npx prisma db seed 2>/dev/null || echo "  Seed already applied"
 
 # Seed demo data if DEMO_SEED is set

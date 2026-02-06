@@ -30,7 +30,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
-RUN apk add --no-cache sqlite
+RUN apk add --no-cache postgresql-client
 
 # Copy built app
 COPY --from=builder /app/public ./public
@@ -43,9 +43,10 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
-# Copy seed
+# Copy seeds
 COPY --from=builder /app/prisma/seed.ts ./prisma/seed.ts
 COPY --from=builder /app/prisma/seed-demo.ts ./prisma/seed-demo.ts
+COPY --from=builder /app/prisma/seed-plans.ts ./prisma/seed-plans.ts
 
 # Create data directories
 RUN mkdir -p /app/data/frames /app/data/search-photos /app/prisma

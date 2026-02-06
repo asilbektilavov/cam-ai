@@ -11,5 +11,6 @@ export const config = {
     '/branches/:path*',
     '/person-search/:path*',
     '/onboarding/:path*',
+    '/agents/:path*',
   ],
 };

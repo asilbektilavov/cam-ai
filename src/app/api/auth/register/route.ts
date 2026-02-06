@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { registerRateLimiter, getClientIp } from '@/lib/rate-limit';
 
@@ -52,11 +53,16 @@ export async function POST(request: Request) {
       .replace(/^-|-$/g, '')
       + '-' + Date.now().toString(36);
 
+    // Find free plan
+    const freePlan = await prisma.plan.findUnique({ where: { name: 'free' } });
+
     const result = await prisma.$transaction(async (tx) => {
       const org = await tx.organization.create({
         data: {
           name: company || name,
           slug,
+          planId: freePlan?.id || null,
+          trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 days trial
         },
       });
 
@@ -74,6 +80,15 @@ export async function POST(request: Request) {
           passwordHash,
           role: 'admin',
           organizationId: org.id,
+        },
+      });
+
+      // Generate initial agent token
+      await tx.agentToken.create({
+        data: {
+          organizationId: org.id,
+          token: 'cam_' + crypto.randomBytes(24).toString('hex'),
+          name: 'Default Agent',
         },
       });
 
