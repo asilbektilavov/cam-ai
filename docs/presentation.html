@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CamAI — Презентация продукта</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--p:#6366f1;--pl:#818cf8;--pd:#4f46e5;--ac:#06b6d4;--ac2:#8b5cf6;--ok:#10b981;--warn:#f59e0b;--err:#ef4444;--bg:#0f0f23;--card:rgba(255,255,255,0.04);--card2:rgba(255,255,255,0.07);--t:#e2e8f0;--tm:#94a3b8;--td:#475569;--border:rgba(255,255,255,0.08)}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--t);overflow:hidden;height:100vh}
+.bg-anim{position:fixed;inset:0;z-index:0;overflow:hidden}
+.orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:.12;animation:fl 20s ease-in-out infinite}
+.orb:nth-child(1){width:600px;height:600px;background:var(--p);top:-200px;left:-100px}
+.orb:nth-child(2){width:500px;height:500px;background:var(--ac);bottom:-150px;right:-100px;animation-delay:-7s}
+.orb:nth-child(3){width:400px;height:400px;background:var(--ac2);top:50%;left:50%;transform:translate(-50%,-50%);animation-delay:-14s}
+@keyframes fl{0%,100%{transform:translate(0,0) scale(1)}25%{transform:translate(50px,-30px) scale(1.1)}50%{transform:translate(-20px,40px) scale(.95)}75%{transform:translate(30px,20px) scale(1.05)}}
+.grid-ov{position:fixed;inset:0;background-image:linear-gradient(rgba(99,102,241,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(99,102,241,.03) 1px,transparent 1px);background-size:60px 60px;z-index:1}
+.progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--p),var(--ac),var(--ac2));z-index:100;transition:width .4s}
+.logo{font-size:1.1rem;font-weight:800;position:fixed;top:24px;right:32px;z-index:100;color:var(--tm);letter-spacing:2px}.logo span{color:var(--pl)}
+.pres{position:relative;z-index:10;width:100vw;height:100vh}
+.slide{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;padding:50px 70px;opacity:0;transform:translateX(80px);transition:all .5s cubic-bezier(.16,1,.3,1);pointer-events:none;overflow-y:auto}
+.slide.active{opacity:1;transform:translateX(0);pointer-events:auto}
+.slide.prev{opacity:0;transform:translateX(-80px)}
+.sn{position:absolute;top:24px;left:40px;font-size:12px;font-weight:700;color:var(--pl);letter-spacing:2px;text-transform:uppercase}
+h1{font-size:3.8rem;font-weight:900;line-height:1.1;letter-spacing:-2px;margin-bottom:16px}
+h2{font-size:2.6rem;font-weight:800;line-height:1.15;margin-bottom:12px;letter-spacing:-1px}
+h3{font-size:1.3rem;font-weight:700;margin-bottom:10px;color:var(--pl)}
+.gr{background:linear-gradient(135deg,var(--pl),var(--ac),var(--ac2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.sub{font-size:1.15rem;color:var(--tm);max-width:700px;line-height:1.7}
+.sub2{font-size:1rem;color:var(--tm);line-height:1.7;max-width:600px}
+/* Cards */
+.cg{display:grid;gap:16px;width:100%;max-width:1200px}
+.cg2{grid-template-columns:1fr 1fr}.cg3{grid-template-columns:1fr 1fr 1fr}.cg4{grid-template-columns:1fr 1fr 1fr 1fr}
+.cd{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px;backdrop-filter:blur(20px);transition:all .3s;position:relative;overflow:hidden}
+.cd:hover{border-color:rgba(99,102,241,.25);transform:translateY(-2px);box-shadow:0 12px 30px rgba(0,0,0,.2)}
+.cd h4{font-size:1rem;font-weight:700;margin-bottom:6px}
+.cd p,.cd .desc{font-size:.88rem;color:var(--tm);line-height:1.55}
+/* Mockup styles */
+.mockup{background:#111827;border:1px solid rgba(255,255,255,.1);border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.mock-bar{height:36px;background:#1f2937;display:flex;align-items:center;padding:0 14px;gap:8px;border-bottom:1px solid rgba(255,255,255,.06)}
+.mock-dot{width:10px;height:10px;border-radius:50%}.mock-dot.r{background:#ef4444}.mock-dot.y{background:#f59e0b}.mock-dot.g{background:#10b981}
+.mock-url{margin-left:12px;background:rgba(255,255,255,.06);border-radius:6px;padding:3px 12px;font-size:11px;color:var(--tm);flex:1;text-align:center}
+.mock-body{padding:16px}
+/* Sidebar mockup */
+.mock-sidebar{width:52px;background:#1e1e3a;border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:10px;flex-shrink:0}
+.mock-sidebar .si{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--tm);transition:all .2s}
+.mock-sidebar .si.active{background:var(--p);color:#fff}
+.mock-layout{display:flex;height:100%}
+.mock-content{flex:1;padding:16px;overflow:hidden}
+/* Stat cards mockup */
+.mstat{display:flex;gap:10px;margin-bottom:14px}
+.mstat-c{flex:1;background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px}
+.mstat-c .icon{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:13px;margin-bottom:8px}
+.mstat-c .val{font-size:1.3rem;font-weight:800}
+.mstat-c .lbl{font-size:10px;color:var(--tm);margin-top:2px}
+/* Camera grid mockup */
+.mcam-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mcam{aspect-ratio:16/10;border-radius:8px;position:relative;overflow:hidden;border:1px solid var(--border)}
+.mcam .bg{position:absolute;inset:0}
+.mcam .overlay{position:absolute;bottom:0;left:0;right:0;padding:6px 8px;background:linear-gradient(transparent,rgba(0,0,0,.7))}
+.mcam .overlay span{font-size:9px;color:#fff;font-weight:600}
+.mcam .badge{position:absolute;top:4px;left:4px;font-size:8px;padding:2px 6px;border-radius:4px;font-weight:700;color:#fff}
+.mcam .badge.live{background:var(--ok)}.mcam .badge.off{background:var(--err)}
+.mcam .badge.ai{position:absolute;top:4px;right:4px;left:auto;background:rgba(0,0,0,.5);color:var(--ok);display:flex;align-items:center;gap:2px}
+.mcam .rec{position:absolute;top:4px;left:36px;display:flex;align-items:center;gap:3px}
+.mcam .rec-dot{width:6px;height:6px;border-radius:50%;background:var(--err);animation:pulse 1.5s infinite}
+.mcam .rec span{font-size:8px;color:#f87171;font-weight:600}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* Event list mockup */
+.mev{display:flex;flex-direction:column;gap:8px}
+.mev-i{display:flex;gap:8px;padding:8px;border-bottom:1px solid var(--border)}
+.mev-i .dot{width:6px;height:6px;border-radius:50%;margin-top:6px;flex-shrink:0}
+.mev-i .dot.crit{background:var(--err)}.mev-i .dot.warn{background:var(--warn)}.mev-i .dot.info{background:#3b82f6}
+.mev-i .txt{font-size:10px;line-height:1.5}.mev-i .txt .d{color:var(--t)}.mev-i .txt .m{color:var(--tm);margin-top:2px}
+/* Chart mockup */
+.mchart{display:flex;align-items:end;gap:4px;height:80px;margin-top:8px}
+.mchart .bar{flex:1;border-radius:3px 3px 0 0;transition:height .3s;min-height:3px}
+/* Annotation */
+.ann{position:relative;margin-top:20px}
+.ann-arrow{position:absolute;width:2px;height:30px;background:var(--pl)}
+.callout{background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:10px;padding:14px 18px;margin-top:10px}
+.callout p{font-size:.9rem;line-height:1.6}
+.callout .hl{color:var(--pl);font-weight:600}
+/* Two columns */
+.twocol{display:grid;grid-template-columns:1fr 1fr;gap:40px;width:100%;max-width:1200px;align-items:start}
+.twocol.r55{grid-template-columns:55% 45%}.twocol.r45{grid-template-columns:45% 55%}
+/* Feature list */
+.fl{list-style:none;display:flex;flex-direction:column;gap:8px}
+.fl li{display:flex;align-items:flex-start;gap:10px;font-size:.95rem;padding:8px 14px;background:var(--card);border-radius:10px;border:1px solid var(--border)}
+.fl li .ck{width:22px;height:22px;border-radius:6px;background:rgba(16,185,129,.15);display:flex;align-items:center;justify-content:center;color:var(--ok);font-weight:bold;flex-shrink:0;font-size:12px}
+.fl li .ft{flex:1}.fl li .ft strong{display:block;margin-bottom:2px}.fl li .ft span{font-size:.82rem;color:var(--tm)}
+/* Steps */
+.steps{display:flex;gap:16px;margin-top:16px}
+.step{flex:1;text-align:center;padding:20px 16px;background:var(--card);border:1px solid var(--border);border-radius:14px}
+.step .num{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--p),var(--ac));color:#fff;font-weight:800;font-size:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 10px}
+.step h4{font-size:.95rem;font-weight:700;margin-bottom:6px}
+.step p{font-size:.82rem;color:var(--tm);line-height:1.5}
+/* Nav */
+.nav{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:100;display:flex;align-items:center;gap:14px;background:rgba(15,15,35,.92);border:1px solid var(--border);border-radius:14px;padding:10px 20px;backdrop-filter:blur(20px)}
+.nav-btn{width:40px;height:40px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--t);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.nav-btn:hover{background:rgba(99,102,241,.2);border-color:var(--p)}
+.dots{display:flex;gap:5px}
+.dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.12);transition:all .3s;cursor:pointer}
+.dot.active{background:var(--pl);width:20px;border-radius:4px}
+.cnt{font-size:.8rem;color:var(--tm);font-weight:600;min-width:45px;text-align:center}
+/* Arch */
+.arch{display:flex;flex-direction:column;align-items:center;gap:10px;padding:24px;background:var(--card);border:1px solid var(--border);border-radius:16px;width:100%;max-width:800px}
+.arch-row{display:flex;justify-content:center;align-items:center;gap:16px;flex-wrap:wrap}
+.arch-box{padding:12px 20px;border-radius:10px;font-weight:600;font-size:.85rem;text-align:center;min-width:140px;border:1px solid var(--border)}
+.arch-box.cen{background:linear-gradient(135deg,rgba(99,102,241,.25),rgba(139,92,246,.25));border-color:var(--p);font-size:.95rem;padding:14px 28px}
+.arch-box.sat{background:rgba(6,182,212,.12);border-color:rgba(6,182,212,.3)}
+.arch-box.cli{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3)}
+.arch-lbl{font-size:.82rem;color:var(--tm);text-align:center}
+/* Tags */
+.tag{display:inline-block;padding:3px 10px;border-radius:5px;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.tag.free{background:rgba(16,185,129,.12);color:var(--ok)}.tag.paid{background:rgba(245,158,11,.12);color:var(--warn)}
+/* Integration grid */
+.igrid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;max-width:700px}
+.igrid .ii{padding:14px 8px;background:var(--card);border:1px solid var(--border);border-radius:12px;text-align:center;font-size:.8rem;font-weight:600;transition:all .3s}
+.igrid .ii:hover{border-color:var(--p);transform:scale(1.03)}
+.igrid .ii .ic{font-size:24px;margin-bottom:6px}
+/* Section explain */
+.explain{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:14px;padding:20px 24px;margin-top:16px;max-width:1100px}
+.explain p{font-size:.92rem;color:var(--t);line-height:1.7}
+.explain .hl{color:var(--pl);font-weight:600}
+/* Security */
+.sec-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:800px}
+.sec-i{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:12px}
+.sec-ic{width:36px;height:36px;border-radius:8px;background:rgba(16,185,129,.1);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.sec-i h5{font-weight:700;font-size:.9rem}.sec-i p{font-size:.78rem;color:var(--tm)}
+/* Price */
+.price-r{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;max-width:650px;width:100%}
+.price-l{font-weight:500;font-size:.92rem}.price-v{font-weight:700;color:var(--ok)}
+/* Code block */
+.code{background:rgba(0,0,0,.4);border:1px solid var(--border);border-radius:12px;padding:18px;font-family:'JetBrains Mono',monospace;font-size:.8rem;line-height:1.8;max-width:800px;width:100%}
+.code .cm{color:#6b7280}.code .cmd{color:var(--ok)}.code .fl{color:var(--pl)}.code .vl{color:var(--warn)}
+/* Center */
+.center{display:flex;flex-direction:column;align-items:center;text-align:center}
+/* Responsive */
+@media(max-width:1024px){.slide{padding:30px}.twocol{grid-template-columns:1fr;gap:20px}h1{font-size:2.8rem}h2{font-size:2rem}.cg3,.cg4{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="bg-anim"><div class="orb"></div><div class="orb"></div><div class="orb"></div></div>
+<div class="grid-ov"></div>
+<div class="progress" id="pb"></div>
+<div class="logo">Cam<span>AI</span></div>
+
+<div class="pres" id="pres">
+
+<!-- S0: Title -->
+<div class="slide active center" data-slide="0">
+<div style="margin-bottom:20px">
+<svg width="72" height="72" viewBox="0 0 80 80" fill="none"><rect width="80" height="80" rx="20" fill="url(#g1)"/><path d="M20 35C20 35 28 25 40 25C52 25 60 35 60 35C60 35 52 45 40 45C28 45 20 35 20 35Z" stroke="#fff" stroke-width="2.5" fill="none"/><circle cx="40" cy="35" r="7" stroke="#fff" stroke-width="2.5" fill="none"/><circle cx="40" cy="35" r="3" fill="#fff"/><path d="M25 50L35 55L45 48L55 53" stroke="rgba(255,255,255,.5)" stroke-width="1.5" stroke-linecap="round"/><defs><linearGradient id="g1" x1="0" y1="0" x2="80" y2="80"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs></svg>
+</div>
+<h1><span class="gr">CamAI</span></h1>
+<p style="font-size:1.5rem;font-weight:500;margin-bottom:8px;color:var(--t)">Интеллектуальная система видеоаналитики</p>
+<p class="sub" style="text-align:center;margin:0 auto 30px">CamAI превращает обычные камеры видеонаблюдения в умную аналитическую систему. Искусственный интеллект анализирует видеопоток 24/7, обнаруживает инциденты и мгновенно отправляет уведомления — без облака, на вашем сервере.</p>
+<div style="display:flex;gap:40px;margin-top:10px">
+<div style="text-align:center"><div style="font-size:2.5rem;font-weight:900;background:linear-gradient(135deg,var(--pl),var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent">6</div><div style="font-size:.78rem;color:var(--tm);text-transform:uppercase;letter-spacing:1px;font-weight:500">Типов бизнеса</div></div>
+<div style="text-align:center"><div style="font-size:2.5rem;font-weight:900;background:linear-gradient(135deg,var(--pl),var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent">36</div><div style="font-size:.78rem;color:var(--tm);text-transform:uppercase;letter-spacing:1px;font-weight:500">ИИ-функций</div></div>
+<div style="text-align:center"><div style="font-size:2.5rem;font-weight:900;background:linear-gradient(135deg,var(--pl),var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent">10+</div><div style="font-size:.78rem;color:var(--tm);text-transform:uppercase;letter-spacing:1px;font-weight:500">Интеграций</div></div>
+<div style="text-align:center"><div style="font-size:2.5rem;font-weight:900;background:linear-gradient(135deg,var(--pl),var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent">$0</div><div style="font-size:.78rem;color:var(--tm);text-transform:uppercase;letter-spacing:1px;font-weight:500">Инфраструктура</div></div>
+</div>
+</div>
+
+<!-- S1: Problem -->
+<div class="slide" data-slide="1">
+<span class="sn">01 / Проблема</span>
+<h2>У бизнеса есть камеры. <span class="gr">Но нет аналитики.</span></h2>
+<p class="sub" style="margin-bottom:24px">По данным исследований, <strong>95% записей с камер видеонаблюдения никогда не просматриваются</strong>. Охранник физически не может одновременно следить за 10+ экранами. Инциденты обнаруживаются постфактум — через дни или недели, когда предотвратить ущерб уже невозможно.</p>
+<div class="cg cg3">
+<div class="cd">
+<div style="font-size:32px;margin-bottom:12px">&#x23F0;</div>
+<h4>Реактивный подход</h4>
+<p>Кража, проникновение, очередь, простой кассира — всё обнаруживается <strong style="color:var(--err)">после факта</strong>. Записи смотрят только после жалобы клиента или недостачи. К этому моменту ущерб уже нанесён.</p>
+</div>
+<div class="cd">
+<div style="font-size:32px;margin-bottom:12px">&#x1F441;</div>
+<h4>Человеческий фактор</h4>
+<p>Исследования показывают: внимание оператора видеонаблюдения <strong style="color:var(--warn)">падает через 20 минут</strong>. При 10+ камерах эффективность мониторинга не превышает 5%. Люди не способны обрабатывать такой объём информации.</p>
+</div>
+<div class="cd">
+<div style="font-size:32px;margin-bottom:12px">&#x1F4B0;</div>
+<h4>Дорогие решения</h4>
+<p>Коммерческие системы аналитики стоят от <strong style="color:var(--warn)">$500–5000/мес</strong> за облачную подписку. Требуют дорогого оборудования (GPU-серверы) или отправляют видео в облако — что неприемлемо для банков и складов.</p>
+</div>
+</div>
+<div class="explain" style="margin-top:20px;max-width:1100px">
+<p><span class="hl">CamAI решает эту проблему:</span> вместо человека видеопоток анализирует искусственный интеллект Google Gemini. Он «смотрит» все камеры одновременно, 24 часа в сутки, и мгновенно сообщает о любых инцидентах в Telegram. Без облака — всё работает на локальном мини-сервере за $100–200.</p>
+</div>
+</div>
+
+<!-- S2: How it works -->
+<div class="slide" data-slide="2">
+<span class="sn">02 / Как это работает</span>
+<h2>От камеры до <span class="gr">уведомления за секунды</span></h2>
+<p class="sub" style="margin-bottom:20px">CamAI подключается к вашим существующим IP-камерам, захватывает кадры и анализирует их нейросетью Google Gemini. Весь процесс полностью автоматический.</p>
+<div class="steps" style="max-width:1100px">
+<div class="step"><div class="num">1</div><h4>Камера снимает</h4><p>Обычная IP-камера (Hikvision, Dahua, Trassir или любая RTSP) передаёт видеопоток на мини-сервер CamAI по локальной сети</p></div>
+<div class="step"><div class="num">2</div><h4>CamAI захватывает кадр</h4><p>Система каждые N секунд извлекает кадр из потока. Настраивается частота — от 1 кадра в секунду до 1 раз в минуту</p></div>
+<div class="step"><div class="num">3</div><h4>ИИ анализирует</h4><p>Кадр отправляется в Google Gemini AI с контекстным промптом: что искать (людей, очереди, опасности) — зависит от типа бизнеса и включённых функций</p></div>
+<div class="step"><div class="num">4</div><h4>Событие создаётся</h4><p>ИИ возвращает описание сцены, количество людей, обнаруженные объекты и уровень серьёзности: info, warning или critical</p></div>
+<div class="step"><div class="num">5</div><h4>Мгновенное уведомление</h4><p>При обнаружении инцидента — Telegram-бот отправляет сообщение владельцу: что случилось, какая камера, в какое время</p></div>
+</div>
+<div class="explain" style="max-width:1100px">
+<p><span class="hl">Пример:</span> Камера на складе фиксирует человека без каски. ИИ распознаёт нарушение ТБ &#x2192; создаёт событие severity:warning &#x2192; Telegram отправляет: «Склад, Камера-3: Обнаружен человек без средств защиты, 14:32». Всё это занимает 2–5 секунд.</p>
+</div>
+</div>
+
+<!-- S3: Dashboard mockup -->
+<div class="slide" data-slide="3">
+<span class="sn">03 / Главный экран</span>
+<div class="twocol r55">
+<div>
+<h2>Дашборд: <span class="gr">всё на одном экране</span></h2>
+<p class="sub2" style="margin-bottom:16px">Главный экран CamAI показывает полную картину в реальном времени. Вот что видит пользователь:</p>
+<ul class="fl">
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Карточки статистики</strong><span>Камеры онлайн (3/4), обнаружено людей (47), критические события (2), средняя загрузка помещения</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Прямая трансляция с камер</strong><span>Сетка 2x2 с живым видео с камер. Бейджи LIVE/OFFLINE/AI показывают статус. Зелёная рамка = обнаружено движение</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Лента событий</strong><span>Последние 6 событий с цветовой кодировкой: красный = критическое, жёлтый = предупреждение, синий = информационное</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>ИИ-функции</strong><span>Список включённых функций анализа для выбранного типа бизнеса (детекция, подсчёт, отслеживание, безопасность)</span></div></li>
+</ul>
+</div>
+<div>
+<!-- Dashboard Mockup -->
+<div class="mockup">
+<div class="mock-bar"><div class="mock-dot r"></div><div class="mock-dot y"></div><div class="mock-dot g"></div><div class="mock-url">camvision.com/dashboard</div></div>
+<div style="display:flex">
+<div class="mock-sidebar">
+<div style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#6366f1,#06b6d4);margin-bottom:8px"></div>
+<div class="si">&#x1F4D6;</div>
+<div class="si active">&#x1F4CA;</div>
+<div class="si">&#x1F3E2;</div>
+<div class="si">&#x1F4F7;</div>
+<div class="si">&#x1F464;</div>
+<div class="si">&#x1F4C8;</div>
+<div class="si">&#x1F517;</div>
+<div class="si">&#x2699;</div>
+</div>
+<div class="mock-content" style="background:#0a0a1a">
+<div style="font-size:13px;font-weight:700;margin-bottom:10px">Дашборд <span style="color:var(--tm);font-weight:400;font-size:10px">Розничный магазин</span></div>
+<div class="mstat">
+<div class="mstat-c"><div class="icon" style="background:rgba(16,185,129,.12)">&#x1F4F7;</div><div class="val" style="color:var(--ok)">3/4</div><div class="lbl">Камеры онлайн</div></div>
+<div class="mstat-c"><div class="icon" style="background:rgba(59,130,246,.12)">&#x1F465;</div><div class="val" style="color:#3b82f6">47</div><div class="lbl">Обнаружено людей</div></div>
+<div class="mstat-c"><div class="icon" style="background:rgba(239,68,68,.12)">&#x26A0;</div><div class="val" style="color:var(--err)">2</div><div class="lbl">Критические</div></div>
+<div class="mstat-c"><div class="icon" style="background:rgba(139,92,246,.12)">&#x1F4C8;</div><div class="val" style="color:var(--ac2)">15</div><div class="lbl">Ср. загрузка</div></div>
+</div>
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:10px">
+<div>
+<div style="font-size:10px;font-weight:600;margin-bottom:6px">Камеры <span style="color:var(--tm);font-weight:400">Прямая трансляция</span></div>
+<div class="mcam-grid">
+<div class="mcam"><div class="bg" style="background:linear-gradient(135deg,#1a2332,#0d1521)"></div><div class="badge live">LIVE</div><div class="badge ai">&#x1F441; AI</div><div class="rec"><div class="rec-dot"></div><span>REC</span></div><div class="overlay"><span>Вход &bull; Главный</span></div></div>
+<div class="mcam" style="border-color:var(--ok);box-shadow:0 0 8px rgba(16,185,129,.2)"><div class="bg" style="background:linear-gradient(135deg,#1a2832,#0d1d21)"></div><div class="badge live">LIVE</div><div class="badge ai">&#x1F441; AI</div><div style="position:absolute;top:4px;left:36px;background:rgba(16,185,129,.8);padding:1px 6px;border-radius:3px;font-size:7px;color:#fff;font-weight:700;animation:pulse 1.5s infinite">ДВИЖЕНИЕ</div><div class="overlay"><span>Касса-1 &bull; Торговый зал</span></div></div>
+<div class="mcam"><div class="bg" style="background:linear-gradient(135deg,#1a2332,#151525)"></div><div class="badge live">LIVE</div><div class="overlay"><span>Склад &bull; Задний двор</span></div></div>
+<div class="mcam"><div class="bg" style="background:linear-gradient(135deg,#2a1a1a,#1a0d0d)"></div><div class="badge off">OFFLINE</div><div class="overlay"><span>Парковка &bull; Внешняя</span></div></div>
+</div>
+</div>
+<div>
+<div style="font-size:10px;font-weight:600;margin-bottom:6px">&#x1F6E1; События</div>
+<div class="mev">
+<div class="mev-i"><div class="dot crit"></div><div class="txt"><div class="d">Обнаружено проникновение в зону склада</div><div class="m">Склад &bull; 2 мин назад</div></div></div>
+<div class="mev-i"><div class="dot warn"></div><div class="txt"><div class="d">Очередь превысила 5 человек</div><div class="m">Касса-1 &bull; 8 мин назад</div></div></div>
+<div class="mev-i"><div class="dot info"></div><div class="txt"><div class="d">Подсчёт: 12 посетителей за последний час</div><div class="m">Вход &bull; 15 мин назад</div></div></div>
+<div class="mev-i"><div class="dot warn"></div><div class="txt"><div class="d">Подозрительное поведение у витрины</div><div class="m">Касса-1 &bull; 23 мин назад</div></div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- S4: Camera management -->
+<div class="slide" data-slide="4">
+<span class="sn">04 / Управление камерами</span>
+<div class="twocol r55">
+<div>
+<h2>Камеры: <span class="gr">подключение и управление</span></h2>
+<p class="sub2" style="margin-bottom:16px">Страница управления камерами позволяет добавлять, настраивать и контролировать все камеры из одного места.</p>
+<ul class="fl">
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Автоматический поиск камер в сети</strong><span>Нажмите «Поиск камер» — система просканирует локальную сеть и покажет найденные устройства: Hikvision, Dahua, Trassir, IP Webcam. Одним кликом камера добавляется в систему.</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Живой видеопоток с каждой камеры</strong><span>Каждая карточка камеры показывает реальный кадр с камеры, обновляемый каждую секунду. Видны бейджи: LIVE (онлайн), REC (запись), AI (ИИ-анализ активен), ДВИЖЕНИЕ (детекция движения).</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Включение ИИ-мониторинга одной кнопкой</strong><span>Для каждой камеры можно включить или отключить анализ ИИ. Когда мониторинг активен — каждый кадр анализируется Gemini AI и создаются события при обнаружении инцидентов.</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Умные функции на каждую камеру</strong><span>В настройках камеры — панель Smart Features: контроль очередей, поиск лиц, обнаружение слоняющихся, мониторинг рабочих мест. Каждую функцию можно привязать к каналу уведомлений.</span></div></li>
+</ul>
+</div>
+<div>
+<!-- Camera mockup -->
+<div class="mockup">
+<div class="mock-bar"><div class="mock-dot r"></div><div class="mock-dot y"></div><div class="mock-dot g"></div><div class="mock-url">camvision.com/cameras</div></div>
+<div class="mock-content" style="background:#0a0a1a;padding:14px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+<div><div style="font-size:13px;font-weight:700">Камеры</div><div style="font-size:9px;color:var(--tm)">Управление видеонаблюдением</div></div>
+<div style="display:flex;gap:6px">
+<div style="background:var(--card2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:9px;display:flex;align-items:center;gap:4px">&#x1F50D; Поиск камер</div>
+<div style="background:var(--p);border-radius:6px;padding:4px 10px;font-size:9px;color:#fff;font-weight:600">+ Добавить</div>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+<div class="mstat-c" style="padding:8px"><div style="display:flex;align-items:center;gap:6px"><div style="width:20px;height:20px;border-radius:5px;background:rgba(16,185,129,.12);display:flex;align-items:center;justify-content:center;font-size:10px">&#x1F4F6;</div><div><div style="font-size:14px;font-weight:800">3</div><div style="font-size:8px;color:var(--tm)">Онлайн</div></div></div></div>
+<div class="mstat-c" style="padding:8px"><div style="display:flex;align-items:center;gap:6px"><div style="width:20px;height:20px;border-radius:5px;background:rgba(239,68,68,.12);display:flex;align-items:center;justify-content:center;font-size:10px">&#x1F4F4;</div><div><div style="font-size:14px;font-weight:800">1</div><div style="font-size:8px;color:var(--tm)">Офлайн</div></div></div></div>
+<div class="mstat-c" style="padding:8px"><div style="display:flex;align-items:center;gap:6px"><div style="width:20px;height:20px;border-radius:5px;background:rgba(59,130,246,.12);display:flex;align-items:center;justify-content:center;font-size:10px">&#x1F441;</div><div><div style="font-size:14px;font-weight:800">2</div><div style="font-size:8px;color:var(--tm)">Мониторинг</div></div></div></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+<div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;overflow:hidden">
+<div style="aspect-ratio:16/10;background:linear-gradient(135deg,#1a2332,#0d1521);position:relative">
+<div style="position:absolute;top:4px;left:4px;background:var(--ok);padding:1px 5px;border-radius:3px;font-size:7px;color:#fff;font-weight:700">LIVE</div>
+<div style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.5);padding:1px 5px;border-radius:3px;font-size:7px;color:var(--ok)">&#x1F441; AI</div>
+</div>
+<div style="padding:8px"><div style="font-size:10px;font-weight:600">Вход главный</div><div style="font-size:8px;color:var(--tm)">Торговый зал &bull; 1080p &bull; 30 FPS</div><div style="margin-top:4px"><span style="font-size:7px;background:rgba(59,130,246,.15);color:#3b82f6;padding:1px 5px;border-radius:3px">Мониторинг</span></div></div>
+</div>
+<div style="background:var(--card2);border:1px solid rgba(16,185,129,.3);border-radius:8px;overflow:hidden;box-shadow:0 0 8px rgba(16,185,129,.15)">
+<div style="aspect-ratio:16/10;background:linear-gradient(135deg,#1a2832,#0d1d21);position:relative">
+<div style="position:absolute;top:4px;left:4px;background:var(--ok);padding:1px 5px;border-radius:3px;font-size:7px;color:#fff;font-weight:700">LIVE</div>
+<div style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.5);padding:1px 5px;border-radius:3px;font-size:7px;color:var(--ok)">&#x1F441; AI</div>
+<div style="position:absolute;top:4px;left:30px;background:rgba(16,185,129,.8);padding:1px 5px;border-radius:3px;font-size:7px;color:#fff;font-weight:700;animation:pulse 1.5s infinite">ДВИЖЕНИЕ</div>
+</div>
+<div style="padding:8px"><div style="font-size:10px;font-weight:600">Касса-1</div><div style="font-size:8px;color:var(--tm)">Кассовая зона &bull; 1080p &bull; 30 FPS</div><div style="margin-top:4px"><span style="font-size:7px;background:rgba(59,130,246,.15);color:#3b82f6;padding:1px 5px;border-radius:3px">Мониторинг</span></div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- S5: AI Analysis -->
+<div class="slide" data-slide="5">
+<span class="sn">05 / ИИ-аналитика</span>
+<h2>Что именно <span class="gr">видит и анализирует ИИ</span></h2>
+<p class="sub" style="margin-bottom:20px">Для каждого типа бизнеса CamAI активирует свой набор из 6 специализированных ИИ-функций. Вот примеры для розничного магазина:</p>
+<div class="cg cg3" style="max-width:1100px">
+<div class="cd" style="border-left:3px solid #3b82f6">
+<h4>&#x1F465; Подсчёт посетителей</h4>
+<p>ИИ считает людей на входе и выходе. Вы видите: <strong>сколько человек в магазине прямо сейчас</strong>, поток за час, за день. Данные помогают оптимизировать график работы персонала и понять пиковые часы.</p>
+</div>
+<div class="cd" style="border-left:3px solid var(--err)">
+<h4>&#x1F6E1; Детекция краж</h4>
+<p>ИИ распознаёт подозрительное поведение: человек прячет товар, задерживается у витрин, обходит зоны. <strong>Мгновенный алерт охране</strong> через Telegram с описанием инцидента, камерой и временем.</p>
+</div>
+<div class="cd" style="border-left:3px solid var(--warn)">
+<h4>&#x23F1; Управление очередями</h4>
+<p>Система считает людей в очереди у каждой кассы. Когда очередь превышает порог (например, 5 человек) — <strong>алерт менеджеру</strong>: «Откройте дополнительную кассу». Среднее время ожидания в отчётах.</p>
+</div>
+<div class="cd" style="border-left:3px solid var(--ok)">
+<h4>&#x1F525; Тепловые карты</h4>
+<p>Визуализация зон наибольшей активности покупателей. Помогает понять: <strong>где посетители проводят больше времени</strong>, какие стеллажи популярны, куда разместить промо-материалы.</p>
+</div>
+<div class="cd" style="border-left:3px solid var(--ac2)">
+<h4>&#x1F464; Демография клиентов</h4>
+<p>Анонимный анализ возраста и пола посетителей. <strong>Статистика для маркетинга:</strong> какая аудитория приходит утром vs вечером, чтобы адаптировать ассортимент и рекламу.</p>
+</div>
+<div class="cd" style="border-left:3px solid var(--ac)">
+<h4>&#x1F4E6; Мониторинг полок</h4>
+<p>ИИ замечает пустые полки и витрины. <strong>Уведомление складу:</strong> «Полка А3 пуста уже 30 минут». Помогает быстро пополнять товар и не терять продажи из-за пустых полок.</p>
+</div>
+</div>
+</div>
+
+<!-- S6: 6 Venue types -->
+<div class="slide" data-slide="6">
+<span class="sn">06 / Типы бизнеса</span>
+<h2 style="text-align:center">Адаптируется под <span class="gr">ваш бизнес</span></h2>
+<p class="sub" style="text-align:center;margin:0 auto 20px">При первом входе пользователь выбирает тип заведения. Система автоматически активирует подходящий набор ИИ-функций.</p>
+<div class="cg cg3" style="max-width:1100px;margin:0 auto">
+<div class="cd"><div style="font-size:28px;margin-bottom:8px">&#x1F6D2;</div><h4>Розничный магазин</h4><p><strong>Подсчёт посетителей</strong> (вход/выход), <strong>тепловые карты</strong> активности, <strong>детекция краж</strong>, управление очередями, демография, мониторинг полок</p></div>
+<div class="cd"><div style="font-size:28px;margin-bottom:8px">&#x1F37D;</div><h4>Ресторан / Кафе</h4><p><strong>Заполненность столов</strong> в реальном времени, время ожидания обслуживания, <strong>контроль гигиены</strong> на кухне, эффективность персонала, анализ отходов, эмоции гостей</p></div>
+<div class="cd"><div style="font-size:28px;margin-bottom:8px">&#x1F3ED;</div><h4>Склад / Производство</h4><p><strong>Охрана труда</strong> (каски, жилеты, СИЗ), отслеживание инвентаря, <strong>контроль зон доступа</strong>, мониторинг транспорта, <strong>детекция огня/дыма</strong>, производительность</p></div>
+<div class="cd"><div style="font-size:28px;margin-bottom:8px">&#x1F3E2;</div><h4>Офис</h4><p><strong>Учёт посещаемости</strong> сотрудников, загрузка переговорок, <strong>охранные оповещения</strong>, аналитика рабочих мест, управление посетителями, энергоэффективность</p></div>
+<div class="cd"><div style="font-size:28px;margin-bottom:8px">&#x1F3E6;</div><h4>Банк / Финансы</h4><p><strong>Подозрительное поведение</strong>, мониторинг банкоматов (скиммеры), анализ очередей, <strong>распознавание лиц</strong> (VIP, watchlist), детекция слоняния, контроль кассовых операций</p></div>
+<div class="cd"><div style="font-size:28px;margin-bottom:8px">&#x1F697;</div><h4>Парковка</h4><p><strong>Распознавание номеров</strong> (OCR), заполненность парковки (свободные/занятые места), транспортный поток, <strong>детекция нарушений</strong>, классификация ТС, время пребывания</p></div>
+</div>
+</div>
+
+<!-- S7: Person search -->
+<div class="slide" data-slide="7">
+<span class="sn">07 / Поиск людей по фото</span>
+<div class="twocol r45">
+<div>
+<h2>Найдите человека <span class="gr">на всех камерах</span></h2>
+<p class="sub2" style="margin-bottom:16px">Загрузите фотографию — система будет искать этого человека на всех камерах в реальном времени, 24/7.</p>
+<h3 style="margin-top:20px">Как это работает:</h3>
+<ul class="fl">
+<li><span class="ck">1</span><div class="ft"><strong>Загрузите фото лица</strong><span>Система автоматически обнаруживает лицо на фотографии и извлекает 128-мерный биометрический дескриптор с помощью face-api.js (TensorFlow.js)</span></div></li>
+<li><span class="ck">2</span><div class="ft"><strong>Камеры ищут совпадения</strong><span>При каждом анализе кадра система сравнивает все лица в кадре с загруженными дескрипторами. Используется евклидово расстояние (порог 0.5–0.6)</span></div></li>
+<li><span class="ck">3</span><div class="ft"><strong>Обнаружение → уведомление</strong><span>При совпадении создаётся «обнаружение» (sighting) с камерой, временем, процентом уверенности. Можно привязать уведомление в Telegram</span></div></li>
+<li><span class="ck">4</span><div class="ft"><strong>Таймлайн появлений</strong><span>Для каждого человека — полная хронология: где и когда был замечен, на какой камере, с какой точностью совпадения</span></div></li>
+</ul>
+</div>
+<div>
+<div class="mockup">
+<div class="mock-bar"><div class="mock-dot r"></div><div class="mock-dot y"></div><div class="mock-dot g"></div><div class="mock-url">camvision.com/person-search</div></div>
+<div class="mock-content" style="background:#0a0a1a;padding:14px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+<div><div style="font-size:12px;font-weight:700">Поиск людей</div><div style="font-size:8px;color:var(--tm)">Загрузите фото — камеры будут его искать</div></div>
+<div style="background:var(--p);border-radius:6px;padding:4px 10px;font-size:9px;color:#fff;font-weight:600">+ Добавить</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+<div class="mstat-c" style="padding:8px"><div style="font-size:12px;font-weight:800;color:#3b82f6">3</div><div style="font-size:7px;color:var(--tm)">Всего поисков</div></div>
+<div class="mstat-c" style="padding:8px"><div style="font-size:12px;font-weight:800;color:var(--ok)">2</div><div style="font-size:7px;color:var(--tm)">Активные</div></div>
+<div class="mstat-c" style="padding:8px"><div style="font-size:12px;font-weight:800;color:var(--err)">7</div><div style="font-size:7px;color:var(--tm)">Обнаружений</div></div>
+</div>
+<!-- Person cards -->
+<div style="background:var(--card2);border:1px solid rgba(16,185,129,.25);border-radius:8px;padding:10px;margin-bottom:6px;background:rgba(16,185,129,.03)">
+<div style="display:flex;align-items:center;gap:8px">
+<div style="width:36px;height:36px;border-radius:6px;background:linear-gradient(135deg,#334155,#1e293b);display:flex;align-items:center;justify-content:center;font-size:16px">&#x1F464;</div>
+<div style="flex:1"><div style="font-size:10px;font-weight:700">Иванов А.С. <span style="background:var(--ok);color:#fff;font-size:7px;padding:1px 4px;border-radius:3px;margin-left:4px">Активен</span></div><div style="font-size:8px;color:var(--tm)">Обнаружений: 5 &bull; Telegram уведомления</div></div>
+</div>
+<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+<div style="font-size:8px;font-weight:600;margin-bottom:4px;color:var(--pl)">Таймлайн обнаружений:</div>
+<div style="display:flex;flex-direction:column;gap:4px">
+<div style="display:flex;align-items:center;gap:6px;font-size:8px"><div style="width:4px;height:4px;border-radius:50%;background:var(--ok)"></div><span style="color:var(--t)">Вход (Чиланзар)</span><span style="color:var(--tm)">11:47</span><span style="color:var(--ok);font-weight:700">94.2%</span></div>
+<div style="display:flex;align-items:center;gap:6px;font-size:8px"><div style="width:4px;height:4px;border-radius:50%;background:var(--ok)"></div><span style="color:var(--t)">Касса-2 (Алмазар)</span><span style="color:var(--tm)">10:23</span><span style="color:var(--ok);font-weight:700">87.5%</span></div>
+<div style="display:flex;align-items:center;gap:6px;font-size:8px"><div style="width:4px;height:4px;border-radius:50%;background:var(--warn)"></div><span style="color:var(--t)">Парковка (Юнусабад)</span><span style="color:var(--tm)">09:15</span><span style="color:var(--warn);font-weight:700">72.1%</span></div>
+</div>
+</div>
+</div>
+<div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:10px">
+<div style="display:flex;align-items:center;gap:8px">
+<div style="width:36px;height:36px;border-radius:6px;background:linear-gradient(135deg,#334155,#1e293b);display:flex;align-items:center;justify-content:center;font-size:16px">&#x1F464;</div>
+<div style="flex:1"><div style="font-size:10px;font-weight:700">Петров К.М. <span style="background:var(--tm);color:#fff;font-size:7px;padding:1px 4px;border-radius:3px;margin-left:4px">Приостановлен</span></div><div style="font-size:8px;color:var(--tm)">Обнаружений: 2 &bull; 15.01.2026</div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- S8: Analytics -->
+<div class="slide" data-slide="8">
+<span class="sn">08 / Аналитика и отчёты</span>
+<div class="twocol r55">
+<div>
+<h2>Детальная <span class="gr">аналитика</span></h2>
+<p class="sub2" style="margin-bottom:16px">Страница аналитики предоставляет полную статистику с фильтрами по периоду и типу событий. Данные можно экспортировать.</p>
+<ul class="fl">
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>KPI-карточки с динамикой</strong><span>Всего событий, обнаружено людей, сессий анализа, обработано кадров — каждый показатель со стрелкой роста/падения относительно предыдущего периода</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>График активности по часам</strong><span>Столбчатая диаграмма показывает распределение событий по часам. Цветовая кодировка: синий (норма), жёлтый (повышенная), красный (пиковая нагрузка)</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Разбивка по типам и важности</strong><span>Круговая/линейная диаграмма: сколько было движений, алертов, распознаваний лиц. Разделение по серьёзности: critical / warning / info</span></div></li>
+<li><span class="ck">&#x2713;</span><div class="ft"><strong>Экспорт в CSV и JSON</strong><span>Кнопка «Экспорт» позволяет скачать все данные за период в CSV (для Excel) или JSON (для интеграции). Фильтры применяются к экспорту.</span></div></li>
+</ul>
+</div>
+<div>
+<div class="mockup">
+<div class="mock-bar"><div class="mock-dot r"></div><div class="mock-dot y"></div><div class="mock-dot g"></div><div class="mock-url">camvision.com/analytics</div></div>
+<div class="mock-content" style="background:#0a0a1a;padding:14px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+<div><div style="font-size:12px;font-weight:700">Аналитика</div><div style="font-size:8px;color:var(--tm)">Детальная статистика</div></div>
+<div style="display:flex;gap:4px">
+<div style="background:var(--card2);border:1px solid var(--border);border-radius:5px;padding:3px 8px;font-size:8px">&#x1F4C5; Сегодня</div>
+<div style="background:var(--card2);border:1px solid var(--border);border-radius:5px;padding:3px 8px;font-size:8px">&#x2B07; Экспорт</div>
+</div>
+</div>
+<div class="mstat">
+<div class="mstat-c" style="padding:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:8px;color:var(--tm)">&#x26A0;</span><span style="font-size:7px;color:var(--ok)">&#x2191; +23%</span></div><div style="font-size:14px;font-weight:800;margin-top:4px">156</div><div style="font-size:7px;color:var(--tm)">Всего событий</div></div>
+<div class="mstat-c" style="padding:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:8px;color:var(--tm)">&#x1F465;</span><span style="font-size:7px;color:var(--ok)">&#x2191; +12%</span></div><div style="font-size:14px;font-weight:800;margin-top:4px">1,247</div><div style="font-size:7px;color:var(--tm)">Обнаружено людей</div></div>
+<div class="mstat-c" style="padding:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:8px;color:var(--tm)">&#x1F4C8;</span><span style="font-size:7px;color:var(--ok)">&#x2191; +5%</span></div><div style="font-size:14px;font-weight:800;margin-top:4px">48</div><div style="font-size:7px;color:var(--tm)">Сессий анализа</div></div>
+<div class="mstat-c" style="padding:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:8px;color:var(--tm)">&#x1F4F7;</span><span style="font-size:7px;color:#3b82f6">3 актив.</span></div><div style="font-size:14px;font-weight:800;margin-top:4px">8,432</div><div style="font-size:7px;color:var(--tm)">Кадров обработано</div></div>
+</div>
+<div style="font-size:9px;font-weight:600;margin-bottom:4px">&#x1F4CA; Активность по часам</div>
+<div class="mchart">
+<div class="bar" style="height:8%;background:#3b82f6"></div><div class="bar" style="height:5%;background:#3b82f6"></div>
+<div class="bar" style="height:3%;background:#3b82f6"></div><div class="bar" style="height:2%;background:var(--td)"></div>
+<div class="bar" style="height:2%;background:var(--td)"></div><div class="bar" style="height:5%;background:#3b82f6"></div>
+<div class="bar" style="height:12%;background:#3b82f6"></div><div class="bar" style="height:25%;background:#3b82f6"></div>
+<div class="bar" style="height:45%;background:var(--warn)"></div><div class="bar" style="height:65%;background:var(--warn)"></div>
+<div class="bar" style="height:85%;background:var(--err)"></div><div class="bar" style="height:95%;background:var(--err)"></div>
+<div class="bar" style="height:80%;background:var(--err)"></div><div class="bar" style="height:60%;background:var(--warn)"></div>
+<div class="bar" style="height:55%;background:var(--warn)"></div><div class="bar" style="height:70%;background:var(--warn)"></div>
+<div class="bar" style="height:50%;background:var(--warn)"></div><div class="bar" style="height:40%;background:#3b82f6"></div>
+<div class="bar" style="height:30%;background:#3b82f6"></div><div class="bar" style="height:20%;background:#3b82f6"></div>
+<div class="bar" style="height:15%;background:#3b82f6"></div><div class="bar" style="height:12%;background:#3b82f6"></div>
+<div class="bar" style="height:8%;background:#3b82f6"></div><div class="bar" style="height:5%;background:#3b82f6"></div>
+</div>
+<div style="display:flex;justify-content:space-between;font-size:7px;color:var(--td);margin-top:2px"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+<div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+<div style="text-align:center;padding:8px;background:var(--card2);border-radius:6px"><div style="font-size:16px;font-weight:800;color:var(--err)">8</div><div style="font-size:7px;color:var(--tm)">Критических</div></div>
+<div style="text-align:center;padding:8px;background:var(--card2);border-radius:6px"><div style="font-size:16px;font-weight:800;color:var(--warn)">34</div><div style="font-size:7px;color:var(--tm)">Предупреждений</div></div>
+<div style="text-align:center;padding:8px;background:var(--card2);border-radius:6px"><div style="font-size:16px;font-weight:800;color:#3b82f6">114</div><div style="font-size:7px;color:var(--tm)">Информационных</div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- S9: Integrations -->
+<div class="slide" data-slide="9">
+<span class="sn">09 / Интеграции</span>
+<h2 style="text-align:center">10+ каналов <span class="gr">уведомлений и обмена данными</span></h2>
+<p class="sub" style="text-align:center;margin:0 auto 20px">CamAI отправляет алерты и данные туда, где их удобно получать. Каждую интеграцию можно включить одним переключателем и настроить за минуту.</p>
+<div class="cg cg2" style="max-width:1000px;margin:0 auto">
+<div class="cd" style="border-left:3px solid #0088cc">
+<h4>&#x2708; Telegram — основной канал</h4>
+<p style="margin-bottom:10px">Самая популярная интеграция. <strong>Подключение за 3 шага:</strong></p>
+<p>1. Создайте бота через @BotFather → получите токен<br>2. Укажите токен при установке CamAI (--telegram)<br>3. Нажмите /start в боте → нажмите «Подключить» в CamAI</p>
+<p style="margin-top:8px"><strong>Что получаете:</strong> мгновенные уведомления о каждом инциденте: описание, камера, время, уровень серьёзности. Можно настроить уведомления по филиалам.</p>
+</div>
+<div class="cd">
+<h4>Другие каналы уведомлений</h4>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+<div style="padding:8px;background:var(--card2);border-radius:8px;font-size:.82rem"><strong>Slack</strong> — вебхуки в каналы</div>
+<div style="padding:8px;background:var(--card2);border-radius:8px;font-size:.82rem"><strong>Email</strong> — SMTP уведомления</div>
+<div style="padding:8px;background:var(--card2);border-radius:8px;font-size:.82rem"><strong>SMS</strong> — через API провайдера</div>
+<div style="padding:8px;background:var(--card2);border-radius:8px;font-size:.82rem"><strong>Webhooks</strong> — HTTP POST</div>
+</div>
+<h4 style="margin-top:14px">Бизнес-системы</h4>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+<div style="padding:8px;background:var(--card2);border-radius:8px;font-size:.82rem"><strong>1C</strong> — ERP интеграция</div>
+<div style="padding:8px;background:var(--card2);border-radius:8px;font-size:.82rem"><strong>Bitrix24</strong> — CRM</div>
+<div style="padding:8px;background:var(--card2);border-radius:8px;font-size:.82rem"><strong>iiko</strong> — POS рестораны</div>
+<div style="padding:8px;background:var(--card2);border-radius:8px;font-size:.82rem"><strong>MQTT</strong> — IoT брокеры</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- S10: Multi-branch -->
+<div class="slide center" data-slide="10">
+<span class="sn">10 / Мультифилиальность</span>
+<h2>Одна панель для <span class="gr">всех филиалов</span></h2>
+<p class="sub" style="text-align:center;margin:0 auto 20px">Для компаний с несколькими точками CamAI предлагает архитектуру «Центральный сервер + Спутники». Каждый филиал работает автономно, но все данные агрегируются на одном дашборде.</p>
+<div class="arch" style="margin:0 auto">
+<div class="arch-row"><div class="arch-box cli">&#x1F4F1; Владелец (PWA с телефона)</div><div style="color:var(--tm);font-size:1.2rem">&#x2192;</div><div class="arch-box cen">&#x1F310; Центральный сервер<br><span style="font-size:.75rem;color:var(--tm)">romashka.camvision.com</span></div></div>
+<div class="arch-lbl">&#x2191; push каждые 5 мин &#x2191;</div>
+<div class="arch-row"><div class="arch-box sat">&#x1F4E1; Алмазар<br><span style="font-size:.75rem;color:var(--tm)">3 камеры</span></div><div class="arch-box sat">&#x1F4E1; Чиланзар<br><span style="font-size:.75rem;color:var(--tm)">4 камеры</span></div><div class="arch-box sat">&#x1F4E1; Юнусабад<br><span style="font-size:.75rem;color:var(--tm)">5 камер</span></div></div>
+</div>
+<div class="explain" style="max-width:900px;margin:16px auto 0">
+<p><span class="hl">Как работает:</span> На каждом филиале стоит мини-сервер (спутник) с CamAI, который анализирует камеры автономно. Каждые 5 минут спутники отправляют данные (события, статистику) на центральный сервер. Если интернет пропал — данные копятся в очереди и отправляются при восстановлении. Cloudflare Tunnel обеспечивает доступ через красивый домен без белого IP.</p>
+</div>
+</div>
+
+<!-- S11: Installation -->
+<div class="slide" data-slide="11">
+<span class="sn">11 / Установка</span>
+<h2>Установка за <span class="gr">одну команду</span></h2>
+<p class="sub" style="margin-bottom:16px">Скрипт автоматически устанавливает всё необходимое: Docker, базу данных, админ-аккаунт, автообновления и бэкапы.</p>
+<div class="code">
+<span class="cm"># Простая установка (один филиал)</span><br>
+<span class="cmd">bash</span> install-client.sh \<br>
+&nbsp;&nbsp;<span class="fl">--key</span> <span class="vl">"Gemini_API_ключ"</span> \<br>
+&nbsp;&nbsp;<span class="fl">--company</span> <span class="vl">"Магазин Ромашка"</span> \<br>
+&nbsp;&nbsp;<span class="fl">--telegram</span> <span class="vl">"токен_бота"</span><br><br>
+<span class="cm"># Мультифилиальная (центральный сервер)</span><br>
+<span class="cmd">bash</span> install-client.sh \<br>
+&nbsp;&nbsp;<span class="fl">--key</span> <span class="vl">"ключ"</span> <span class="fl">--company</span> <span class="vl">"Ромашка"</span> <span class="fl">--central</span> \<br>
+&nbsp;&nbsp;<span class="fl">--tunnel</span> <span class="vl">"cf_токен"</span> <span class="fl">--domain</span> <span class="vl">"romashka.camvision.com"</span><br><br>
+<span class="cm"># Филиал-спутник</span><br>
+<span class="cmd">bash</span> install-client.sh \<br>
+&nbsp;&nbsp;<span class="fl">--key</span> <span class="vl">"ключ"</span> <span class="fl">--company</span> <span class="vl">"Ромашка Алмазар"</span> \<br>
+&nbsp;&nbsp;<span class="fl">--sync-to</span> <span class="vl">"https://romashka.camvision.com"</span> <span class="fl">--sync-key</span> <span class="vl">"секрет"</span>
+</div>
+<div class="explain" style="max-width:800px">
+<p><span class="hl">Что делает скрипт:</span> 1) Устанавливает Docker если нет → 2) Скачивает образ CamAI → 3) Создаёт БД и админ-аккаунт → 4) Настраивает Watchtower (автообновления каждые 24ч) → 5) Настраивает cron-бэкап ежедневно в 3:00 → 6) Запускает систему. <strong>Всё за 5 минут.</strong></p>
+</div>
+</div>
+
+<!-- S12: Security + Pricing -->
+<div class="slide" data-slide="12">
+<span class="sn">12 / Безопасность и стоимость</span>
+<div class="twocol" style="max-width:1100px">
+<div>
+<h2><span class="gr">Безопасность</span></h2>
+<p class="sub2" style="margin-bottom:14px">Все данные остаются на вашем сервере. Видео не уходит в облако.</p>
+<div class="sec-grid" style="max-width:100%">
+<div class="sec-i"><div class="sec-ic">&#x1F512;</div><div><h5>JWT + bcrypt</h5><p>Хешированные пароли, токены сессий</p></div></div>
+<div class="sec-i"><div class="sec-ic">&#x1F4BE;</div><div><h5>Локальная БД</h5><p>SQLite на вашем сервере</p></div></div>
+<div class="sec-i"><div class="sec-ic">&#x1F510;</div><div><h5>HTTPS/TLS</h5><p>Cloudflare Tunnel шифрование</p></div></div>
+<div class="sec-i"><div class="sec-ic">&#x1F6E1;</div><div><h5>Security Headers</h5><p>HSTS, XSS, X-Frame-Options</p></div></div>
+<div class="sec-i"><div class="sec-ic">&#x1F504;</div><div><h5>Бэкапы</h5><p>Автоматически каждый день в 3:00</p></div></div>
+<div class="sec-i"><div class="sec-ic">&#x1F5DD;</div><div><h5>Sync Auth</h5><p>X-Sync-Key между филиалами</p></div></div>
+</div>
+</div>
+<div>
+<h2>Стоимость <span class="gr">владения</span></h2>
+<p class="sub2" style="margin-bottom:14px">Минимальные расходы на инфраструктуру:</p>
+<div class="price-r"><span class="price-l">Мини-сервер</span><span style="font-weight:700;color:var(--tm)">Единоразово ~$150</span></div>
+<div class="price-r"><span class="price-l">CamAI ПО</span><span style="font-weight:700;color:var(--pl)">Лицензия</span></div>
+<div class="price-r"><span class="price-l">Google Gemini API</span><span class="tag free">БЕСПЛАТНО</span></div>
+<div class="price-r"><span class="price-l">Cloudflare Tunnel</span><span class="tag free">БЕСПЛАТНО</span></div>
+<div class="price-r"><span class="price-l">Docker / Обновления</span><span class="tag free">БЕСПЛАТНО</span></div>
+<div class="price-r"><span class="price-l">Telegram уведомления</span><span class="tag free">БЕСПЛАТНО</span></div>
+<div style="margin-top:12px;padding:14px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:10px;text-align:center;max-width:650px">
+<div style="font-size:1.1rem;font-weight:700;color:var(--ok)">Ежемесячные расходы: $0</div>
+<div style="font-size:.82rem;color:var(--tm)">При бесплатном тарифе Gemini (15 запросов/мин)</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- S13: Use case -->
+<div class="slide" data-slide="13">
+<span class="sn">13 / Пример использования</span>
+<h2 style="text-align:center">Кейс: сеть магазинов <span class="gr">«Ромашка»</span></h2>
+<p class="sub" style="text-align:center;margin:0 auto 20px">3 филиала в Ташкенте, 12 камер, 1 владелец</p>
+<div class="cg cg3" style="max-width:1100px;margin:0 auto">
+<div class="cd" style="border-top:3px solid var(--err)">
+<h4 style="color:var(--err)">&#x274C; До CamAI</h4>
+<p style="line-height:1.8">Камеры пишут видео на DVR — <strong>никто не смотрит</strong>. Кражи обнаруживаются при инвентаризации. Очереди в час-пик — клиенты уходят. Нет понимания потока посетителей. Владелец объезжает все 3 точки лично.</p>
+</div>
+<div class="cd" style="border-top:3px solid var(--ok)">
+<h4 style="color:var(--ok)">&#x2705; После CamAI</h4>
+<p style="line-height:1.8"><strong>Владелец открывает romashka.camvision.com с телефона</strong> и видит:<br>
+&#x2022; 12 камер: 10 онлайн, 2 офлайн<br>
+&#x2022; 47 событий за сегодня, 2 критических<br>
+&#x2022; Telegram: «Склад Алмазар — проникновение, 14:32»<br>
+&#x2022; Очередь >5 чел. — 23 раза за неделю<br>
+&#x2022; Пик потока: 12:00–14:00</p>
+</div>
+<div class="cd" style="border-top:3px solid var(--pl)">
+<h4 style="color:var(--pl)">&#x1F4B0; Результат</h4>
+<p style="line-height:1.8"><strong>Кражи сократились на 60%</strong> — ИИ мгновенно оповещает. <strong>Очереди уменьшились</strong> — менеджер знает, когда открыть доп. кассу. <strong>Владелец экономит 3 часа/день</strong> — не нужно объезжать точки. Установка обошлась в <strong>$150 за мини-сервер</strong> на филиал.</p>
+</div>
+</div>
+</div>
+
+<!-- S14: Final -->
+<div class="slide center" data-slide="14">
+<div style="margin-bottom:16px">
+<svg width="64" height="64" viewBox="0 0 80 80" fill="none"><rect width="80" height="80" rx="20" fill="url(#g2)"/><path d="M20 35C20 35 28 25 40 25C52 25 60 35 60 35C60 35 52 45 40 45C28 45 20 35 20 35Z" stroke="#fff" stroke-width="2.5" fill="none"/><circle cx="40" cy="35" r="7" stroke="#fff" stroke-width="2.5" fill="none"/><circle cx="40" cy="35" r="3" fill="#fff"/><path d="M25 50L35 55L45 48L55 53" stroke="rgba(255,255,255,.5)" stroke-width="1.5" stroke-linecap="round"/><defs><linearGradient id="g2" x1="0" y1="0" x2="80" y2="80"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs></svg>
+</div>
+<h1 style="font-size:3rem"><span class="gr">CamAI</span></h1>
+<p style="font-size:1.3rem;margin-bottom:24px;color:var(--tm)">Интеллектуальная система видеоаналитики</p>
+<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:24px;max-width:700px">
+<span style="padding:8px 16px;border-radius:8px;background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.25);font-size:.85rem;font-weight:600">ИИ-анализ 24/7</span>
+<span style="padding:8px 16px;border-radius:8px;background:rgba(6,182,212,.12);border:1px solid rgba(6,182,212,.25);font-size:.85rem;font-weight:600">Мгновенные алерты</span>
+<span style="padding:8px 16px;border-radius:8px;background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.25);font-size:.85rem;font-weight:600">6 типов бизнеса</span>
+<span style="padding:8px 16px;border-radius:8px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);font-size:.85rem;font-weight:600">Поиск по лицам</span>
+<span style="padding:8px 16px;border-radius:8px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);font-size:.85rem;font-weight:600">Мультифилиальность</span>
+<span style="padding:8px 16px;border-radius:8px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.25);font-size:.85rem;font-weight:600">$0 инфраструктура</span>
+</div>
+<div style="display:flex;gap:30px;margin-bottom:20px">
+<div style="text-align:center"><div style="font-size:.82rem;color:var(--tm);margin-bottom:4px">Мини-сервер</div><div style="font-size:1rem;font-weight:700">~$150</div><div style="font-size:.75rem;color:var(--tm)">единоразово</div></div>
+<div style="text-align:center"><div style="font-size:.82rem;color:var(--tm);margin-bottom:4px">Установка</div><div style="font-size:1rem;font-weight:700">5 минут</div><div style="font-size:.75rem;color:var(--tm)">одна команда</div></div>
+<div style="text-align:center"><div style="font-size:.82rem;color:var(--tm);margin-bottom:4px">Облако</div><div style="font-size:1rem;font-weight:700">Не нужно</div><div style="font-size:.75rem;color:var(--tm)">всё локально</div></div>
+</div>
+<div style="margin-top:10px;color:var(--tm);font-size:.85rem">
+Docker: <code style="background:rgba(99,102,241,.12);padding:3px 8px;border-radius:5px;font-size:.8rem">ghcr.io/asilbektilavov/cam-ai:latest</code>
+</div>
+</div>
+
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+<button class="nav-btn" onclick="prev()">&#x2190;</button>
+<div class="dots" id="dots"></div>
+<button class="nav-btn" onclick="next()">&#x2192;</button>
+<div class="cnt" id="cnt">1/15</div>
+</div>
+
+<script>
+const T=15;let C=0,A=false;
+const S=document.querySelectorAll('.slide'),D=document.getElementById('dots'),P=document.getElementById('pb'),N=document.getElementById('cnt');
+for(let i=0;i<T;i++){const d=document.createElement('div');d.className='dot'+(i===0?' active':'');d.onclick=()=>go(i);D.appendChild(d)}
+function upd(){S.forEach((s,i)=>{s.classList.remove('active','prev');if(i===C)s.classList.add('active');else if(i<C)s.classList.add('prev')});
+D.querySelectorAll('.dot').forEach((d,i)=>d.className='dot'+(i===C?' active':''));P.style.width=((C+1)/T*100)+'%';N.textContent=(C+1)+'/'+T}
+function go(i){if(A||i===C)return;A=true;C=i;upd();setTimeout(()=>A=false,500)}
+function next(){if(C<T-1)go(C+1)}function prev(){if(C>0)go(C-1)}
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key===' '||e.key==='Enter'){e.preventDefault();next()}else if(e.key==='ArrowLeft'||e.key==='Backspace'){e.preventDefault();prev()}});
+let tx=0;document.addEventListener('touchstart',e=>tx=e.changedTouches[0].screenX);
+document.addEventListener('touchend',e=>{const d=tx-e.changedTouches[0].screenX;if(Math.abs(d)>50){d>0?next():prev()}});
+let wt;document.addEventListener('wheel',e=>{clearTimeout(wt);wt=setTimeout(()=>{e.deltaY>0?next():prev()},60)},{passive:true});
+</script>
+</body>
+</html>
