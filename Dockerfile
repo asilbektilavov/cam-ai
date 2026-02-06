@@ -45,6 +45,7 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
 # Copy seed
 COPY --from=builder /app/prisma/seed.ts ./prisma/seed.ts
+COPY --from=builder /app/prisma/seed-demo.ts ./prisma/seed-demo.ts
 
 # Create data directories
 RUN mkdir -p /app/data/frames /app/data/search-photos /app/prisma
