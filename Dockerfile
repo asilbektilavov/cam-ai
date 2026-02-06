@@ -43,10 +43,14 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
-# Copy seeds
+# Copy seeds + tsx runtime (needed for entrypoint seed scripts)
 COPY --from=builder /app/prisma/seed.ts ./prisma/seed.ts
 COPY --from=builder /app/prisma/seed-demo.ts ./prisma/seed-demo.ts
 COPY --from=builder /app/prisma/seed-plans.ts ./prisma/seed-plans.ts
+COPY --from=builder /app/node_modules/tsx ./node_modules/tsx
+COPY --from=builder /app/node_modules/esbuild ./node_modules/esbuild
+COPY --from=builder /app/node_modules/get-tsconfig ./node_modules/get-tsconfig
+COPY --from=builder /app/node_modules/resolve-pkg-maps ./node_modules/resolve-pkg-maps
 
 # Create data directories
 RUN mkdir -p /app/data/frames /app/data/search-photos /app/prisma
