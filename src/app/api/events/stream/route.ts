@@ -12,10 +12,11 @@ export async function GET(request: Request) {
   const branchId = new URL(request.url).searchParams.get('branchId');
 
   const encoder = new TextEncoder();
+  let cleanup: (() => void) | null = null;
+
   const stream = new ReadableStream({
     start(controller) {
       const handler = (event: CameraEvent) => {
-        // Only send events for this organization (and branch if specified)
         if (event.organizationId !== orgId) return;
         if (branchId && event.branchId !== branchId) return;
 
@@ -25,7 +26,6 @@ export async function GET(request: Request) {
 
       appEvents.on('camera-event', handler);
 
-      // Send keepalive every 30 seconds
       const keepalive = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(': keepalive\n\n'));
@@ -34,18 +34,13 @@ export async function GET(request: Request) {
         }
       }, 30000);
 
-      // Cleanup when client disconnects
-      const cleanup = () => {
+      cleanup = () => {
         appEvents.off('camera-event', handler);
         clearInterval(keepalive);
       };
-
-      // Handle stream cancellation
-      const originalCancel = stream.cancel?.bind(stream);
-      stream.cancel = (reason) => {
-        cleanup();
-        return originalCancel?.(reason) ?? Promise.resolve();
-      };
+    },
+    cancel() {
+      cleanup?.();
     },
   });
 
