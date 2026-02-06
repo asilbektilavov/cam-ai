@@ -105,11 +105,6 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <div className="mt-6 p-3 rounded-lg bg-muted/50 text-center">
-            <p className="text-xs text-muted-foreground">
-              Демо: admin@demo.com / admin123
-            </p>
-          </div>
         </CardContent>
       </Card>
     </div>
