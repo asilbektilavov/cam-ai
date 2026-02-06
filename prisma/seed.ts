@@ -24,10 +24,15 @@ async function main() {
     return;
   }
 
+  // Find free plan (seeded by seed-plans.ts)
+  const freePlan = await prisma.plan.findUnique({ where: { name: 'free' } });
+
   const org = await prisma.organization.create({
     data: {
       name: companyName,
       slug,
+      ...(freePlan ? { planId: freePlan.id } : {}),
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     },
   });
 

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
@@ -199,6 +200,10 @@ async function main() {
   await prisma.camera.deleteMany();
   await prisma.userSettings.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.agentEvent.deleteMany();
+  await prisma.agentCamera.deleteMany();
+  await prisma.agentToken.deleteMany();
+  await prisma.agent.deleteMany();
   await prisma.branch.deleteMany();
   await prisma.remoteEvent.deleteMany();
   await prisma.remoteCamera.deleteMany();
@@ -206,10 +211,16 @@ async function main() {
   await prisma.syncQueue.deleteMany();
   await prisma.organization.deleteMany();
 
-  // 2. Organization
+  // 2. Organization (with plan)
   console.log('[2/10] Creating organization...');
+  const freePlan = await prisma.plan.findUnique({ where: { name: 'free' } });
   const org = await prisma.organization.create({
-    data: { name: ORG_NAME, slug: 'romashka-demo' },
+    data: {
+      name: ORG_NAME,
+      slug: 'romashka-demo',
+      ...(freePlan ? { planId: freePlan.id } : {}),
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+    },
   });
 
   // 3. User + Settings
@@ -443,8 +454,19 @@ async function main() {
     await prisma.personSighting.createMany({ data: sightings });
   }
 
-  // 10. Remote instances (for multi-branch demo on central page)
-  console.log('[10/10] Creating remote instances...');
+  // 10. Agent Token (for SaaS demo)
+  console.log('[10/11] Creating agent token...');
+  const agentTokenValue = 'cam_' + crypto.randomBytes(24).toString('hex');
+  await prisma.agentToken.create({
+    data: {
+      organizationId: org.id,
+      token: agentTokenValue,
+      name: 'Demo Agent Token',
+    },
+  });
+
+  // 11. Remote instances (for multi-branch demo on central page)
+  console.log('[11/11] Creating remote instances...');
   await prisma.remoteInstance.create({
     data: {
       organizationId: org.id,
