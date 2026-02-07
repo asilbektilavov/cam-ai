@@ -20,6 +20,9 @@ import {
   X,
   ExternalLink,
   Zap,
+  ScrollText,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -110,6 +113,24 @@ interface SyncStatus {
   lastSyncAt?: string | null;
 }
 
+interface AuditLogEntry {
+  id: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  details: Record<string, unknown> | null;
+  ipAddress: string | null;
+  createdAt: string;
+  user: { id: string; name: string | null; email: string | null } | null;
+}
+
+interface AuditLogResponse {
+  logs: AuditLogEntry[];
+  total: number;
+  page: number;
+  totalPages: number;
+}
+
 export default function SettingsPage() {
   const { data: session } = useSession();
 
@@ -156,6 +177,13 @@ export default function SettingsPage() {
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
 
+  // Audit log
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditTotalPages, setAuditTotalPages] = useState(1);
+  const [auditLoaded, setAuditLoaded] = useState(false);
+
   // Sync
   const [syncLoading, setSyncLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -170,6 +198,19 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchSyncStatus();
   }, [fetchSyncStatus]);
+
+  const fetchAuditLogs = useCallback((page: number) => {
+    setAuditLoading(true);
+    apiGet<AuditLogResponse>(`/api/audit-log?page=${page}&limit=20`)
+      .then((data) => {
+        setAuditLogs(data.logs);
+        setAuditPage(data.page);
+        setAuditTotalPages(data.totalPages);
+        setAuditLoaded(true);
+      })
+      .catch(() => setAuditLogs([]))
+      .finally(() => setAuditLoading(false));
+  }, []);
 
   // Load billing data
   const fetchBilling = useCallback(() => {
@@ -376,6 +417,10 @@ export default function SettingsPage() {
             <CreditCard className="h-4 w-4" />
             Тариф
           </TabsTrigger>
+          <TabsTrigger value="audit" className="gap-2" onClick={() => { if (!auditLoaded) fetchAuditLogs(1); }}>
+            <ScrollText className="h-4 w-4" />
+            Журнал
+          </TabsTrigger>
           <TabsTrigger value="sync" className="gap-2">
             <RefreshCw className="h-4 w-4" />
             Синхронизация
@@ -558,26 +603,59 @@ export default function SettingsPage() {
                 </Button>
               </div>
               <Separator />
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium">Двухфакторная аутентификация</p>
-                  <p className="text-sm text-muted-foreground">
-                    Дополнительная защита через SMS или приложение
-                  </p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Двухфакторная аутентификация (2FA)</p>
+                    <p className="text-sm text-muted-foreground">
+                      {twoFA ? 'Защита через Google Authenticator активна' : 'Защитите аккаунт через Google Authenticator'}
+                    </p>
+                  </div>
+                  {twoFA ? (
+                    <Badge className="bg-green-500/10 text-green-500">Включена</Badge>
+                  ) : (
+                    <Badge variant="outline">Выключена</Badge>
+                  )}
                 </div>
-                <Switch
-                  checked={twoFA}
-                  onCheckedChange={async (checked) => {
-                    setTwoFA(checked);
-                    try {
-                      await apiPatch('/api/settings/security', { twoFactorEnabled: checked });
-                      toast.success(checked ? '2FA включена' : '2FA отключена');
-                    } catch {
-                      setTwoFA(!checked);
-                      toast.error('Ошибка сохранения');
-                    }
-                  }}
-                />
+                {!twoFA ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const data = await apiPost<{ secret: string; qrCode: string }>('/api/settings/2fa/setup', {});
+                        const code = prompt('Отсканируйте QR в Google Authenticator, затем введите 6-значный код.\n\nЕсли не можете сканировать, введите ключ вручную:\n' + data.secret);
+                        if (!code) return;
+                        await apiPost('/api/settings/2fa/verify', { secret: data.secret, code });
+                        setTwoFA(true);
+                        toast.success('2FA включена!');
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Ошибка настройки 2FA');
+                      }
+                    }}
+                  >
+                    Включить 2FA
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive"
+                    onClick={async () => {
+                      const code = prompt('Введите код из Google Authenticator для отключения 2FA:');
+                      if (!code) return;
+                      try {
+                        await apiPost('/api/settings/2fa/disable', { code });
+                        setTwoFA(false);
+                        toast.success('2FA отключена');
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Неверный код');
+                      }
+                    }}
+                  >
+                    Отключить 2FA
+                  </Button>
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <div>
@@ -857,6 +935,96 @@ export default function SettingsPage() {
               </>
             )}
           </div>
+        </TabsContent>
+
+        {/* Audit Log */}
+        <TabsContent value="audit">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ScrollText className="h-5 w-5" />
+                Журнал действий
+              </CardTitle>
+              <CardDescription>История действий пользователей в системе</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {auditLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : auditLogs.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  {auditLoaded ? 'Нет записей в журнале' : 'Загрузка...'}
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    {auditLogs.map((log) => {
+                      const actionLabels: Record<string, string> = {
+                        'camera.create': 'Создание камеры',
+                        'camera.update': 'Обновление камеры',
+                        'camera.delete': 'Удаление камеры',
+                        'user.invite': 'Приглашение пользователя',
+                        'user.role_change': 'Смена роли',
+                        'user.remove': 'Удаление пользователя',
+                        '2fa.enabled': 'Включение 2FA',
+                        '2fa.disabled': 'Отключение 2FA',
+                        'password.change': 'Смена пароля',
+                        'integration.enable': 'Включение интеграции',
+                        'integration.update': 'Обновление интеграции',
+                      };
+
+                      return (
+                        <div
+                          key={log.id}
+                          className="flex items-start justify-between rounded-lg border p-3 text-sm"
+                        >
+                          <div className="space-y-1">
+                            <p className="font-medium">{actionLabels[log.action] || log.action}</p>
+                            <p className="text-muted-foreground">
+                              {log.user?.name || log.user?.email || 'Система'}
+                              {log.entityType && ` — ${log.entityType}`}
+                            </p>
+                            {log.details && (
+                              <p className="text-xs text-muted-foreground">
+                                {Object.entries(log.details).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap ml-4">
+                            {new Date(log.createdAt).toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {auditTotalPages > 1 && (
+                    <div className="flex items-center justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={auditPage <= 1}
+                        onClick={() => fetchAuditLogs(auditPage - 1)}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-sm text-muted-foreground">
+                        {auditPage} / {auditTotalPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={auditPage >= auditTotalPages}
+                        onClick={() => fetchAuditLogs(auditPage + 1)}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Sync */}

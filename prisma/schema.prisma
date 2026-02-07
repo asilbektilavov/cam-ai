@@ -122,6 +122,8 @@ model Organization {
   notifications    Notification[]
   agentTokens      AgentToken[]
   agents           Agent[]
+  teamInvites      TeamInvite[]
+  auditLogs        AuditLog[]
 }
 
 model Branch {
@@ -233,6 +235,7 @@ model UserSettings {
   aiQuality        String  @default("high")
   twoFactorEnabled Boolean @default(false)
   ipRestriction    Boolean @default(false)
+  twoFactorSecret  String?
 }
 
 model PasswordReset {
@@ -373,4 +376,36 @@ model SyncQueue {
   attempts  Int      @default(0)
   lastError String?
   createdAt DateTime @default(now())
+}
+
+// ==================== Team & Audit ====================
+
+model TeamInvite {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           String       @default("viewer")
+  token          String       @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  invitedBy      String
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String?
+  action         String
+  entityType     String?
+  entityId       String?
+  details        String?
+  ipAddress      String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
 }

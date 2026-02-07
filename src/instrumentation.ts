@@ -5,8 +5,13 @@ export async function register() {
     const { cameraMonitor } = await import('@/lib/services/camera-monitor');
     const { notificationDispatcher } = await import('@/lib/services/notification-dispatcher');
 
+    const { reportScheduler } = await import('@/lib/services/report-scheduler');
+
     // Start notification dispatcher
     notificationDispatcher.start();
+
+    // Start report scheduler (daily/weekly email digests)
+    reportScheduler.start();
 
     // Resume monitoring for cameras that had monitoring enabled
     try {

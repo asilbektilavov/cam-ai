@@ -1,6 +1,7 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
+import { TOTP, Secret } from 'otpauth';
 import { prisma } from './prisma';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -9,13 +10,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
+        totpCode: { label: 'TOTP Code', type: 'text' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
         const user = await prisma.user.findUnique({
           where: { email: credentials.email as string },
-          include: { organization: true },
+          include: { organization: true, settings: true },
         });
 
         if (!user) return null;
@@ -26,6 +28,28 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         );
 
         if (!isValid) return null;
+
+        // Check 2FA
+        if (user.settings?.twoFactorEnabled && user.settings?.twoFactorSecret) {
+          const totpCode = credentials.totpCode as string;
+          if (!totpCode) {
+            throw new Error('2FA_REQUIRED');
+          }
+
+          const totp = new TOTP({
+            issuer: 'CamAI',
+            label: user.email,
+            algorithm: 'SHA1',
+            digits: 6,
+            period: 30,
+            secret: Secret.fromBase32(user.settings.twoFactorSecret),
+          });
+
+          const delta = totp.validate({ token: totpCode, window: 1 });
+          if (delta === null) {
+            throw new Error('INVALID_2FA_CODE');
+          }
+        }
 
         return {
           id: user.id,

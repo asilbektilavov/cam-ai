@@ -7,15 +7,8 @@ const DEFAULT_INTEGRATIONS = [
   { type: 'telegram', name: 'Telegram', category: 'notifications', description: 'Уведомления через Telegram-бот' },
   { type: 'slack', name: 'Slack', category: 'notifications', description: 'Алерты в Slack-каналы' },
   { type: 'email', name: 'Email SMTP', category: 'notifications', description: 'Уведомления на email' },
-  { type: 'sms', name: 'SMS', category: 'notifications', description: 'SMS-уведомления' },
-  { type: '1c', name: '1С:Предприятие', category: 'crm', description: 'Интеграция с 1С' },
-  { type: 'bitrix', name: 'Битрикс24', category: 'crm', description: 'CRM и задачи' },
-  { type: 'iiko', name: 'iiko', category: 'access', description: 'POS-система для ресторанов' },
-  { type: 'skud', name: 'СКУД', category: 'access', description: 'Система контроля доступа' },
+  { type: 'sms', name: 'SMS', category: 'notifications', description: 'SMS-уведомления через Eskiz' },
   { type: 'webhook', name: 'Webhook', category: 'api', description: 'HTTP-уведомления на ваш сервер' },
-  { type: 'rest_api', name: 'REST API', category: 'api', description: 'Полный доступ через API' },
-  { type: 'mqtt', name: 'MQTT', category: 'api', description: 'IoT-протокол для устройств' },
-  { type: 'modbus', name: 'Modbus', category: 'api', description: 'Промышленный протокол' },
 ];
 
 export async function GET() {

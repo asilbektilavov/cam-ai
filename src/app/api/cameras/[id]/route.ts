@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
+import { logAudit } from '@/lib/audit';
 
 export async function GET(
   _req: NextRequest,
@@ -58,6 +59,14 @@ export async function PATCH(
     },
   });
 
+  logAudit({
+    organizationId: orgId,
+    userId: session.user.id,
+    action: 'camera.update',
+    entityType: 'camera',
+    entityId: id,
+  });
+
   return NextResponse.json(camera);
 }
 
@@ -75,6 +84,14 @@ export async function DELETE(
     where: { id, organizationId: orgId },
   });
   if (deleted.count === 0) return notFound('Camera not found');
+
+  logAudit({
+    organizationId: orgId,
+    userId: session.user.id,
+    action: 'camera.delete',
+    entityType: 'camera',
+    entityId: id,
+  });
 
   return NextResponse.json({ success: true });
 }

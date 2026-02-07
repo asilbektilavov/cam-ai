@@ -12,5 +12,6 @@ export const config = {
     '/person-search/:path*',
     '/onboarding/:path*',
     '/agents/:path*',
+    '/team/:path*',
   ],
 };

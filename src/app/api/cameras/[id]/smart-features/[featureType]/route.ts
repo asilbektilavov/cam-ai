@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound, badRequest } from '@/lib/api-utils';
+import { checkTrialOrSubscription } from '@/lib/trial-guard';
 
 const VALID_TYPES = ['queue_monitor', 'loitering_detection', 'workstation_monitor', 'person_search'];
 
@@ -23,6 +24,14 @@ export async function PUT(
     where: { id, organizationId: orgId },
   });
   if (!camera) return notFound('Camera not found');
+
+  const trialStatus = await checkTrialOrSubscription(orgId);
+  if (!trialStatus.allowed) {
+    return NextResponse.json(
+      { error: 'Пробный период истёк. Оформите подписку для продолжения.' },
+      { status: 403 }
+    );
+  }
 
   const body = await req.json();
   const { enabled, config, integrationId } = body;

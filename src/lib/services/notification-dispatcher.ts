@@ -78,6 +78,9 @@ class NotificationDispatcher {
           case 'email':
             await this.sendEmail(config, message, alert);
             break;
+          case 'sms':
+            await this.sendSms(config, message);
+            break;
           default:
             console.log(`[NotificationDispatcher] Unsupported type: ${integration.type}`);
             await prisma.notification.update({
@@ -236,6 +239,39 @@ class NotificationDispatcher {
       subject,
       text: message,
     });
+  }
+
+  private async sendSms(config: Record<string, string>, message: string): Promise<void> {
+    const { apiEmail, apiPassword, phone } = config;
+    if (!apiEmail || !apiPassword || !phone) {
+      throw new Error('SMS: apiEmail, apiPassword и phone обязательны');
+    }
+
+    // Authenticate with Eskiz.uz
+    const authRes = await fetch('https://notify.eskiz.uz/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: apiEmail, password: apiPassword }),
+    });
+    if (!authRes.ok) throw new Error(`Eskiz auth failed: ${authRes.status}`);
+    const authData = await authRes.json() as { data?: { token?: string } };
+    const token = authData.data?.token;
+    if (!token) throw new Error('Eskiz: no token received');
+
+    // Send SMS
+    const smsRes = await fetch('https://notify.eskiz.uz/api/message/sms/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        mobile_phone: phone.replace(/^\+/, ''),
+        message: message.substring(0, 160),
+        from: '4546',
+      }),
+    });
+    if (!smsRes.ok) throw new Error(`Eskiz SMS failed: ${smsRes.status}`);
   }
 
   private async sendSlack(config: Record<string, string>, message: string): Promise<void> {

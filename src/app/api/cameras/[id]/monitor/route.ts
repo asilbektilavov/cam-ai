@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
+import { checkTrialOrSubscription } from '@/lib/trial-guard';
 
 export async function POST(
   _req: NextRequest,
@@ -17,6 +18,14 @@ export async function POST(
     where: { id, organizationId: orgId },
   });
   if (!camera) return notFound('Camera not found');
+
+  const trialStatus = await checkTrialOrSubscription(orgId);
+  if (!trialStatus.allowed) {
+    return NextResponse.json(
+      { error: 'Пробный период истёк. Оформите подписку для продолжения.' },
+      { status: 403 }
+    );
+  }
 
   await cameraMonitor.startMonitoring(id);
 

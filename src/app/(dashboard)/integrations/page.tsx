@@ -6,14 +6,8 @@ import {
   Hash,
   Mail,
   Smartphone,
-  Building2,
-  Database,
-  Users,
-  KeyRound,
-  CreditCard,
   Webhook,
   Code,
-  Radio,
   CheckCircle2,
   Circle,
   ExternalLink,
@@ -63,21 +57,12 @@ const iconMap: Record<string, React.ElementType> = {
   slack: Hash,
   email: Mail,
   sms: Smartphone,
-  '1c': Database,
-  bitrix: Building2,
-  iiko: Users,
-  skud: KeyRound,
   webhook: Webhook,
-  rest_api: Code,
-  mqtt: Radio,
-  modbus: CreditCard,
 };
 
 const categoryLabels: Record<string, string> = {
   notifications: 'Уведомления',
-  crm: 'CRM & ERP',
-  access: 'Доступ & POS',
-  api: 'API & IoT',
+  api: 'API',
 };
 
 const configFields: Record<string, { key: string; label: string; placeholder: string }[]> = {
@@ -92,24 +77,13 @@ const configFields: Record<string, { key: string; label: string; placeholder: st
     { key: 'smtpPassword', label: 'Пароль / App Password', placeholder: '••••••••' },
   ],
   sms: [
-    { key: 'apiKey', label: 'API ключ', placeholder: 'sk_live_...' },
-    { key: 'phone', label: 'Номер телефона', placeholder: '+998901234567' },
+    { key: 'apiEmail', label: 'Eskiz Email', placeholder: 'your@email.com' },
+    { key: 'apiPassword', label: 'Eskiz Пароль', placeholder: '••••••••' },
+    { key: 'phone', label: 'Номер телефона', placeholder: '998901234567' },
   ],
   webhook: [
     { key: 'url', label: 'URL', placeholder: 'https://your-server.com/webhook' },
     { key: 'secret', label: 'Secret Key', placeholder: 'whsec_...' },
-  ],
-  rest_api: [
-    { key: 'apiKey', label: 'API Key', placeholder: 'cam_api_...' },
-    { key: 'endpoint', label: 'Endpoint', placeholder: 'https://api.example.com' },
-  ],
-  mqtt: [
-    { key: 'broker', label: 'Broker URL', placeholder: 'mqtt://broker.example.com' },
-    { key: 'topic', label: 'Topic', placeholder: 'cam-ai/events' },
-  ],
-  modbus: [
-    { key: 'host', label: 'Host', placeholder: '192.168.1.100' },
-    { key: 'port', label: 'Port', placeholder: '502' },
   ],
 };
 
@@ -444,12 +418,10 @@ export default function IntegrationsPage() {
         <TabsList>
           <TabsTrigger value="all">Все</TabsTrigger>
           <TabsTrigger value="notifications">Уведомления</TabsTrigger>
-          <TabsTrigger value="crm">CRM & ERP</TabsTrigger>
-          <TabsTrigger value="access">Доступ & POS</TabsTrigger>
-          <TabsTrigger value="api">API & IoT</TabsTrigger>
+          <TabsTrigger value="api">API</TabsTrigger>
         </TabsList>
 
-        {['all', 'notifications', 'crm', 'access', 'api'].map((tab) => (
+        {['all', 'notifications', 'api'].map((tab) => (
           <TabsContent key={tab} value={tab}>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
               {integrations

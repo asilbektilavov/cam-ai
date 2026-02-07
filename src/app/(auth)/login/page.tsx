@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
-import { Video, Eye, EyeOff } from 'lucide-react';
+import { Video, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,6 +17,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [needs2FA, setNeeds2FA] = useState(false);
+  const [totpCode, setTotpCode] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,14 +30,30 @@ export default function LoginPage() {
       return;
     }
 
+    if (needs2FA && !totpCode) {
+      toast.error('Введите код из приложения');
+      setLoading(false);
+      return;
+    }
+
     const result = await signIn('credentials', {
       email,
       password,
+      totpCode: needs2FA ? totpCode : '',
       redirect: false,
     });
 
     if (result?.error) {
-      toast.error('Неверный email или пароль');
+      if (result.error.includes('2FA_REQUIRED')) {
+        setNeeds2FA(true);
+        setTotpCode('');
+        toast.info('Введите код из Google Authenticator');
+      } else if (result.error.includes('INVALID_2FA_CODE')) {
+        toast.error('Неверный код 2FA');
+        setTotpCode('');
+      } else {
+        toast.error('Неверный email или пароль');
+      }
     } else {
       toast.success('Добро пожаловать!');
       router.push('/select-venue');
@@ -59,57 +77,95 @@ export default function LoginPage() {
           </div>
           <CardTitle className="text-2xl">Вход в CamAI</CardTitle>
           <CardDescription>
-            Введите данные для доступа к платформе
+            {needs2FA ? 'Введите код двухфакторной аутентификации' : 'Введите данные для доступа к платформе'}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Пароль</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Введите пароль"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
+            {!needs2FA ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="your@email.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">Пароль</Label>
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Введите пароль"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex justify-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-500/10">
+                    <ShieldCheck className="h-8 w-8 text-blue-500" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="totpCode">Код из Google Authenticator</Label>
+                  <Input
+                    id="totpCode"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    placeholder="000000"
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
+                    className="text-center text-2xl tracking-[0.5em] font-mono"
+                    autoFocus
+                  />
+                </div>
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => { setNeeds2FA(false); setTotpCode(''); }}
+                  className="text-sm text-muted-foreground hover:text-foreground w-full text-center"
                 >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  Назад к входу
                 </button>
               </div>
-            </div>
+            )}
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Вход...' : 'Войти'}
+              {loading ? 'Вход...' : needs2FA ? 'Подтвердить' : 'Войти'}
             </Button>
           </form>
 
-          <div className="mt-3 text-center">
-            <Link href="/forgot-password" className="text-sm text-muted-foreground hover:text-foreground">
-              Забыли пароль?
-            </Link>
-          </div>
+          {!needs2FA && (
+            <>
+              <div className="mt-3 text-center">
+                <Link href="/forgot-password" className="text-sm text-muted-foreground hover:text-foreground">
+                  Забыли пароль?
+                </Link>
+              </div>
 
-          <div className="mt-3 text-center text-sm text-muted-foreground">
-            Нет аккаунта?{' '}
-            <Link href="/register" className="text-primary hover:underline font-medium">
-              Зарегистрироваться
-            </Link>
-          </div>
+              <div className="mt-3 text-center text-sm text-muted-foreground">
+                Нет аккаунта?{' '}
+                <Link href="/register" className="text-primary hover:underline font-medium">
+                  Зарегистрироваться
+                </Link>
+              </div>
+            </>
+          )}
 
         </CardContent>
       </Card>

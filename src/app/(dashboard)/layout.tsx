@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
+import { TrialBanner } from '@/components/trial-banner';
 import { cn } from '@/lib/utils';
 
 export default function DashboardLayout({
@@ -30,7 +31,10 @@ export default function DashboardLayout({
           'pl-0'
         )}
       >
-        <div className="p-4 md:p-6">{children}</div>
+        <div className="p-4 md:p-6">
+          <TrialBanner />
+          {children}
+        </div>
       </main>
     </div>
   );

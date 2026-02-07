@@ -18,6 +18,7 @@ import {
   BookOpen,
   Building2,
   Server,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -33,6 +34,7 @@ const navItems = [
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
   { href: '/agents', label: 'Агенты', icon: Server },
   { href: '/integrations', label: 'Интеграции', icon: Plug },
+  { href: '/team', label: 'Команда', icon: Users },
   { href: '/settings', label: 'Настройки', icon: Settings },
 ];
 

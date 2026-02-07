@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
+import { checkTrialOrSubscription } from '@/lib/trial-guard';
+import { logAudit } from '@/lib/audit';
 
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
@@ -32,6 +34,15 @@ export async function POST(req: NextRequest) {
 
   if (!name || !location || !streamUrl || !branchId) {
     return badRequest('Name, location, streamUrl, and branchId are required');
+  }
+
+  // Check trial/subscription
+  const trialStatus = await checkTrialOrSubscription(orgId);
+  if (!trialStatus.allowed) {
+    return NextResponse.json(
+      { error: 'Пробный период истёк. Оформите подписку для продолжения.' },
+      { status: 403 }
+    );
   }
 
   // Verify branch belongs to org
@@ -66,6 +77,15 @@ export async function POST(req: NextRequest) {
       captureInterval: captureInterval || 5,
       organizationId: orgId,
     },
+  });
+
+  logAudit({
+    organizationId: orgId,
+    userId: session.user.id,
+    action: 'camera.create',
+    entityType: 'camera',
+    entityId: camera.id,
+    details: { name, location, branchId },
   });
 
   return NextResponse.json(camera, { status: 201 });

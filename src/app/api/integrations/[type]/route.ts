@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
 import nodemailer from 'nodemailer';
+import { logAudit } from '@/lib/audit';
 
 export async function PATCH(
   request: Request,
@@ -31,6 +32,15 @@ export async function PATCH(
       enabled: enabled ?? false,
       config: config ? JSON.stringify(config) : '{}',
     },
+  });
+
+  logAudit({
+    organizationId: orgId,
+    userId: session.user.id,
+    action: enabled ? 'integration.enable' : 'integration.update',
+    entityType: 'integration',
+    entityId: integration.id,
+    details: { type },
   });
 
   return NextResponse.json({
@@ -98,6 +108,19 @@ export async function POST(
           body: JSON.stringify({ text: '✅ CamAI тестовое сообщение. Интеграция настроена.' }),
         });
         return NextResponse.json({ success: slackRes.ok, status: slackRes.status });
+      }
+      case 'sms': {
+        if (!config.apiEmail || !config.apiPassword) return badRequest('Email и пароль Eskiz обязательны');
+        const authRes = await fetch('https://notify.eskiz.uz/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: config.apiEmail, password: config.apiPassword }),
+        });
+        const authData = await authRes.json() as { data?: { token?: string } };
+        if (!authRes.ok || !authData.data?.token) {
+          return badRequest('Ошибка аутентификации Eskiz');
+        }
+        return NextResponse.json({ success: true, message: 'Eskiz аутентификация успешна' });
       }
       default:
         return NextResponse.json({ success: true, message: 'Тестирование для этого типа пока недоступно' });

@@ -1,12 +1,22 @@
 import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
+import { checkTrialOrSubscription } from '@/lib/trial-guard';
 
 export async function GET(request: Request) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
 
   const orgId = session.user.organizationId;
+
+  const trialStatus = await checkTrialOrSubscription(orgId);
+  if (!trialStatus.allowed) {
+    return NextResponse.json(
+      { error: 'Пробный период истёк. Оформите подписку для продолжения.' },
+      { status: 403 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const format = searchParams.get('format') || 'csv';
   const period = searchParams.get('period') || 'today';
