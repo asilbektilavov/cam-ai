@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'view_cameras');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const orgId = session.user.organizationId;
   const branchId = new URL(req.url).searchParams.get('branchId');
@@ -24,6 +34,15 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_cameras');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const orgId = session.user.organizationId;
   const body = await req.json();

@@ -1,10 +1,20 @@
 import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export async function GET() {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_settings');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const settings = await prisma.userSettings.findUnique({
     where: { userId: session.user.id },
@@ -32,6 +42,15 @@ export async function GET() {
 export async function PATCH(request: Request) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_settings');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const body = await request.json();
 

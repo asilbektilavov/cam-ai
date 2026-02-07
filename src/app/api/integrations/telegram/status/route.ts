@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 function getBotToken(config: Record<string, string>): string | null {
   return process.env.TELEGRAM_BOT_TOKEN || config.botToken || null;
@@ -9,6 +10,15 @@ function getBotToken(config: Record<string, string>): string | null {
 export async function GET() {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_integrations');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const orgId = session.user.organizationId;
 

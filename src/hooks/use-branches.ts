@@ -19,14 +19,15 @@ export function useBranches() {
 
   const fetchBranches = useCallback(async () => {
     try {
-      const data = await apiGet<{ branches: Branch[] }>('/api/branches');
-      setBranches(data.branches);
+      const data = await apiGet<Branch[]>('/api/branches');
+      const list = Array.isArray(data) ? data : [];
+      setBranches(list);
 
       // Auto-select first branch if none selected or current not in list
-      if (data.branches.length > 0) {
-        const ids = data.branches.map((b) => b.id);
+      if (list.length > 0) {
+        const ids = list.map((b) => b.id);
         if (!selectedBranchId || !ids.includes(selectedBranchId)) {
-          setSelectedBranchId(data.branches[0].id);
+          setSelectedBranchId(list[0].id);
         }
       }
     } catch (err) {

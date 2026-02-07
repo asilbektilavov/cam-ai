@@ -1,12 +1,22 @@
 import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 import { appEvents, CameraEvent } from '@/lib/services/event-emitter';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'view_events');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const orgId = session.user.organizationId;
   const branchId = new URL(request.url).searchParams.get('branchId');

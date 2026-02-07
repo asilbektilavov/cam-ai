@@ -1,10 +1,20 @@
 import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export async function PATCH(request: Request) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_integrations');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const orgId = session.user.organizationId;
   const body = await request.json();

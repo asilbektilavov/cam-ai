@@ -3,22 +3,23 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model Organization {
-  id           String         @id @default(cuid())
-  name         String
-  slug         String         @unique
-  createdAt    DateTime       @default(now())
-  users        User[]
-  branches     Branch[]
-  cameras      Camera[]
-  events       Event[]
-  integrations Integration[]
+  id            String         @id @default(cuid())
+  name          String
+  slug          String         @unique
+  createdAt     DateTime       @default(now())
+  users         User[]
+  branches      Branch[]
+  cameras       Camera[]
+  events        Event[]
+  integrations  Integration[]
   searchPersons SearchPerson[]
   notifications Notification[]
+  recordings    Recording[]
 }
 
 model Branch {
@@ -40,7 +41,7 @@ model User {
   email          String       @unique
   name           String
   passwordHash   String
-  role           String       @default("admin")
+  role           String       @default("admin") // admin | operator | viewer
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
@@ -61,14 +62,24 @@ model Camera {
   resolution      String            @default("1920x1080")
   fps             Int               @default(30)
   isMonitoring    Boolean           @default(false)
+  isRecording     Boolean           @default(false)
+  isStreaming     Boolean           @default(false)
   motionThreshold Float             @default(5.0)
   captureInterval Int               @default(5)
+  retentionDays   Int               @default(30)
+  // ONVIF
+  onvifHost       String?
+  onvifPort       Int?
+  onvifUser       String?
+  onvifPass       String?
+  hasPtz          Boolean           @default(false)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   sessions        AnalysisSession[]
   events          Event[]
   smartFeatures   SmartFeature[]
   sightings       PersonSighting[]
+  recordings      Recording[]
 }
 
 model AnalysisSession {
@@ -115,14 +126,12 @@ model UserSettings {
   id               String  @id @default(cuid())
   userId           String  @unique
   user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // Notifications
   notifCritical    Boolean @default(true)
   notifWarnings    Boolean @default(true)
   notifInfo        Boolean @default(false)
   notifSystem      Boolean @default(true)
   notifDailyReport Boolean @default(false)
   notifWeeklyReport Boolean @default(true)
-  // System
   language         String  @default("ru")
   timezone         String  @default("utc+5")
   autoRecord       Boolean @default(true)
@@ -147,13 +156,11 @@ model Integration {
   @@unique([organizationId, type])
 }
 
-// --- Smart Features ---
-
 model SmartFeature {
   id            String       @id @default(cuid())
   cameraId      String
   camera        Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
-  featureType   String       // queue_monitor | person_search | loitering_detection | workstation_monitor
+  featureType   String
   enabled       Boolean      @default(false)
   config        String       @default("{}")
   integrationId String?
@@ -170,7 +177,7 @@ model SearchPerson {
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
   photoPath      String
-  faceDescriptor String           // JSON: number[128]
+  faceDescriptor String
   isActive       Boolean          @default(true)
   integrationId  String?
   integration    Integration?     @relation(fields: [integrationId], references: [id], onDelete: SetNull)
@@ -200,10 +207,30 @@ model Notification {
   featureType    String
   cameraId       String?
   message        String
-  status         String       @default("pending") // pending | sent | failed
+  status         String       @default("pending")
   error          String?
   sentAt         DateTime?
   createdAt      DateTime     @default(now())
+}
+
+// --- Video Archive ---
+
+model Recording {
+  id             String    @id @default(cuid())
+  cameraId       String
+  camera         Camera    @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+  status         String    @default("recording") // recording | completed | error
+  segmentDir     String    // relative path to segment directory
+  fileSize       BigInt    @default(0)
+  duration       Int       @default(0) // seconds
+  createdAt      DateTime  @default(now())
+
+  @@index([cameraId, startedAt])
+  @@index([organizationId, startedAt])
 }
 
 // --- Multi-Branch Sync ---
@@ -216,7 +243,7 @@ model RemoteInstance {
   branchName     String
   address        String?
   lastSyncAt     DateTime?
-  status         String         @default("unknown") // online | offline | unknown
+  status         String         @default("unknown")
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   remoteEvents   RemoteEvent[]

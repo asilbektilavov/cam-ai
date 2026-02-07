@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, parseRemoteBranchId } from '@/lib/api-utils';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'view_dashboard');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const orgId = session.user.organizationId;
   const rawBranchId = new URL(req.url).searchParams.get('branchId');

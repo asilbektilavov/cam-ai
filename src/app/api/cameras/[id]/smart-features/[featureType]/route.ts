@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound, badRequest } from '@/lib/api-utils';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 const VALID_TYPES = ['queue_monitor', 'loitering_detection', 'workstation_monitor', 'person_search'];
 
@@ -10,6 +11,15 @@ export async function PUT(
 ) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_cameras');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const { id, featureType } = await params;
   const orgId = session.user.organizationId;
@@ -68,6 +78,15 @@ export async function DELETE(
 ) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_cameras');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const { id, featureType } = await params;
   const orgId = session.user.organizationId;

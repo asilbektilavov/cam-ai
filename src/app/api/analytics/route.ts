@@ -1,10 +1,20 @@
 import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export async function GET(request: Request) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'view_analytics');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const orgId = session.user.organizationId;
   const { searchParams } = new URL(request.url);

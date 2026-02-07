@@ -2,10 +2,20 @@ import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export async function POST(request: Request) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_settings');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const body = await request.json();
   const { currentPassword, newPassword } = body;

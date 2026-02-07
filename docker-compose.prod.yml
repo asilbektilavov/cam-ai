@@ -1,26 +1,49 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: camai-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: camai
+      POSTGRES_USER: camai
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-camai_secret_2024}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U camai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   cam-ai:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: cam-ai-app
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     expose:
       - "3000"
-    env_file:
-      - .env
+    environment:
+      - DATABASE_URL=postgresql://camai:${DB_PASSWORD:-camai_secret_2024}@db:5432/camai
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-change-me-to-random-string}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://example.com}
+      - NEXTAUTH_TRUST_HOST=true
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     volumes:
       - cam-ai-data:/app/data
-      - cam-ai-db:/app/prisma
     deploy:
       resources:
         limits:
           memory: 1G
           cpus: '2'
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
       timeout: 10s
       start_period: 40s
@@ -37,7 +60,6 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - certbot-webroot:/var/www/certbot:ro
       - certbot-certs:/etc/letsencrypt:ro
-      - nginx-ssl:/etc/nginx/ssl:ro
     depends_on:
       cam-ai:
         condition: service_healthy
@@ -56,13 +78,11 @@ services:
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 12h & wait $${!}; certbot renew --webroot -w /var/www/certbot --quiet; done'"
 
 volumes:
-  cam-ai-data:
+  pgdata:
     driver: local
-  cam-ai-db:
+  cam-ai-data:
     driver: local
   certbot-webroot:
     driver: local
   certbot-certs:
-    driver: local
-  nginx-ssl:
     driver: local

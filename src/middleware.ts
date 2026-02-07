@@ -10,6 +10,8 @@ export const config = {
     '/select-venue/:path*',
     '/branches/:path*',
     '/person-search/:path*',
+    '/archive/:path*',
+    '/storage/:path*',
     '/onboarding/:path*',
   ],
 };

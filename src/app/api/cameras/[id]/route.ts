@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export async function GET(
   _req: NextRequest,
@@ -8,6 +9,15 @@ export async function GET(
 ) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'view_cameras');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const { id } = await params;
   const orgId = session.user.organizationId;
@@ -31,6 +41,15 @@ export async function PATCH(
   const session = await getAuthSession();
   if (!session) return unauthorized();
 
+  try {
+    checkPermission(session, 'manage_cameras');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
+
   const { id } = await params;
   const orgId = session.user.organizationId;
 
@@ -40,7 +59,11 @@ export async function PATCH(
   if (!existing) return notFound('Camera not found');
 
   const body = await req.json();
-  const { name, location, streamUrl, status, venueType, resolution, fps, motionThreshold, captureInterval, isMonitoring } = body;
+  const {
+    name, location, streamUrl, status, venueType, resolution, fps,
+    motionThreshold, captureInterval, isMonitoring,
+    onvifHost, onvifPort, onvifUser, onvifPass, hasPtz, retentionDays,
+  } = body;
 
   const camera = await prisma.camera.update({
     where: { id },
@@ -55,6 +78,12 @@ export async function PATCH(
       ...(motionThreshold !== undefined && { motionThreshold }),
       ...(captureInterval !== undefined && { captureInterval }),
       ...(isMonitoring !== undefined && { isMonitoring }),
+      ...(onvifHost !== undefined && { onvifHost }),
+      ...(onvifPort !== undefined && { onvifPort }),
+      ...(onvifUser !== undefined && { onvifUser }),
+      ...(onvifPass !== undefined && { onvifPass }),
+      ...(hasPtz !== undefined && { hasPtz }),
+      ...(retentionDays !== undefined && { retentionDays }),
     },
   });
 
@@ -67,6 +96,15 @@ export async function DELETE(
 ) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'manage_cameras');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const { id } = await params;
   const orgId = session.user.organizationId;

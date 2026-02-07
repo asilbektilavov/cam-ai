@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { fetchSnapshot } from '@/lib/services/motion-detector';
+import { checkPermission, RBACError } from '@/lib/rbac';
 
 export async function GET(
   _req: NextRequest,
@@ -9,6 +10,15 @@ export async function GET(
 ) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
+
+  try {
+    checkPermission(session, 'view_cameras');
+  } catch (e: any) {
+    if (e instanceof RBACError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
   const { id } = await params;
   const orgId = session.user.organizationId;

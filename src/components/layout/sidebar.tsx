@@ -17,6 +17,8 @@ import {
   ScanFace,
   BookOpen,
   Building2,
+  Archive,
+  HardDrive,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -28,8 +30,10 @@ const navItems = [
   { href: '/dashboard', label: 'Дашборд', icon: LayoutDashboard },
   { href: '/branches', label: 'Филиалы', icon: Building2 },
   { href: '/cameras', label: 'Камеры', icon: Camera },
+  { href: '/archive', label: 'Видеоархив', icon: Archive },
   { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
+  { href: '/storage', label: 'Хранилище', icon: HardDrive },
   { href: '/integrations', label: 'Интеграции', icon: Plug },
   { href: '/settings', label: 'Настройки', icon: Settings },
 ];

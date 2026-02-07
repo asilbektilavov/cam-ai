@@ -53,6 +53,7 @@ import { useMotionTracker } from '@/hooks/use-motion-tracker';
 import { useSearchDescriptors } from '@/hooks/use-search-descriptors';
 import { FeatureConfigPanel } from '@/components/smart-features/feature-config-panel';
 import { useAppStore } from '@/lib/store';
+import { useRouter } from 'next/navigation';
 
 interface ApiCamera {
   id: string;
@@ -98,6 +99,7 @@ export default function CamerasPage() {
     brand?: string;
   }>>([]);
 
+  const router = useRouter();
   const { hasMotion } = useMotionTracker();
   const { descriptors: searchDescriptors } = useSearchDescriptors();
   const { selectedBranchId } = useAppStore();
@@ -677,6 +679,13 @@ export default function CamerasPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => router.push(`/cameras/${camera.id}`)}
+                          className="cursor-pointer"
+                        >
+                          <Video className="h-4 w-4 mr-2" />
+                          Смотреть / PTZ
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handleToggleMonitor(camera)}
                           disabled={togglingMonitor === camera.id}

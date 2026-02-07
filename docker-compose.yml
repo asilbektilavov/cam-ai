@@ -1,26 +1,45 @@
 version: "3.8"
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: camai-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: camai
+      POSTGRES_USER: camai
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-camai_secret_2024}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U camai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   cam-ai:
     build: .
     image: cam-ai:latest
     container_name: cam-ai
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=file:/app/data/cam-ai.db
+      - DATABASE_URL=postgresql://camai:${DB_PASSWORD:-camai_secret_2024}@db:5432/camai
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-change-me-to-random-string}
-      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     volumes:
-      # Persistent data: database, frames, search photos
       - cam-ai-data:/app/data
-      - cam-ai-db:/app/prisma
-    # Allow access to host network (for cameras on LAN)
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
+  pgdata:
   cam-ai-data:
-  cam-ai-db:
