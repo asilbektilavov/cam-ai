@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { appEvents, SmartAlert } from './event-emitter';
+import nodemailer from 'nodemailer';
 
 class NotificationDispatcher {
   private static instance: NotificationDispatcher;
@@ -73,6 +74,9 @@ class NotificationDispatcher {
             break;
           case 'slack':
             await this.sendSlack(config, message);
+            break;
+          case 'email':
+            await this.sendEmail(config, message, alert);
             break;
           default:
             console.log(`[NotificationDispatcher] Unsupported type: ${integration.type}`);
@@ -202,6 +206,36 @@ class NotificationDispatcher {
     if (!res.ok) {
       throw new Error(`Webhook returned ${res.status}`);
     }
+  }
+
+  private async sendEmail(config: Record<string, string>, message: string, alert: SmartAlert): Promise<void> {
+    const { smtpServer, smtpPort, email, smtpPassword } = config;
+    if (!smtpServer || !email) {
+      throw new Error('Email: smtpServer и email обязательны');
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: smtpServer,
+      port: parseInt(smtpPort || '587', 10),
+      secure: parseInt(smtpPort || '587', 10) === 465,
+      auth: smtpPassword ? { user: email, pass: smtpPassword } : undefined,
+    });
+
+    const featureLabels: Record<string, string> = {
+      queue_monitor: 'Контроль очередей',
+      person_search: 'Поиск человека',
+      loitering_detection: 'Детекция праздношатания',
+      workstation_monitor: 'Контроль рабочей зоны',
+    };
+
+    const subject = `[CamAI] ${featureLabels[alert.featureType] || alert.featureType} — ${alert.severity}`;
+
+    await transporter.sendMail({
+      from: email,
+      to: email,
+      subject,
+      text: message,
+    });
   }
 
   private async sendSlack(config: Record<string, string>, message: string): Promise<void> {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
+import nodemailer from 'nodemailer';
 
 export async function PATCH(
   request: Request,
@@ -71,6 +72,32 @@ export async function POST(
           body: JSON.stringify({ test: true, source: 'cam-ai' }),
         });
         return NextResponse.json({ success: res.ok, status: res.status });
+      }
+      case 'email': {
+        if (!config.smtpServer || !config.email) return badRequest('SMTP сервер и Email обязательны');
+        const transporter = nodemailer.createTransport({
+          host: config.smtpServer,
+          port: parseInt(config.smtpPort || '587', 10),
+          secure: parseInt(config.smtpPort || '587', 10) === 465,
+          auth: config.smtpPassword ? { user: config.email, pass: config.smtpPassword } : undefined,
+        });
+        await transporter.verify();
+        await transporter.sendMail({
+          from: config.email,
+          to: config.email,
+          subject: '[CamAI] Тестовое уведомление',
+          text: 'Это тестовое сообщение от CamAI. Email уведомления настроены корректно.',
+        });
+        return NextResponse.json({ success: true, message: 'Тестовое письмо отправлено' });
+      }
+      case 'slack': {
+        if (!config.webhookUrl) return badRequest('Webhook URL обязателен');
+        const slackRes = await fetch(config.webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: '✅ CamAI тестовое сообщение. Интеграция настроена.' }),
+        });
+        return NextResponse.json({ success: slackRes.ok, status: slackRes.status });
       }
       default:
         return NextResponse.json({ success: true, message: 'Тестирование для этого типа пока недоступно' });

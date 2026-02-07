@@ -87,7 +87,9 @@ const configFields: Record<string, { key: string; label: string; placeholder: st
   ],
   email: [
     { key: 'smtpServer', label: 'SMTP сервер', placeholder: 'smtp.gmail.com' },
+    { key: 'smtpPort', label: 'SMTP порт', placeholder: '587' },
     { key: 'email', label: 'Email', placeholder: 'alerts@company.com' },
+    { key: 'smtpPassword', label: 'Пароль / App Password', placeholder: '••••••••' },
   ],
   sms: [
     { key: 'apiKey', label: 'API ключ', placeholder: 'sk_live_...' },
