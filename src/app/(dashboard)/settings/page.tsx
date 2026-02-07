@@ -254,6 +254,16 @@ export default function SettingsPage() {
       .finally(() => setSystemLoading(false));
   }, []);
 
+  // Load security settings
+  useEffect(() => {
+    apiGet<{ twoFactorEnabled: boolean; ipRestriction: boolean }>('/api/settings/security')
+      .then((data) => {
+        setTwoFA(data.twoFactorEnabled);
+        setIpRestriction(data.ipRestriction);
+      })
+      .catch(() => {});
+  }, []);
+
   const handleSaveProfile = async () => {
     if (!name || !email) {
       toast.error('Имя и email обязательны');
@@ -557,9 +567,15 @@ export default function SettingsPage() {
                 </div>
                 <Switch
                   checked={twoFA}
-                  onCheckedChange={(checked) => {
+                  onCheckedChange={async (checked) => {
                     setTwoFA(checked);
-                    toast.success(checked ? '2FA включена' : '2FA отключена');
+                    try {
+                      await apiPatch('/api/settings/security', { twoFactorEnabled: checked });
+                      toast.success(checked ? '2FA включена' : '2FA отключена');
+                    } catch {
+                      setTwoFA(!checked);
+                      toast.error('Ошибка сохранения');
+                    }
                   }}
                 />
               </div>
@@ -572,9 +588,15 @@ export default function SettingsPage() {
                 </div>
                 <Switch
                   checked={ipRestriction}
-                  onCheckedChange={(checked) => {
+                  onCheckedChange={async (checked) => {
                     setIpRestriction(checked);
-                    toast.success(checked ? 'Ограничение по IP включено' : 'Ограничение по IP отключено');
+                    try {
+                      await apiPatch('/api/settings/security', { ipRestriction: checked });
+                      toast.success(checked ? 'Ограничение по IP включено' : 'Ограничение по IP отключено');
+                    } catch {
+                      setIpRestriction(!checked);
+                      toast.error('Ошибка сохранения');
+                    }
                   }}
                 />
               </div>

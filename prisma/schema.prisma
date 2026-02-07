@@ -149,6 +149,7 @@ model User {
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
   settings       UserSettings?
+  passwordResets PasswordReset[]
 }
 
 model Camera {
@@ -230,6 +231,18 @@ model UserSettings {
   autoRecord       Boolean @default(true)
   cloudStorage     Boolean @default(true)
   aiQuality        String  @default("high")
+  twoFactorEnabled Boolean @default(false)
+  ipRestriction    Boolean @default(false)
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
 }
 
 model Integration {
