@@ -19,7 +19,11 @@ export type Permission =
   | 'manage_integrations'
   | 'manage_branches'
   | 'manage_settings'
-  | 'manage_organization';
+  | 'manage_organization'
+  | 'manage_automation'
+  | 'view_audit'
+  | 'manage_lpr'
+  | 'export_video';
 
 const PERMISSIONS_MAP: Record<Role, Set<Permission>> = {
   admin: new Set([
@@ -35,6 +39,10 @@ const PERMISSIONS_MAP: Record<Role, Set<Permission>> = {
     'manage_branches',
     'manage_settings',
     'manage_organization',
+    'manage_automation',
+    'view_audit',
+    'manage_lpr',
+    'export_video',
   ]),
   operator: new Set([
     'view_dashboard',
@@ -44,12 +52,15 @@ const PERMISSIONS_MAP: Record<Role, Set<Permission>> = {
     'manage_recordings',
     'use_ptz',
     'view_events',
+    'manage_lpr',
+    'export_video',
   ]),
   viewer: new Set([
     'view_dashboard',
     'view_cameras',
     'view_analytics',
     'view_events',
+    'view_audit',
   ]),
 };
 

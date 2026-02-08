@@ -108,6 +108,13 @@ class NotificationDispatcher {
       person_search: 'Поиск человека',
       loitering_detection: 'Детекция праздношатания',
       workstation_monitor: 'Контроль рабочей зоны',
+      fire_smoke_detection: 'Детекция огня/дыма',
+      ppe_detection: 'Контроль СИЗ',
+      lpr_detection: 'Распознавание номеров',
+      line_crossing: 'Пересечение линии',
+      heatmap_tracking: 'Тепловая карта',
+      abandoned_object: 'Оставленный предмет',
+      tamper_detection: 'Обнаружение саботажа',
     };
 
     const severityIcons: Record<string, string> = {

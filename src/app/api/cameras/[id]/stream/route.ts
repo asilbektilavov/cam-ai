@@ -37,7 +37,13 @@ export async function GET(
   const playlistPath = path.join(DATA_DIR, 'streams', id, 'live.m3u8');
 
   try {
-    const playlist = await readFile(playlistPath, 'utf-8');
+    const raw = await readFile(playlistPath, 'utf-8');
+    // Rewrite relative segment paths so the browser resolves them
+    // from /api/cameras/[id]/stream/  (adding "stream/" prefix)
+    const playlist = raw.replace(
+      /^(seg_[a-zA-Z0-9_\-]+\.ts)$/gm,
+      `/api/cameras/${id}/stream/$1`
+    );
 
     return new NextResponse(playlist, {
       headers: {

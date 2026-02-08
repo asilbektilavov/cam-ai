@@ -8,18 +8,24 @@ datasource db {
 }
 
 model Organization {
-  id            String         @id @default(cuid())
-  name          String
-  slug          String         @unique
-  createdAt     DateTime       @default(now())
-  users         User[]
-  branches      Branch[]
-  cameras       Camera[]
-  events        Event[]
-  integrations  Integration[]
-  searchPersons SearchPerson[]
-  notifications Notification[]
-  recordings    Recording[]
+  id              String           @id @default(cuid())
+  name            String
+  slug            String           @unique
+  analysisMode    String           @default("yolo_gemini_events") // yolo_only | yolo_gemini_events | yolo_gemini_always
+  createdAt       DateTime         @default(now())
+  users           User[]
+  branches        Branch[]
+  cameras         Camera[]
+  events          Event[]
+  integrations    Integration[]
+  searchPersons   SearchPerson[]
+  notifications   Notification[]
+  recordings      Recording[]
+  wallLayouts     WallLayout[]
+  floorPlans      FloorPlan[]
+  licensePlates   LicensePlate[]
+  auditLogs       AuditLog[]
+  automationRules AutomationRule[]
 }
 
 model Branch {
@@ -46,6 +52,7 @@ model User {
   organization   Organization @relation(fields: [organizationId], references: [id])
   createdAt      DateTime     @default(now())
   settings       UserSettings?
+  auditLogs      AuditLog[]
 }
 
 model Camera {
@@ -80,6 +87,9 @@ model Camera {
   smartFeatures   SmartFeature[]
   sightings       PersonSighting[]
   recordings      Recording[]
+  detectionZones  DetectionZone[]
+  plateDetections PlateDetection[]
+  privacyMasks    String?           // JSON array of mask zones
 }
 
 model AnalysisSession {
@@ -104,6 +114,7 @@ model AnalysisFrame {
   description String?
   peopleCount Int?
   objects     String?
+  detections  String?         // JSON: YOLO Detection[] with bounding boxes
 }
 
 model Event {
@@ -287,4 +298,121 @@ model SyncQueue {
   attempts  Int      @default(0)
   lastError String?
   createdAt DateTime @default(now())
+}
+
+// --- Video Wall Layouts ---
+
+model WallLayout {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  grid           String       @default("2x2") // 1x1, 2x2, 3x3, 4x4, custom
+  slots          String       @default("[]") // JSON: [{position: 0, cameraId: "..."}]
+  isDefault      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// --- Floor Plans / E-map ---
+
+model FloorPlan {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branchId       String?
+  name           String
+  imagePath      String       // path to uploaded floor plan image
+  cameras        String       @default("[]") // JSON: [{cameraId, x, y, rotation}]
+  width          Int          @default(1000)
+  height         Int          @default(700)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// --- Detection Zones (Line Crossing, Queue, etc.) ---
+
+model DetectionZone {
+  id        String   @id @default(cuid())
+  cameraId  String
+  camera    Camera   @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  name      String
+  type      String   // line_crossing | queue_zone | restricted_area | counting_zone
+  points    String   // JSON array of {x, y} normalized coordinates (0-1)
+  direction String?  // in | out | both (for line crossing)
+  config    String   @default("{}") // JSON: thresholds, alerts config
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cameraId, type])
+}
+
+// --- License Plate Recognition ---
+
+model LicensePlate {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  number         String
+  type           String           @default("neutral") // whitelist | blacklist | neutral
+  ownerName      String?
+  notes          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  detections     PlateDetection[]
+
+  @@unique([organizationId, number])
+}
+
+model PlateDetection {
+  id             String        @id @default(cuid())
+  licensePlateId String?
+  licensePlate   LicensePlate? @relation(fields: [licensePlateId], references: [id], onDelete: SetNull)
+  cameraId       String
+  camera         Camera        @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  number         String        // detected plate number
+  confidence     Float
+  imagePath      String?       // snapshot of the plate
+  timestamp      DateTime      @default(now())
+
+  @@index([cameraId, timestamp])
+  @@index([number])
+}
+
+// --- Audit Log ---
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action         String       // login, camera.create, camera.delete, settings.update, ptz.move, export.video, etc.
+  target         String?      // target entity id
+  targetType     String?      // camera, branch, user, integration, etc.
+  details        String?      // JSON extra info
+  ip             String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+// --- Automation Rules ---
+
+model AutomationRule {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  trigger        String       // JSON: {type: "event", eventType: "FIRE", cameraId?: "..."}
+  conditions     String       @default("[]") // JSON: [{field, operator, value}]
+  actions        String       // JSON: [{type: "notify", channel: "telegram", ...}]
+  enabled        Boolean      @default(true)
+  lastTriggeredAt DateTime?
+  triggerCount   Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 }

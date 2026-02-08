@@ -5,6 +5,9 @@ import { appEvents, CameraEvent } from './event-emitter';
 import { analyzeFrame } from './ai-analyzer';
 import { generateSessionSummary } from './session-summary';
 import { smartFeaturesEngine } from './smart-features-engine';
+import { yoloDetector } from './yolo-detector';
+import { heatmapGenerator } from './heatmap-generator';
+import { peopleCounter } from './people-counter';
 
 interface MonitorState {
   cameraId: string;
@@ -18,10 +21,11 @@ interface MonitorState {
   lastFrame: Buffer | null;
   activeSessionId: string | null;
   noMotionCount: number;
+  yoloInProgress: boolean; // prevent overlapping YOLO calls
 }
 
-const NO_MOTION_TIMEOUT_POLLS = 20; // ~30s at 1.5s poll interval
-const POLL_INTERVAL_MS = 1500;
+const NO_MOTION_TIMEOUT_POLLS = 60; // ~30s at 500ms poll interval
+const POLL_INTERVAL_MS = 250; // 250ms = up to ~4fps YOLO detection
 
 class CameraMonitor {
   private monitors = new Map<string, MonitorState>();
@@ -56,6 +60,7 @@ class CameraMonitor {
       lastFrame: null,
       activeSessionId: null,
       noMotionCount: 0,
+      yoloInProgress: false,
     };
 
     this.monitors.set(cameraId, state);
@@ -108,13 +113,15 @@ class CameraMonitor {
     const state = this.monitors.get(cameraId);
     if (!state) return;
 
+    const t0 = Date.now();
     let currentFrame: Buffer;
     try {
-      currentFrame = await fetchSnapshot(state.streamUrl);
+      currentFrame = await fetchSnapshot(state.streamUrl, cameraId);
     } catch {
       // Camera unreachable — don't stop monitoring, just skip
       return;
     }
+    const tSnap = Date.now();
 
     if (!state.lastFrame) {
       state.lastFrame = currentFrame;
@@ -123,10 +130,14 @@ class CameraMonitor {
 
     const diff = await compareFrames(state.lastFrame, currentFrame);
     state.lastFrame = currentFrame;
+    const tCompare = Date.now();
 
     const motionDetected = diff > state.motionThreshold;
 
     if (motionDetected) {
+      console.log(
+        `[Monitor ${cameraId}] Motion diff=${diff.toFixed(1)}% | snap=${tSnap - t0}ms compare=${tCompare - tSnap}ms`
+      );
       state.noMotionCount = 0;
 
       if (!state.activeSessionId) {
@@ -140,6 +151,64 @@ class CameraMonitor {
           await this.endSession(state);
         }
       }
+    }
+
+    // Real-time YOLO: run on every poll frame for instant bounding boxes
+    // Always-on detection: runs regardless of motion/session state
+    // yoloInProgress flag prevents overlapping calls (natural throttle)
+    if (!state.yoloInProgress) {
+      void this.emitLiveDetections(state, currentFrame);
+    }
+  }
+
+  /**
+   * Lightweight YOLO detection on poll frame — emits SSE detections every 1.5s
+   * for real-time bounding boxes. No DB writes, no Gemini, no frame saving.
+   */
+  private async emitLiveDetections(state: MonitorState, frame: Buffer): Promise<void> {
+    state.yoloInProgress = true;
+    try {
+      const t0 = Date.now();
+      const detections = await yoloDetector.detect(frame);
+      const elapsed = Date.now() - t0;
+
+      const personDetections = detections.filter(d => d.type === 'person');
+      const personCount = personDetections.length;
+
+      // Feed people positions into heatmap (center of bbox)
+      if (personCount > 0) {
+        const positions = personDetections.map(d => ({
+          x: d.bbox.x + d.bbox.w / 2,
+          y: d.bbox.y + d.bbox.h / 2,
+        }));
+        heatmapGenerator.recordPositions(state.cameraId, positions);
+      }
+
+      // Feed people count into counter
+      peopleCounter.recordCount(state.cameraId, personCount);
+
+      const event: CameraEvent = {
+        type: 'frame_analyzed',
+        cameraId: state.cameraId,
+        organizationId: state.organizationId,
+        branchId: state.branchId,
+        data: {
+          detections,
+          peopleCount: personCount,
+          sessionId: state.activeSessionId,
+        },
+      };
+      appEvents.emit('camera-event', event);
+
+      if (detections.length > 0) {
+        console.log(
+          `[Monitor ${state.cameraId}] YOLO: ${detections.length} det in ${elapsed}ms (${detections.map(d => `${d.label} ${Math.round(d.confidence * 100)}%`).join(', ')})`
+        );
+      }
+    } catch {
+      // Silent fail — non-critical for bounding boxes
+    } finally {
+      state.yoloInProgress = false;
     }
   }
 
@@ -220,7 +289,9 @@ class CameraMonitor {
   private async captureFrame(state: MonitorState): Promise<void> {
     if (!state.activeSessionId) return;
 
-    const frame = await fetchSnapshot(state.streamUrl);
+    const t0 = Date.now();
+    const frame = await fetchSnapshot(state.streamUrl, state.cameraId);
+    console.log(`[Monitor ${state.cameraId}] captureFrame: snap=${Date.now() - t0}ms`);
     const framePath = await saveFrame(
       state.organizationId,
       state.cameraId,
@@ -297,4 +368,12 @@ class CameraMonitor {
   }
 }
 
-export const cameraMonitor = CameraMonitor.getInstance();
+const globalForCameraMonitor = globalThis as unknown as {
+  cameraMonitor: CameraMonitor | undefined;
+};
+
+export const cameraMonitor =
+  globalForCameraMonitor.cameraMonitor ?? CameraMonitor.getInstance();
+
+if (process.env.NODE_ENV !== 'production')
+  globalForCameraMonitor.cameraMonitor = cameraMonitor;

@@ -15,6 +15,11 @@ import {
   Eye,
   Monitor,
   Archive,
+  Download,
+  MapPin,
+  Users,
+  Shield,
+  Target,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,14 +27,18 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { VideoPlayer } from '@/components/video-player';
+import { DetectionVideoPlayer } from '@/components/detection-video-player';
 import { PtzControls } from '@/components/ptz-controls';
+import { ExportDialog } from '@/components/export-dialog';
+import HeatmapOverlay from '@/components/heatmap-overlay';
+import PeopleCounterWidget from '@/components/people-counter-widget';
 import { apiGet, apiPost, apiPatch } from '@/lib/api-client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -66,6 +75,7 @@ export default function CameraDetailPage() {
   const [loading, setLoading] = useState(true);
   const [streamAction, setStreamAction] = useState<'starting' | 'stopping' | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [onvifForm, setOnvifForm] = useState({
     onvifHost: '',
@@ -166,6 +176,10 @@ export default function CameraDetailPage() {
           </div>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setExportOpen(true)}>
+            <Download className="h-4 w-4 mr-2" />
+            Экспорт
+          </Button>
           <Button variant="outline" size="sm" asChild>
             <Link href={`/archive?cameraId=${cameraId}`}>
               <Archive className="h-4 w-4 mr-2" />
@@ -186,8 +200,9 @@ export default function CameraDetailPage() {
           {/* Video Player */}
           <div className="relative aspect-video rounded-lg overflow-hidden bg-gradient-to-br from-gray-800 to-gray-900">
             {camera.isStreaming ? (
-              <VideoPlayer
+              <DetectionVideoPlayer
                 src={`/api/cameras/${cameraId}/stream`}
+                cameraId={cameraId}
                 live
                 className="absolute inset-0 w-full h-full"
               />
@@ -274,6 +289,41 @@ export default function CameraDetailPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Analytics Tabs */}
+          <Tabs defaultValue="heatmap" className="mt-2">
+            <TabsList>
+              <TabsTrigger value="heatmap">
+                <MapPin className="h-4 w-4 mr-1.5" />
+                Тепловая карта
+              </TabsTrigger>
+              <TabsTrigger value="people">
+                <Users className="h-4 w-4 mr-1.5" />
+                Подсчёт людей
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="heatmap">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <MapPin className="h-4 w-4" />
+                    Тепловая карта активности
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <HeatmapOverlay cameraId={cameraId} />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="people">
+              <PeopleCounterWidget
+                cameraId={cameraId}
+                cameraName={camera.name}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
 
         {/* PTZ Sidebar */}
@@ -305,6 +355,14 @@ export default function CameraDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* Export Dialog */}
+      <ExportDialog
+        cameraId={cameraId}
+        cameraName={camera.name}
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+      />
 
       {/* ONVIF Settings Dialog */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>

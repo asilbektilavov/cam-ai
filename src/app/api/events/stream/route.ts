@@ -29,8 +29,12 @@ export async function GET(request: Request) {
         if (event.organizationId !== orgId) return;
         if (branchId && event.branchId !== branchId) return;
 
-        const data = JSON.stringify(event);
-        controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+        try {
+          const data = JSON.stringify(event);
+          controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+        } catch {
+          // Stream closed
+        }
       };
 
       appEvents.on('camera-event', handler);
@@ -50,12 +54,11 @@ export async function GET(request: Request) {
         clearInterval(keepalive);
       };
 
-      // Handle stream cancellation
-      const originalCancel = stream.cancel?.bind(stream);
-      stream.cancel = (reason) => {
+      // Use request.signal to detect client disconnect
+      request.signal.addEventListener('abort', () => {
         cleanup();
-        return originalCancel?.(reason) ?? Promise.resolve();
-      };
+        try { controller.close(); } catch { /* already closed */ }
+      });
     },
   });
 

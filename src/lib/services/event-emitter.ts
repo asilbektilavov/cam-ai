@@ -17,11 +17,34 @@ class AppEventEmitter extends EventEmitter {
   }
 }
 
-export const appEvents = AppEventEmitter.getInstance();
+const globalForAppEvents = globalThis as unknown as {
+  appEvents: AppEventEmitter | undefined;
+};
+
+export const appEvents =
+  globalForAppEvents.appEvents ?? AppEventEmitter.getInstance();
+
+if (process.env.NODE_ENV !== 'production')
+  globalForAppEvents.appEvents = appEvents;
 
 // Event types
 export interface CameraEvent {
-  type: 'motion_detected' | 'session_started' | 'session_ended' | 'frame_analyzed' | 'alert' | 'smart_alert' | 'person_sighting';
+  type:
+    | 'motion_detected'
+    | 'session_started'
+    | 'session_ended'
+    | 'frame_analyzed'
+    | 'alert'
+    | 'smart_alert'
+    | 'person_sighting'
+    | 'line_crossing'
+    | 'queue_alert'
+    | 'abandoned_object'
+    | 'tamper_detected'
+    | 'fire_detected'
+    | 'smoke_detected'
+    | 'ppe_violation'
+    | 'plate_detected';
   cameraId: string;
   organizationId: string;
   branchId: string;

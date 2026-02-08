@@ -16,6 +16,7 @@ import {
   Loader2,
   Activity,
   Camera,
+  MapPin,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,8 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { apiGet } from '@/lib/api-client';
 import { useAppStore } from '@/lib/store';
+import AnalyticsHeatmap from '@/components/analytics-heatmap';
+import PeopleCounterWidget from '@/components/people-counter-widget';
 
 interface AnalyticsData {
   period: string;
@@ -73,6 +76,15 @@ const typeLabels: Record<string, string> = {
   people_count: 'Подсчёт людей',
   suspicious_behavior: 'Подозрительное поведение',
   queue_detected: 'Длинная очередь',
+  fire: 'Обнаружение огня',
+  smoke: 'Обнаружение дыма',
+  ppe_violation: 'Нарушение СИЗ',
+  blacklist_plate: 'Номер из чёрного списка',
+  line_crossing: 'Пересечение линии',
+  abandoned_object: 'Оставленный предмет',
+  tamper: 'Саботаж камеры',
+  intrusion: 'Несанкционированный доступ',
+  crowd: 'Скопление людей',
 };
 
 export default function AnalyticsPage() {
@@ -316,6 +328,14 @@ export default function AnalyticsPage() {
               <TabsTrigger value="events">События</TabsTrigger>
               <TabsTrigger value="cameras">По камерам</TabsTrigger>
               <TabsTrigger value="severity">По важности</TabsTrigger>
+              <TabsTrigger value="heatmap">
+                <MapPin className="h-4 w-4 mr-1" />
+                Тепловая карта
+              </TabsTrigger>
+              <TabsTrigger value="people">
+                <Users className="h-4 w-4 mr-1" />
+                Подсчёт людей
+              </TabsTrigger>
             </TabsList>
 
             {/* Overview Tab - Hourly chart */}
@@ -558,9 +578,79 @@ export default function AnalyticsPage() {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            {/* Heatmap Tab */}
+            <TabsContent value="heatmap" className="space-y-6">
+              <AnalyticsHeatmap />
+            </TabsContent>
+
+            {/* People Counter Tab */}
+            <TabsContent value="people" className="space-y-6">
+              <PeopleCounterSection />
+            </TabsContent>
           </Tabs>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * People Counter section - fetches cameras and renders a widget per camera.
+ */
+function PeopleCounterSection() {
+  const [cameras, setCameras] = useState<{ id: string; name: string; location: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { selectedBranchId } = useAppStore();
+
+  useEffect(() => {
+    async function loadCameras() {
+      try {
+        const branchParam = selectedBranchId ? `?branchId=${selectedBranchId}` : '';
+        const result = await apiGet<{ id: string; name: string; location: string }[]>(
+          `/api/cameras${branchParam}`
+        );
+        setCameras(result);
+      } catch (err) {
+        console.error('[PeopleCounterSection] Failed to fetch cameras:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadCameras();
+  }, [selectedBranchId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (cameras.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center">
+          <Camera className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+          <p className="text-muted-foreground">Нет доступных камер</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Добавьте камеры для подсчёта людей
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {cameras.map((camera) => (
+        <PeopleCounterWidget
+          key={camera.id}
+          cameraId={camera.id}
+          cameraName={camera.name}
+        />
+      ))}
     </div>
   );
 }

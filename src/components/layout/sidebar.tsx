@@ -19,6 +19,12 @@ import {
   Building2,
   Archive,
   HardDrive,
+  LayoutGrid,
+  Map,
+  Car,
+  Shield,
+  Workflow,
+  ClipboardList,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -30,9 +36,14 @@ const navItems = [
   { href: '/dashboard', label: 'Дашборд', icon: LayoutDashboard },
   { href: '/branches', label: 'Филиалы', icon: Building2 },
   { href: '/cameras', label: 'Камеры', icon: Camera },
+  { href: '/wall', label: 'Видеостена', icon: LayoutGrid },
+  { href: '/map', label: 'Карта объекта', icon: Map },
   { href: '/archive', label: 'Видеоархив', icon: Archive },
   { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
+  { href: '/lpr', label: 'Номера авто', icon: Car },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
+  { href: '/automation', label: 'Автоматизация', icon: Workflow },
+  { href: '/audit', label: 'Аудит', icon: ClipboardList },
   { href: '/storage', label: 'Хранилище', icon: HardDrive },
   { href: '/integrations', label: 'Интеграции', icon: Plug },
   { href: '/settings', label: 'Настройки', icon: Settings },

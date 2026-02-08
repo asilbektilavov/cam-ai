@@ -16,6 +16,7 @@ interface VideoPlayerProps {
   controls?: boolean;
   live?: boolean;
   playbackRate?: number;
+  children?: React.ReactNode;
 }
 
 export function VideoPlayer({
@@ -28,6 +29,7 @@ export function VideoPlayer({
   controls = true,
   live = false,
   playbackRate = 1,
+  children,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -79,23 +81,16 @@ export function VideoPlayer({
     setErrorMessage('');
     setIsBuffering(true);
 
-    // Safari / iOS native HLS support
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = src;
-      if (autoPlay) {
-        video.play().catch(() => {
-          // Autoplay may be blocked by browser policy
-        });
-      }
-      return;
-    }
-
-    // Use hls.js for other browsers
+    // Prefer hls.js when supported (Chrome/Firefox/Edge on all platforms)
+    // Only fall back to native HLS for Safari/iOS where hls.js isn't supported
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: live,
         backBufferLength: live ? 0 : 30,
+        xhrSetup: (xhr: XMLHttpRequest) => {
+          xhr.withCredentials = true;
+        },
       });
       hlsRef.current = hls;
 
@@ -125,6 +120,12 @@ export function VideoPlayer({
           }
         }
       });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS fallback (Safari / iOS)
+      video.src = src;
+      if (autoPlay) {
+        video.play().catch(() => {});
+      }
     } else {
       setHasError(true);
       setErrorMessage('HLS не поддерживается в этом браузере.');
@@ -220,6 +221,10 @@ export function VideoPlayer({
         className="h-full w-full object-cover"
         style={live ? { pointerEvents: 'none' } : undefined}
       />
+
+      {/* Overlay children (detection bounding boxes, etc.) — must be inside
+          the video wrapper to render above the hardware-accelerated video layer */}
+      {children}
 
       {/* Loading spinner */}
       {isBuffering && (

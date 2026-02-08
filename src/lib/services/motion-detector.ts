@@ -1,10 +1,13 @@
 import sharp from 'sharp';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import fs from 'fs/promises';
+import path from 'path';
 
 const execFileAsync = promisify(execFile);
 
 const COMPARE_SIZE = 64;
+const STREAMS_DIR = path.join(process.cwd(), 'data', 'streams');
 
 /**
  * Compare two JPEG buffers by converting to small grayscale images
@@ -47,13 +50,25 @@ function isRtsp(url: string): boolean {
 }
 
 /**
+ * Detect if the URL is an HLS stream (.m3u8).
+ */
+function isHls(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.pathname.endsWith('.m3u8');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Detect if the URL looks like IP Webcam (Android app).
  * IP Webcam uses http://IP:8080 and serves /shot.jpg
  */
 function isIpWebcam(url: string): boolean {
   try {
     const u = new URL(url);
-    return u.protocol === 'http:' && !u.pathname.match(/\.(jpg|jpeg|png|cgi|bmp)$/i) && !u.pathname.includes('/onvif');
+    return u.protocol === 'http:' && !u.pathname.match(/\.(jpg|jpeg|png|cgi|bmp|m3u8)$/i) && !u.pathname.includes('/onvif');
   } catch {
     return false;
   }
@@ -86,6 +101,76 @@ async function fetchRtspSnapshot(rtspUrl: string): Promise<Buffer> {
 }
 
 /**
+ * Fetch a single frame from an HLS stream using ffmpeg (remote).
+ * Slow (~2-5s) — only used as fallback.
+ */
+async function fetchHlsSnapshot(hlsUrl: string): Promise<Buffer> {
+  const start = Date.now();
+  const { stdout } = await execFileAsync('ffmpeg', [
+    '-i', hlsUrl,
+    '-vframes', '1',
+    '-f', 'image2',
+    '-vcodec', 'mjpeg',
+    '-q:v', '5',
+    'pipe:1',
+  ], {
+    encoding: 'buffer',
+    timeout: 10000,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+
+  if (!stdout || stdout.length === 0) {
+    throw new Error('ffmpeg returned empty output for HLS stream');
+  }
+
+  console.log(`[Snapshot] HLS remote snapshot: ${Date.now() - start}ms, ${stdout.length} bytes`);
+  return Buffer.from(stdout);
+}
+
+/**
+ * Extract a frame from the latest local .ts segment on disk.
+ * Much faster (~100-300ms) than spawning ffmpeg against a remote HLS URL
+ * because the segment is already downloaded by StreamManager.
+ */
+async function fetchLocalSegmentSnapshot(cameraId: string): Promise<Buffer> {
+  const start = Date.now();
+  const liveDir = path.join(STREAMS_DIR, cameraId);
+
+  // Find the newest .ts segment
+  const entries = await fs.readdir(liveDir);
+  const tsFiles = entries
+    .filter((f) => f.endsWith('.ts'))
+    .sort()
+    .reverse(); // newest first (seg_NNN.ts — higher number = newer)
+
+  if (tsFiles.length === 0) {
+    throw new Error('No local segments available');
+  }
+
+  const segmentPath = path.join(liveDir, tsFiles[0]);
+
+  const { stdout } = await execFileAsync('ffmpeg', [
+    '-i', segmentPath,
+    '-vframes', '1',
+    '-f', 'image2',
+    '-vcodec', 'mjpeg',
+    '-q:v', '5',
+    'pipe:1',
+  ], {
+    encoding: 'buffer',
+    timeout: 5000,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+
+  if (!stdout || stdout.length === 0) {
+    throw new Error('ffmpeg returned empty frame from local segment');
+  }
+
+  console.log(`[Snapshot] Local segment ${tsFiles[0]}: ${Date.now() - start}ms, ${stdout.length} bytes`);
+  return Buffer.from(stdout);
+}
+
+/**
  * Fetch a single snapshot from an HTTP camera (IP Webcam or direct URL).
  */
 async function fetchHttpSnapshot(streamUrl: string): Promise<Buffer> {
@@ -107,11 +192,24 @@ async function fetchHttpSnapshot(streamUrl: string): Promise<Buffer> {
 
 /**
  * Fetch a single snapshot from any camera.
- * Auto-detects protocol (RTSP vs HTTP).
+ * Auto-detects protocol (RTSP vs HTTP/HLS).
+ * For HLS cameras with active streaming, uses local segments (fast).
  */
-export async function fetchSnapshot(streamUrl: string): Promise<Buffer> {
+export async function fetchSnapshot(streamUrl: string, cameraId?: string): Promise<Buffer> {
   if (isRtsp(streamUrl)) {
     return fetchRtspSnapshot(streamUrl);
+  }
+  // For HLS streams, try local segments first (much faster)
+  if (isHls(streamUrl) && cameraId) {
+    try {
+      return await fetchLocalSegmentSnapshot(cameraId);
+    } catch {
+      // Fall back to remote HLS
+      return fetchHlsSnapshot(streamUrl);
+    }
+  }
+  if (isHls(streamUrl)) {
+    return fetchHlsSnapshot(streamUrl);
   }
   return fetchHttpSnapshot(streamUrl);
 }

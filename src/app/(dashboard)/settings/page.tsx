@@ -15,6 +15,9 @@ import {
   RefreshCw,
   Link2,
   Server,
+  Brain,
+  Sparkles,
+  ShieldCheck,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,7 +36,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
-import { apiGet, apiPatch, apiPost } from '@/lib/api-client';
+import { apiGet, apiPatch, apiPost, apiPut } from '@/lib/api-client';
 
 interface ProfileData {
   name: string;
@@ -115,6 +118,11 @@ export default function SettingsPage() {
   const [cloudStorage, setCloudStorage] = useState(true);
   const [aiQuality, setAiQuality] = useState('high');
 
+  // Analysis mode
+  const [analysisMode, setAnalysisMode] = useState('yolo_gemini_events');
+  const [analysisModeLoading, setAnalysisModeLoading] = useState(true);
+  const [savingAnalysisMode, setSavingAnalysisMode] = useState(false);
+
   // Sync
   const [syncLoading, setSyncLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -129,6 +137,14 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchSyncStatus();
   }, [fetchSyncStatus]);
+
+  // Load analysis mode
+  useEffect(() => {
+    apiGet<{ analysisMode: string }>('/api/settings/analysis-mode')
+      .then((data) => setAnalysisMode(data.analysisMode))
+      .catch(() => {})
+      .finally(() => setAnalysisModeLoading(false));
+  }, []);
 
   // Load profile data
   useEffect(() => {
@@ -247,6 +263,19 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSaveAnalysisMode = async (mode: string) => {
+    setSavingAnalysisMode(true);
+    try {
+      await apiPut('/api/settings/analysis-mode', { analysisMode: mode });
+      setAnalysisMode(mode);
+      toast.success('Режим анализа обновлён');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка сохранения');
+    } finally {
+      setSavingAnalysisMode(false);
+    }
+  };
+
   const roleLabels: Record<string, string> = {
     admin: 'Администратор',
     operator: 'Оператор',
@@ -278,6 +307,10 @@ export default function SettingsPage() {
           <TabsTrigger value="system" className="gap-2">
             <Palette className="h-4 w-4" />
             Система
+          </TabsTrigger>
+          <TabsTrigger value="analysis" className="gap-2">
+            <Brain className="h-4 w-4" />
+            ИИ-анализ
           </TabsTrigger>
           <TabsTrigger value="sync" className="gap-2">
             <RefreshCw className="h-4 w-4" />
@@ -579,6 +612,119 @@ export default function SettingsPage() {
                     Сохранить
                   </Button>
                 </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Analysis Mode */}
+        <TabsContent value="analysis">
+          <Card>
+            <CardHeader>
+              <CardTitle>Режим ИИ-анализа</CardTitle>
+              <CardDescription>
+                Выберите режим анализа видеопотоков. Влияет на все камеры организации.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {analysisModeLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {/* YOLO Only */}
+                  <button
+                    onClick={() => handleSaveAnalysisMode('yolo_only')}
+                    disabled={savingAnalysisMode}
+                    className={`relative flex flex-col items-start gap-3 rounded-xl border-2 p-5 text-left transition-all hover:shadow-md ${
+                      analysisMode === 'yolo_only'
+                        ? 'border-blue-500 bg-blue-500/5 shadow-sm'
+                        : 'border-border hover:border-muted-foreground/30'
+                    }`}
+                  >
+                    {analysisMode === 'yolo_only' && (
+                      <div className="absolute top-3 right-3">
+                        <div className="h-3 w-3 rounded-full bg-blue-500" />
+                      </div>
+                    )}
+                    <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-500/10">
+                      <ShieldCheck className="h-6 w-6 text-blue-500" />
+                    </div>
+                    <div>
+                      <p className="font-semibold">Только детекция (YOLO)</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Обнаружение объектов с bounding boxes в реальном времени. Определяет людей, транспорт, животных и другие объекты. Без текстовых описаний сцены.
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="mt-auto">
+                      Бесплатно
+                    </Badge>
+                  </button>
+
+                  {/* YOLO + Gemini Events */}
+                  <button
+                    onClick={() => handleSaveAnalysisMode('yolo_gemini_events')}
+                    disabled={savingAnalysisMode}
+                    className={`relative flex flex-col items-start gap-3 rounded-xl border-2 p-5 text-left transition-all hover:shadow-md ${
+                      analysisMode === 'yolo_gemini_events'
+                        ? 'border-green-500 bg-green-500/5 shadow-sm'
+                        : 'border-border hover:border-muted-foreground/30'
+                    }`}
+                  >
+                    {analysisMode === 'yolo_gemini_events' && (
+                      <div className="absolute top-3 right-3">
+                        <div className="h-3 w-3 rounded-full bg-green-500" />
+                      </div>
+                    )}
+                    <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-green-500/10">
+                      <Brain className="h-6 w-6 text-green-500" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold">Умный анализ</p>
+                        <Badge variant="default" className="text-[10px] px-1.5 py-0">
+                          Рекомендуется
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Bounding boxes + AI-описание сцены при обнаружении аномалий. Gemini анализирует поведение, очереди и нестандартные ситуации только когда это нужно.
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="mt-auto">
+                      ~$5-15/камера/мес
+                    </Badge>
+                  </button>
+
+                  {/* YOLO + Gemini Always */}
+                  <button
+                    onClick={() => handleSaveAnalysisMode('yolo_gemini_always')}
+                    disabled={savingAnalysisMode}
+                    className={`relative flex flex-col items-start gap-3 rounded-xl border-2 p-5 text-left transition-all hover:shadow-md ${
+                      analysisMode === 'yolo_gemini_always'
+                        ? 'border-purple-500 bg-purple-500/5 shadow-sm'
+                        : 'border-border hover:border-muted-foreground/30'
+                    }`}
+                  >
+                    {analysisMode === 'yolo_gemini_always' && (
+                      <div className="absolute top-3 right-3">
+                        <div className="h-3 w-3 rounded-full bg-purple-500" />
+                      </div>
+                    )}
+                    <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-purple-500/10">
+                      <Sparkles className="h-6 w-6 text-purple-500" />
+                    </div>
+                    <div>
+                      <p className="font-semibold">Полный анализ</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Bounding boxes + постоянный AI-мониторинг каждые 30 секунд. Полное описание сцены, анализ поведения, прогнозы. Максимальное качество аналитики.
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="mt-auto">
+                      ~$50/камера/мес
+                    </Badge>
+                  </button>
+                </div>
               )}
             </CardContent>
           </Card>

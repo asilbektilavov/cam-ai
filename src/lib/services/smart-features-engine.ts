@@ -22,10 +22,20 @@ interface QueueState {
   lastAlertTime: number;
 }
 
+interface FireSmokeState {
+  lastAlertTime: number;
+}
+
+interface PPEState {
+  lastAlertTime: number;
+}
+
 interface CameraState {
   workstation: WorkstationState;
   loitering: LoiteringState;
   queue: QueueState;
+  fireSmoke: FireSmokeState;
+  ppe: PPEState;
 }
 
 // Cooldown: don't spam alerts for the same feature on the same camera
@@ -50,6 +60,8 @@ class SmartFeaturesEngine {
       workstation: { emptyStartTime: null, alertSent: false },
       loitering: { detectedStartTime: null, alertSent: false },
       queue: { lastAlertTime: 0 },
+      fireSmoke: { lastAlertTime: 0 },
+      ppe: { lastAlertTime: 0 },
     });
   }
 
@@ -113,6 +125,14 @@ class SmartFeaturesEngine {
           break;
         case 'loitering_detection':
           this.evaluateLoitering(feature, state, cameraId, organizationId, branchId, cameraName, cameraLocation, analysis);
+          break;
+        case 'fire_smoke_detection':
+        case 'ppe_detection':
+        case 'lpr_detection':
+        case 'heatmap_tracking':
+        case 'line_crossing':
+          // These are handled directly by ai-analyzer via prompts
+          // No additional evaluation needed here
           break;
       }
     }

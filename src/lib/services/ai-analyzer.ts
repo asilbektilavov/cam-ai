@@ -4,6 +4,9 @@ import { prisma } from '@/lib/prisma';
 import { getFrameAbsolutePath } from './frame-storage';
 import { appEvents, CameraEvent } from './event-emitter';
 import { smartFeaturesEngine } from './smart-features-engine';
+import { heatmapGenerator } from './heatmap-generator';
+import { peopleCounter } from './people-counter';
+import { yoloDetector, YoloDetection } from './yolo-detector';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
@@ -19,7 +22,7 @@ JSON format:
 
 For "alerts", include objects with format: {"type": "alert_type", "severity": "info|warning|critical", "message": "description in Russian"}
 
-Alert types: "intrusion" (unauthorized access), "crowd" (too many people), "abandoned_object", "unusual_behavior", "safety_hazard"
+Alert types: "intrusion" (unauthorized access), "crowd" (too many people), "abandoned_object", "unusual_behavior", "safety_hazard", "fire", "smoke", "ppe_violation", "tamper", "line_crossing"
 
 Only include alerts if something genuinely concerning is visible. Be concise.`;
 
@@ -37,6 +40,53 @@ interface AnalysisResult {
   loiteringDetected?: boolean;
   loiteringDetails?: string;
   staffCount?: number;
+  // Advanced detection fields
+  fireDetected?: boolean;
+  smokeDetected?: boolean;
+  ppeViolations?: string[];
+  licensePlates?: string[];
+  peoplePositions?: Array<{ x: number; y: number }>; // normalized 0-1 coords for heatmap
+  lineCrossings?: Array<{ lineId: string; direction: string; count: number }>;
+}
+
+type AnalysisMode = 'yolo_only' | 'yolo_gemini_events' | 'yolo_gemini_always';
+
+async function getAnalysisMode(organizationId: string): Promise<AnalysisMode> {
+  try {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { analysisMode: true },
+    });
+    return (org?.analysisMode as AnalysisMode) || 'yolo_gemini_events';
+  } catch {
+    return 'yolo_gemini_events';
+  }
+}
+
+function shouldTriggerGemini(
+  mode: AnalysisMode,
+  detections: YoloDetection[]
+): boolean {
+  if (mode === 'yolo_only') return false;
+  if (mode === 'yolo_gemini_always') return true;
+
+  // yolo_gemini_events: trigger Gemini only on anomalies
+  const personCount = detections.filter((d) => d.type === 'person').length;
+  if (personCount > 10) return true; // crowd
+
+  // Unusual objects (not typical person/car)
+  const unusualTypes = detections.filter(
+    (d) => !['person', 'car', 'truck', 'bus', 'bicycle', 'motorcycle'].includes(d.type)
+  );
+  if (unusualTypes.length > 0) return true;
+
+  // High-confidence detections of animals (unusual for surveillance)
+  const animals = detections.filter(
+    (d) => ['cat', 'dog'].includes(d.type) && d.confidence > 0.6
+  );
+  if (animals.length > 0) return true;
+
+  return false;
 }
 
 async function buildPrompt(cameraId: string): Promise<string> {
@@ -63,6 +113,32 @@ async function buildPrompt(cameraId: string): Promise<string> {
         prompt += `\n\nWORKSTATION MONITORING: This camera monitors a workstation, counter, or desk that must be staffed. Count the number of staff/workers actively present at the station (not customers/visitors). Report as "staffCount".`;
         extraFields.push('"staffCount": <number of staff at the workstation>');
         break;
+
+      case 'fire_smoke_detection':
+        prompt += `\n\nFIRE & SMOKE DETECTION: Carefully check for any signs of fire, flames, or smoke in the frame. If fire is detected, set "fireDetected" to true. If smoke is detected, set "smokeDetected" to true. Include a CRITICAL alert for any fire/smoke.`;
+        extraFields.push('"fireDetected": <true/false>');
+        extraFields.push('"smokeDetected": <true/false>');
+        break;
+
+      case 'ppe_detection':
+        prompt += `\n\nPPE/UNIFORM DETECTION: Check if workers/staff are wearing required personal protective equipment (hard hats, safety vests, gloves, masks, etc.). List any violations as "ppeViolations" array with descriptions in Russian (e.g. "Отсутствует каска", "Нет защитного жилета").`;
+        extraFields.push('"ppeViolations": ["list of violations in Russian"]');
+        break;
+
+      case 'lpr_detection':
+        prompt += `\n\nLICENSE PLATE RECOGNITION: Identify any vehicle license plates visible in the frame. Read the plate numbers and report them as "licensePlates" array. Format: readable characters/numbers from the plate.`;
+        extraFields.push('"licensePlates": ["ABC123", ...]');
+        break;
+
+      case 'heatmap_tracking':
+        prompt += `\n\nPEOPLE POSITION TRACKING: For heatmap generation, estimate the position of each person visible in the frame. Report as "peoplePositions" array of {x, y} coordinates normalized to 0-1 range (0,0 = top-left, 1,1 = bottom-right).`;
+        extraFields.push('"peoplePositions": [{"x": 0.5, "y": 0.5}, ...]');
+        break;
+
+      case 'line_crossing':
+        prompt += `\n\nLINE CROSSING: Virtual lines have been defined on this camera. Check if any people or objects appear to be crossing the line positions. Report crossings as "lineCrossings" array.`;
+        extraFields.push('"lineCrossings": [{"lineId": "zone_id", "direction": "in|out", "count": 1}]');
+        break;
     }
   }
 
@@ -81,17 +157,79 @@ export async function analyzeFrame(
   branchId: string,
   sessionId: string
 ): Promise<void> {
-  if (!process.env.GEMINI_API_KEY) {
-    console.warn('[AI] GEMINI_API_KEY not set, skipping analysis');
-    return;
-  }
-
   try {
+    const t0 = Date.now();
     const absolutePath = getFrameAbsolutePath(framePath);
     const imageBuffer = await readFile(absolutePath);
-    const base64Image = imageBuffer.toString('base64');
+    const tRead = Date.now();
 
-    // Build dynamic prompt based on active smart features
+    // --- YOLO Detection (always runs) ---
+    const yoloDetections = await yoloDetector.detect(imageBuffer);
+    const tYolo = Date.now();
+
+    console.log(
+      `[AI] analyzeFrame ${frameId.slice(0, 8)}: read=${tRead - t0}ms yolo=${tYolo - tRead}ms detections=${yoloDetections.length} (${yoloDetections.map(d => `${d.label} ${Math.round(d.confidence * 100)}%`).join(', ') || 'none'})`
+    );
+
+    // Save YOLO detections to frame
+    const detectionsJson = yoloDetections.length > 0
+      ? JSON.stringify(yoloDetections)
+      : null;
+
+    // Count people from YOLO
+    const yoloPeopleCount = yoloDetections.filter((d) => d.type === 'person').length;
+
+    // Extract people positions from YOLO detections for heatmap
+    const yoloPeoplePositions = yoloDetections
+      .filter((d) => d.type === 'person')
+      .map((d) => ({
+        x: d.bbox.x + d.bbox.w / 2,
+        y: d.bbox.y + d.bbox.h / 2,
+      }));
+
+    if (yoloPeoplePositions.length > 0) {
+      heatmapGenerator.recordPositions(cameraId, yoloPeoplePositions);
+    }
+
+    peopleCounter.recordCount(cameraId, yoloPeopleCount);
+
+    // Emit frame_analyzed with detections (for SSE -> frontend bounding boxes)
+    const frameEvent: CameraEvent = {
+      type: 'frame_analyzed',
+      cameraId,
+      organizationId,
+      branchId,
+      data: {
+        frameId,
+        peopleCount: yoloPeopleCount,
+        detections: yoloDetections,
+        sessionId,
+      },
+    };
+    appEvents.emit('camera-event', frameEvent);
+    console.log(`[AI] SSE emitted: ${yoloDetections.length} detections, total=${Date.now() - t0}ms`);
+
+    // --- Determine if Gemini should run ---
+    const mode = await getAnalysisMode(organizationId);
+    const runGemini = shouldTriggerGemini(mode, yoloDetections);
+
+    if (!runGemini || !process.env.GEMINI_API_KEY) {
+      // YOLO-only: save detections and people count, no Gemini
+      await prisma.analysisFrame.update({
+        where: { id: frameId },
+        data: {
+          detections: detectionsJson,
+          peopleCount: yoloPeopleCount,
+          objects: yoloDetections.length > 0
+            ? JSON.stringify([...new Set(yoloDetections.map((d) => d.label))])
+            : null,
+        },
+      });
+      return;
+    }
+
+    // --- Gemini Analysis ---
+    const base64Image = imageBuffer.toString('base64');
     const prompt = await buildPrompt(cameraId);
 
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
@@ -117,16 +255,22 @@ export async function analyzeFrame(
 
     const analysis: AnalysisResult = JSON.parse(jsonStr);
 
-    // Update the frame record
+    // Update the frame record with both YOLO and Gemini data
     await prisma.analysisFrame.update({
       where: { id: frameId },
       data: {
         aiResponse: responseText,
         description: analysis.description,
-        peopleCount: analysis.peopleCount,
+        peopleCount: analysis.peopleCount || yoloPeopleCount,
         objects: JSON.stringify(analysis.objects),
+        detections: detectionsJson,
       },
     });
+
+    // Record positions for heatmap from Gemini (if available, more precise)
+    if (analysis.peoplePositions && analysis.peoplePositions.length > 0) {
+      heatmapGenerator.recordPositions(cameraId, analysis.peoplePositions);
+    }
 
     // Create events for any alerts
     for (const alert of analysis.alerts) {
@@ -157,21 +301,6 @@ export async function analyzeFrame(
       appEvents.emit('camera-event', event);
     }
 
-    // Emit frame analyzed event
-    const event: CameraEvent = {
-      type: 'frame_analyzed',
-      cameraId,
-      organizationId,
-      branchId,
-      data: {
-        frameId,
-        description: analysis.description,
-        peopleCount: analysis.peopleCount,
-        sessionId,
-      },
-    };
-    appEvents.emit('camera-event', event);
-
     // Evaluate smart features with the analysis results
     const camera = await prisma.camera.findUnique({
       where: { id: cameraId },
@@ -194,6 +323,54 @@ export async function analyzeFrame(
           staffCount: analysis.staffCount,
         }
       );
+    }
+
+    // Fire/Smoke detection events
+    if (analysis.fireDetected) {
+      await prisma.event.create({
+        data: { cameraId, organizationId, branchId, type: 'fire', severity: 'critical', description: 'Обнаружен огонь!', sessionId },
+      });
+      appEvents.emit('camera-event', { type: 'fire_detected', cameraId, organizationId, branchId, data: { sessionId } } as CameraEvent);
+    }
+    if (analysis.smokeDetected) {
+      await prisma.event.create({
+        data: { cameraId, organizationId, branchId, type: 'smoke', severity: 'critical', description: 'Обнаружен дым!', sessionId },
+      });
+      appEvents.emit('camera-event', { type: 'smoke_detected', cameraId, organizationId, branchId, data: { sessionId } } as CameraEvent);
+    }
+
+    // PPE violations
+    if (analysis.ppeViolations && analysis.ppeViolations.length > 0) {
+      await prisma.event.create({
+        data: { cameraId, organizationId, branchId, type: 'ppe_violation', severity: 'warning', description: `Нарушения СИЗ: ${analysis.ppeViolations.join(', ')}`, sessionId },
+      });
+      appEvents.emit('camera-event', { type: 'ppe_violation', cameraId, organizationId, branchId, data: { violations: analysis.ppeViolations, sessionId } } as CameraEvent);
+    }
+
+    // License plate detections
+    if (analysis.licensePlates && analysis.licensePlates.length > 0) {
+      for (const plateNumber of analysis.licensePlates) {
+        const knownPlate = await prisma.licensePlate.findFirst({
+          where: { number: plateNumber, organization: { cameras: { some: { id: cameraId } } } },
+        });
+
+        await prisma.plateDetection.create({
+          data: {
+            cameraId,
+            number: plateNumber,
+            confidence: 0.85,
+            licensePlateId: knownPlate?.id || null,
+          },
+        });
+
+        if (knownPlate?.type === 'blacklist') {
+          await prisma.event.create({
+            data: { cameraId, organizationId, branchId, type: 'blacklist_plate', severity: 'critical', description: `Обнаружен номер из чёрного списка: ${plateNumber}`, sessionId },
+          });
+        }
+
+        appEvents.emit('camera-event', { type: 'plate_detected', cameraId, organizationId, branchId, data: { plateNumber, knownPlate: knownPlate?.type, sessionId } } as CameraEvent);
+      }
     }
   } catch (error) {
     console.error(`[AI] Analysis failed for frame ${frameId}:`, error);

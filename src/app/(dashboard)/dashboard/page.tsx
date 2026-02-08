@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Camera,
@@ -12,6 +12,8 @@ import {
   Shield,
   Clock,
   ChevronRight,
+  Cpu,
+  Zap,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -55,6 +57,16 @@ export default function DashboardPage() {
   const [cameras, setCameras] = useState<ApiCamera[]>([]);
   const [events, setEvents] = useState<ApiEvent[]>([]);
   const [snapshotTick, setSnapshotTick] = useState(0);
+  // Live AI detection state — fed from SSE frame_analyzed events
+  const [liveAI, setLiveAI] = useState<{
+    totalPeople: number;
+    activeCameras: number;
+    detFps: number;
+    lastUpdate: number;
+    perCamera: Record<string, { people: number; detections: number; ts: number }>;
+  }>({ totalPeople: 0, activeCameras: 0, detFps: 0, lastUpdate: 0, perCamera: {} });
+  const fpsCountRef = useRef(0);
+  const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { hasMotion } = useMotionTracker();
 
@@ -74,12 +86,46 @@ export default function DashboardPage() {
     }
   }, [selectedBranchId]);
 
-  // Real-time updates via SSE
+  // Real-time updates via SSE — debounce fetchData, track live detections
   useEventStream(useCallback((event) => {
-    if (['session_started', 'session_ended', 'alert', 'frame_analyzed'].includes(event.type)) {
-      fetchData();
+    if (event.type === 'frame_analyzed' && event.data?.detections) {
+      const camId = event.cameraId;
+      const peopleCount = Number(event.data.peopleCount) || 0;
+      const detCount = Array.isArray(event.data.detections) ? event.data.detections.length : 0;
+      fpsCountRef.current++;
+
+      setLiveAI((prev) => {
+        const updated = { ...prev.perCamera };
+        updated[camId] = { people: peopleCount, detections: detCount, ts: Date.now() };
+        // Calculate totals from all cameras (stale > 5s are dropped)
+        const now = Date.now();
+        let totalPeople = 0;
+        let activeCameras = 0;
+        for (const [, v] of Object.entries(updated)) {
+          if (now - v.ts < 5000) {
+            totalPeople += v.people;
+            activeCameras++;
+          }
+        }
+        return { ...prev, totalPeople, activeCameras, perCamera: updated, lastUpdate: now };
+      });
+    }
+
+    // Debounce fetchData — only refresh stats on session/alert events or every 10s
+    if (['session_started', 'session_ended', 'alert'].includes(event.type)) {
+      if (fetchDebounceRef.current) clearTimeout(fetchDebounceRef.current);
+      fetchDebounceRef.current = setTimeout(() => fetchData(), 500);
     }
   }, [fetchData]));
+
+  // FPS counter for AI detections — updates every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLiveAI((prev) => ({ ...prev, detFps: fpsCountRef.current }));
+      fpsCountRef.current = 0;
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Auto-refresh snapshots every 1 second
   useEffect(() => {
@@ -183,6 +229,54 @@ export default function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {/* Live AI Detection Status */}
+      {liveAI.activeCameras > 0 && (
+        <Card className="border-green-500/30 bg-green-500/5">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
+                  <Cpu className="h-5 w-5 text-green-500" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                    </span>
+                    <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                      ИИ-анализ активен
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Детекция объектов в реальном времени (YOLOv8)
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-6">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                    {liveAI.totalPeople}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">людей сейчас</p>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{liveAI.activeCameras}</div>
+                  <p className="text-[10px] text-muted-foreground">камер с AI</p>
+                </div>
+                <div className="text-center">
+                  <div className="flex items-center gap-1">
+                    <Zap className="h-4 w-4 text-yellow-500" />
+                    <span className="text-2xl font-bold">{liveAI.detFps}</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">fps детекции</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Main Content */}
       <div className="grid lg:grid-cols-3 gap-6">
@@ -442,10 +536,22 @@ export default function DashboardPage() {
             <p className="text-sm text-muted-foreground mb-4">Система</p>
             <div className="space-y-4">
               {[
-                { label: 'ИИ-анализ', value: stats?.peopleDetected ? 'Активен' : 'Нет данных', color: stats?.peopleDetected ? 'text-green-500' : 'text-muted-foreground' },
+                {
+                  label: 'ИИ-анализ',
+                  value: liveAI.activeCameras > 0 ? 'Активен' : (stats?.peopleDetected ? 'Есть данные' : 'Нет данных'),
+                  color: liveAI.activeCameras > 0 ? 'text-green-500' : 'text-muted-foreground',
+                },
                 { label: 'Камеры онлайн', value: `${onlineCameras}/${totalCameras}`, color: onlineCameras > 0 ? 'text-green-500' : 'text-muted-foreground' },
-                { label: 'Обнаружено людей', value: String(stats?.peopleDetected ?? 0), color: 'text-blue-500' },
-                { label: 'Ср. на кадр', value: String(stats?.avgOccupancy ?? 0), color: 'text-blue-500' },
+                {
+                  label: 'Людей (live)',
+                  value: liveAI.activeCameras > 0 ? String(liveAI.totalPeople) : '—',
+                  color: liveAI.totalPeople > 0 ? 'text-blue-500' : 'text-muted-foreground',
+                },
+                {
+                  label: 'Детекция FPS',
+                  value: liveAI.activeCameras > 0 ? String(liveAI.detFps) : '—',
+                  color: liveAI.detFps > 0 ? 'text-yellow-500' : 'text-muted-foreground',
+                },
               ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">{item.label}</span>

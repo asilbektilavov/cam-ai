@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CamAI - HLS Test Player</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    body { margin: 0; background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; color: #fff; }
+    h2 { margin-bottom: 16px; }
+    video { width: 80%; max-width: 900px; border-radius: 12px; border: 2px solid #333; }
+    .status { margin-top: 12px; font-size: 14px; color: #aaa; }
+    .ok { color: #4ade80; }
+    .err { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h2>CamAI - Live Stream Test</h2>
+  <video id="video" controls autoplay muted></video>
+  <div class="status" id="status">Loading...</div>
+  <script>
+    const video = document.getElementById('video');
+    const status = document.getElementById('status');
+    const src = '/api/cameras/cmlckqhby000ecwen87pnnhn1/stream';
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        xhrSetup: function(xhr) { xhr.withCredentials = true; }
+      });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        status.textContent = 'Stream loaded, playing...';
+        status.className = 'status ok';
+        video.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (e, data) => {
+        if (data.fatal) {
+          status.textContent = 'Error: ' + data.type + ' - ' + (data.reason || data.details);
+          status.className = 'status err';
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && data.response && data.response.code === 401) {
+            status.textContent = 'Auth required! Login first at /login then refresh this page.';
+          }
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = src;
+      video.addEventListener('loadedmetadata', () => {
+        status.textContent = 'Native HLS playing';
+        status.className = 'status ok';
+        video.play();
+      });
+    } else {
+      status.textContent = 'HLS not supported in this browser';
+      status.className = 'status err';
+    }
+  </script>
+</body>
+</html>

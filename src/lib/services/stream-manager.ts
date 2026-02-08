@@ -267,13 +267,16 @@ class StreamManager {
       inputArgs.push('-f', 'mjpeg');
     }
 
-    inputArgs.push(
-      '-i', streamUrl,
-      // Reconnect options for network streams
-      '-reconnect', '1',
-      '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '5',
-    );
+    if (isHttp) {
+      // Reconnect options must come BEFORE -i for HTTP(S) streams
+      inputArgs.push(
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '5',
+      );
+    }
+
+    inputArgs.push('-i', streamUrl);
 
     // --- Encoding args (shared) ---
     const encodeArgs: string[] = [
@@ -282,6 +285,9 @@ class StreamManager {
       '-tune', 'zerolatency',
       '-g', '48',          // keyframe interval (2s at 24fps)
       '-sc_threshold', '0',
+      // Map only video if audio may be absent; encode audio if present
+      '-map', '0:v:0',
+      '-map', '0:a:0?',    // '?' = optional — no error if audio missing
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ac', '2',
@@ -705,4 +711,12 @@ class StreamManager {
 // Singleton export
 // ---------------------------------------------------------------------------
 
-export const streamManager = StreamManager.getInstance();
+const globalForStreamManager = globalThis as unknown as {
+  streamManager: StreamManager | undefined;
+};
+
+export const streamManager =
+  globalForStreamManager.streamManager ?? StreamManager.getInstance();
+
+if (process.env.NODE_ENV !== 'production')
+  globalForStreamManager.streamManager = streamManager;

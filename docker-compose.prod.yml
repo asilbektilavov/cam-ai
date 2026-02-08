@@ -35,6 +35,7 @@ services:
       - NEXTAUTH_TRUST_HOST=true
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - YOLO_SERVICE_URL=http://detector:8001
     volumes:
       - cam-ai-data:/app/data
     deploy:
@@ -47,6 +48,26 @@ services:
       interval: 30s
       timeout: 10s
       start_period: 40s
+      retries: 3
+
+  detector:
+    build: ./detection-service
+    container_name: camai-detector
+    restart: unless-stopped
+    expose:
+      - "8001"
+    environment:
+      - YOLO_CONFIDENCE=0.65
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
       retries: 3
 
   nginx:

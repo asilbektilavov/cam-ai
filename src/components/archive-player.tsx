@@ -7,6 +7,8 @@ import {
   Maximize,
   Clock,
   CalendarDays,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +23,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { apiGet } from '@/lib/api-client';
 import { VideoPlayer } from '@/components/video-player';
+import { DetectionOverlay, Detection } from '@/components/detection-overlay';
 
 interface TimelineHour {
   available: boolean;
@@ -33,6 +36,11 @@ interface TimelineResponse {
   hours: Record<string, TimelineHour>;
   totalSegments: number;
   totalDuration: number;
+}
+
+interface ArchiveDetectionFrame {
+  capturedAt: string;
+  detections: Detection[];
 }
 
 interface ArchivePlayerProps {
@@ -49,8 +57,12 @@ export function ArchivePlayer({ cameraId, cameraName }: ArchivePlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState('1');
   const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [showDetections, setShowDetections] = useState(true);
+  const [archiveDetections, setArchiveDetections] = useState<ArchiveDetectionFrame[]>([]);
+  const [currentDetections, setCurrentDetections] = useState<Detection[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
 
   const fetchTimeline = useCallback(async () => {
     setLoadingTimeline(true);
@@ -71,6 +83,64 @@ export function ArchivePlayer({ cameraId, cameraName }: ArchivePlayerProps) {
     setSelectedHour(null);
     setIsPlaying(false);
   }, [fetchTimeline]);
+
+  // Fetch archive detections when hour changes
+  useEffect(() => {
+    if (selectedHour === null) {
+      setArchiveDetections([]);
+      setCurrentDetections([]);
+      return;
+    }
+
+    const from = `${selectedDate}T${String(selectedHour).padStart(2, '0')}:00:00.000Z`;
+    const to = `${selectedDate}T${String(selectedHour).padStart(2, '0')}:59:59.999Z`;
+
+    apiGet<ArchiveDetectionFrame[]>(
+      `/api/cameras/${cameraId}/detections?from=${from}&to=${to}`
+    )
+      .then((data) => setArchiveDetections(data))
+      .catch(() => setArchiveDetections([]));
+  }, [cameraId, selectedDate, selectedHour]);
+
+  // Sync detections with video currentTime via RAF
+  useEffect(() => {
+    if (!isPlaying || archiveDetections.length === 0 || !showDetections) {
+      setCurrentDetections([]);
+      return;
+    }
+
+    const container = videoContainerRef.current;
+    if (!container) return;
+
+    let rafId: number;
+    const syncDetections = () => {
+      const video = container.querySelector('video');
+      if (video && video.currentTime > 0) {
+        // Map video currentTime to actual time
+        const hourStart = new Date(`${selectedDate}T${String(selectedHour).padStart(2, '0')}:00:00.000Z`).getTime();
+        const currentTimeMs = hourStart + video.currentTime * 1000;
+
+        // Find closest frame (within 5 seconds)
+        let closest: ArchiveDetectionFrame | null = null;
+        let closestDiff = Infinity;
+
+        for (const frame of archiveDetections) {
+          const frameTime = new Date(frame.capturedAt).getTime();
+          const diff = Math.abs(frameTime - currentTimeMs);
+          if (diff < closestDiff && diff < 5000) {
+            closest = frame;
+            closestDiff = diff;
+          }
+        }
+
+        setCurrentDetections(closest?.detections || []);
+      }
+      rafId = requestAnimationFrame(syncDetections);
+    };
+
+    rafId = requestAnimationFrame(syncDetections);
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, archiveDetections, showDetections, selectedDate, selectedHour]);
 
   const archiveUrl =
     selectedHour !== null
@@ -150,16 +220,38 @@ export function ArchivePlayer({ cameraId, cameraName }: ArchivePlayerProps) {
       {/* Video Player Area */}
       <div ref={containerRef} className="relative">
         {archiveUrl && isPlaying ? (
-          <VideoPlayer
-            src={archiveUrl}
-            live={false}
-            controls={true}
-            autoPlay={true}
-            muted={false}
-            playbackRate={parseFloat(speed)}
-            className="aspect-video w-full"
-            onError={() => setIsPlaying(false)}
-          />
+          <div ref={videoContainerRef} className="relative aspect-video w-full">
+            <VideoPlayer
+              src={archiveUrl}
+              live={false}
+              controls={true}
+              autoPlay={true}
+              muted={false}
+              playbackRate={parseFloat(speed)}
+              className="aspect-video w-full"
+              onError={() => setIsPlaying(false)}
+            />
+            <DetectionOverlay
+              detections={currentDetections}
+              visible={showDetections}
+            />
+            {/* Detection toggle */}
+            <button
+              onClick={() => setShowDetections((v) => !v)}
+              className={cn(
+                'absolute top-3 right-3 z-20 flex items-center justify-center h-7 w-7 rounded-full transition-colors',
+                showDetections
+                  ? 'bg-blue-500/80 text-white hover:bg-blue-500'
+                  : 'bg-black/50 text-gray-300 hover:bg-black/70'
+              )}
+            >
+              {showDetections ? (
+                <Eye className="h-3.5 w-3.5" />
+              ) : (
+                <EyeOff className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
         ) : (
           <div className="aspect-video w-full rounded-lg bg-gradient-to-br from-gray-800 to-gray-900 flex flex-col items-center justify-center gap-3">
             <Clock className="h-12 w-12 text-gray-600" />
