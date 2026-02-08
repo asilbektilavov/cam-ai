@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { appEvents, SmartAlert } from './event-emitter';
+import nodemailer from 'nodemailer';
 
 class NotificationDispatcher {
   private static instance: NotificationDispatcher;
@@ -74,6 +75,9 @@ class NotificationDispatcher {
           case 'slack':
             await this.sendSlack(config, message);
             break;
+          case 'email':
+            await this.sendEmail(config, message, alert);
+            break;
           default:
             console.log(`[NotificationDispatcher] Unsupported type: ${integration.type}`);
             await prisma.notification.update({
@@ -115,6 +119,7 @@ class NotificationDispatcher {
       heatmap_tracking: 'Тепловая карта',
       abandoned_object: 'Оставленный предмет',
       tamper_detection: 'Обнаружение саботажа',
+      fall_detection: 'Обнаружение падения',
     };
 
     const severityIcons: Record<string, string> = {
@@ -228,6 +233,73 @@ class NotificationDispatcher {
     if (!res.ok) {
       throw new Error(`Slack webhook returned ${res.status}`);
     }
+  }
+
+  private async sendEmail(
+    config: Record<string, string>,
+    message: string,
+    alert: SmartAlert
+  ): Promise<void> {
+    const { smtpHost, smtpPort, smtpUser, smtpPass, recipients, fromName, useTls } = config;
+    if (!smtpHost || !recipients) {
+      throw new Error('Email: smtpHost и recipients обязательны');
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: parseInt(smtpPort || '587', 10),
+      secure: useTls === 'true' || parseInt(smtpPort || '587', 10) === 465,
+      auth: smtpUser ? { user: smtpUser, pass: smtpPass || '' } : undefined,
+    });
+
+    const severityColors: Record<string, string> = {
+      critical: '#dc2626',
+      warning: '#f59e0b',
+      info: '#3b82f6',
+    };
+
+    const featureLabels: Record<string, string> = {
+      queue_monitor: 'Контроль очередей',
+      person_search: 'Поиск человека',
+      loitering_detection: 'Детекция праздношатания',
+      workstation_monitor: 'Контроль рабочей зоны',
+      fire_smoke_detection: 'Детекция огня/дыма',
+      ppe_detection: 'Контроль СИЗ',
+      lpr_detection: 'Распознавание номеров',
+      line_crossing: 'Пересечение линии',
+      abandoned_object: 'Оставленный предмет',
+      tamper_detection: 'Саботаж камеры',
+      fall_detection: 'Обнаружение падения',
+    };
+
+    const color = severityColors[alert.severity] || '#6b7280';
+    const featureLabel = featureLabels[alert.featureType] || alert.featureType;
+    const time = new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' });
+
+    const html = `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+        <div style="background:${color};color:white;padding:16px 24px;border-radius:8px 8px 0 0;">
+          <h2 style="margin:0;font-size:18px;">${featureLabel}</h2>
+        </div>
+        <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 8px 8px;">
+          <p style="margin:0 0 12px;"><strong>Камера:</strong> ${alert.cameraName} (${alert.cameraLocation})</p>
+          <p style="margin:0 0 12px;"><strong>Серьёзность:</strong> ${alert.severity}</p>
+          <p style="margin:0 0 12px;"><strong>Описание:</strong><br/>${alert.message}</p>
+          <p style="margin:0;color:#6b7280;font-size:13px;">${time}</p>
+        </div>
+        <p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:16px;">CamAI — Система видеоаналитики</p>
+      </div>
+    `;
+
+    const recipientList = recipients.split(',').map((e: string) => e.trim()).filter(Boolean);
+
+    await transporter.sendMail({
+      from: `"${fromName || 'CamAI'}" <${smtpUser || 'noreply@camai.local'}>`,
+      to: recipientList.join(', '),
+      subject: `[CamAI] ${featureLabel} — ${alert.cameraName}`,
+      text: message,
+      html,
+    });
   }
 }
 

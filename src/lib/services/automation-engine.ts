@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { appEvents, CameraEvent } from './event-emitter';
+import nodemailer from 'nodemailer';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -11,7 +12,7 @@ interface AutomationTrigger {
 }
 
 interface AutomationAction {
-  type: 'notify_telegram' | 'notify_slack' | 'notify_webhook' | 'create_event';
+  type: 'notify_telegram' | 'notify_slack' | 'notify_webhook' | 'notify_email' | 'create_event';
   message?: string;
 }
 
@@ -226,6 +227,9 @@ class AutomationEngine {
           case 'notify_webhook':
             await this.sendWebhook(event.organizationId, message, event);
             break;
+          case 'notify_email':
+            await this.sendEmail(event.organizationId, message, event);
+            break;
           case 'create_event':
             await this.createEvent(event, message, rule);
             break;
@@ -366,6 +370,40 @@ class AutomationEngine {
     if (!res.ok) {
       throw new Error(`Webhook returned ${res.status}`);
     }
+  }
+
+  private async sendEmail(
+    orgId: string,
+    message: string,
+    event: CameraEvent
+  ): Promise<void> {
+    const integration = await prisma.integration.findFirst({
+      where: { organizationId: orgId, type: 'email', enabled: true },
+    });
+    if (!integration) {
+      console.warn('[AutomationEngine] No active Email integration found');
+      return;
+    }
+
+    const config = JSON.parse(integration.config) as Record<string, string>;
+    const { smtpHost, smtpPort, smtpUser, smtpPass, recipients, fromName, useTls } = config;
+    if (!smtpHost || !recipients) return;
+
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: parseInt(smtpPort || '587', 10),
+      secure: useTls === 'true' || parseInt(smtpPort || '587', 10) === 465,
+      auth: smtpUser ? { user: smtpUser, pass: smtpPass || '' } : undefined,
+    });
+
+    const recipientList = recipients.split(',').map((e: string) => e.trim()).filter(Boolean);
+
+    await transporter.sendMail({
+      from: `"${fromName || 'CamAI'}" <${smtpUser || 'noreply@camai.local'}>`,
+      to: recipientList.join(', '),
+      subject: `[CamAI Автоматизация] ${event.type}`,
+      text: message,
+    });
   }
 
   private async createEvent(

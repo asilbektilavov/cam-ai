@@ -44,7 +44,8 @@ export interface CameraEvent {
     | 'fire_detected'
     | 'smoke_detected'
     | 'ppe_violation'
-    | 'plate_detected';
+    | 'plate_detected'
+    | 'fall_detected';
   cameraId: string;
   organizationId: string;
   branchId: string;

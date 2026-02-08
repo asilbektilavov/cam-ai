@@ -17,6 +17,7 @@ import {
   Webhook,
   MessageCircle,
   AlertTriangle,
+  Mail,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -93,6 +94,7 @@ const EVENT_TYPES: { value: string; label: string }[] = [
   { value: 'ppe_violation', label: 'Нарушение СИЗ' },
   { value: 'plate_detected', label: 'Номер авто' },
   { value: 'person_sighting', label: 'Обнаружен человек' },
+  { value: 'fall_detected', label: 'Падение человека' },
 ];
 
 const EVENT_TYPE_MAP: Record<string, string> = Object.fromEntries(
@@ -109,6 +111,7 @@ const ACTION_TYPES: { value: string; label: string; icon: React.ElementType }[] 
   { value: 'notify_telegram', label: 'Telegram', icon: MessageCircle },
   { value: 'notify_slack', label: 'Slack', icon: Hash },
   { value: 'notify_webhook', label: 'Webhook', icon: Webhook },
+  { value: 'notify_email', label: 'Email', icon: Mail },
   { value: 'create_event', label: 'Создать событие', icon: Zap },
 ];
 

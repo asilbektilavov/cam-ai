@@ -200,6 +200,33 @@ class CameraMonitor {
       };
       appEvents.emit('camera-event', event);
 
+      // Evaluate smart features with YOLO detections (abandoned object, fall, tamper)
+      // Compute average brightness for tamper detection
+      let avgBrightness: number | undefined;
+      try {
+        const sharp = (await import('sharp')).default;
+        const stats = await sharp(frame).stats();
+        avgBrightness = stats.channels.reduce((sum, ch) => sum + ch.mean, 0) / stats.channels.length;
+      } catch { /* ignore brightness calc errors */ }
+
+      const camera = await prisma.camera.findUnique({
+        where: { id: state.cameraId },
+        select: { name: true, location: true },
+      });
+
+      if (camera) {
+        void smartFeaturesEngine.evaluate(
+          state.cameraId,
+          state.organizationId,
+          state.branchId,
+          camera.name,
+          camera.location,
+          { peopleCount: personCount, description: '' },
+          detections,
+          avgBrightness
+        );
+      }
+
       if (detections.length > 0) {
         console.log(
           `[Monitor ${state.cameraId}] YOLO: ${detections.length} det in ${elapsed}ms (${detections.map(d => `${d.label} ${Math.round(d.confidence * 100)}%`).join(', ')})`

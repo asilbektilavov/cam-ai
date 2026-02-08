@@ -47,6 +47,11 @@ interface AnalysisResult {
   licensePlates?: string[];
   peoplePositions?: Array<{ x: number; y: number }>; // normalized 0-1 coords for heatmap
   lineCrossings?: Array<{ lineId: string; direction: string; count: number }>;
+  // New Macroscope-parity fields
+  abandonedObjectDetected?: boolean;
+  abandonedObjectDetails?: string;
+  fallDetected?: boolean;
+  tamperDetected?: boolean;
 }
 
 type AnalysisMode = 'yolo_only' | 'yolo_gemini_events' | 'yolo_gemini_always';
@@ -138,6 +143,22 @@ async function buildPrompt(cameraId: string): Promise<string> {
       case 'line_crossing':
         prompt += `\n\nLINE CROSSING: Virtual lines have been defined on this camera. Check if any people or objects appear to be crossing the line positions. Report crossings as "lineCrossings" array.`;
         extraFields.push('"lineCrossings": [{"lineId": "zone_id", "direction": "in|out", "count": 1}]');
+        break;
+
+      case 'abandoned_object':
+        prompt += `\n\nABANDONED OBJECT DETECTION: Check for objects (bags, packages, boxes, etc.) that appear to be left unattended without a person nearby. Set "abandonedObjectDetected" to true if found and describe in "abandonedObjectDetails" (in Russian).`;
+        extraFields.push('"abandonedObjectDetected": <true/false>');
+        extraFields.push('"abandonedObjectDetails": "<description if detected, in Russian>"');
+        break;
+
+      case 'fall_detection':
+        prompt += `\n\nFALL DETECTION: Check if any person appears to have fallen down or is lying on the ground in an unusual position. Set "fallDetected" to true if found. This is critical for safety.`;
+        extraFields.push('"fallDetected": <true/false>');
+        break;
+
+      case 'tamper_detection':
+        prompt += `\n\nTAMPER DETECTION: Check if the camera view appears to be obstructed, covered, defocused, or pointed at an unusual angle compared to a normal surveillance view. Set "tamperDetected" to true if the camera appears to be sabotaged.`;
+        extraFields.push('"tamperDetected": <true/false>');
         break;
     }
   }
@@ -345,6 +366,30 @@ export async function analyzeFrame(
         data: { cameraId, organizationId, branchId, type: 'ppe_violation', severity: 'warning', description: `Нарушения СИЗ: ${analysis.ppeViolations.join(', ')}`, sessionId },
       });
       appEvents.emit('camera-event', { type: 'ppe_violation', cameraId, organizationId, branchId, data: { violations: analysis.ppeViolations, sessionId } } as CameraEvent);
+    }
+
+    // Abandoned object (Gemini-based)
+    if (analysis.abandonedObjectDetected) {
+      await prisma.event.create({
+        data: { cameraId, organizationId, branchId, type: 'abandoned_object', severity: 'warning', description: analysis.abandonedObjectDetails || 'Обнаружен оставленный предмет', sessionId },
+      });
+      appEvents.emit('camera-event', { type: 'abandoned_object', cameraId, organizationId, branchId, data: { details: analysis.abandonedObjectDetails, sessionId } } as CameraEvent);
+    }
+
+    // Fall detection (Gemini-based)
+    if (analysis.fallDetected) {
+      await prisma.event.create({
+        data: { cameraId, organizationId, branchId, type: 'fall', severity: 'critical', description: 'Обнаружено падение человека!', sessionId },
+      });
+      appEvents.emit('camera-event', { type: 'fall_detected', cameraId, organizationId, branchId, data: { sessionId } } as CameraEvent);
+    }
+
+    // Tamper detection (Gemini-based)
+    if (analysis.tamperDetected) {
+      await prisma.event.create({
+        data: { cameraId, organizationId, branchId, type: 'tamper', severity: 'critical', description: 'Обнаружен саботаж камеры — обзор заблокирован или изменён', sessionId },
+      });
+      appEvents.emit('camera-event', { type: 'tamper_detected', cameraId, organizationId, branchId, data: { sessionId } } as CameraEvent);
     }
 
     // License plate detections

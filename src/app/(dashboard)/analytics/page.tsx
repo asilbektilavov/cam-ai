@@ -85,6 +85,7 @@ const typeLabels: Record<string, string> = {
   tamper: 'Саботаж камеры',
   intrusion: 'Несанкционированный доступ',
   crowd: 'Скопление людей',
+  fall: 'Обнаружение падения',
 };
 
 export default function AnalyticsPage() {

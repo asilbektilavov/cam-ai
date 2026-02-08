@@ -25,6 +25,8 @@ import {
   Shield,
   Workflow,
   ClipboardList,
+  Stethoscope,
+  SearchCode,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -42,9 +44,11 @@ const navItems = [
   { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
   { href: '/lpr', label: 'Номера авто', icon: Car },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
+  { href: '/object-search', label: 'Поиск объектов', icon: SearchCode },
   { href: '/automation', label: 'Автоматизация', icon: Workflow },
   { href: '/audit', label: 'Аудит', icon: ClipboardList },
   { href: '/storage', label: 'Хранилище', icon: HardDrive },
+  { href: '/diagnostics', label: 'Диагностика', icon: Stethoscope },
   { href: '/integrations', label: 'Интеграции', icon: Plug },
   { href: '/settings', label: 'Настройки', icon: Settings },
 ];
