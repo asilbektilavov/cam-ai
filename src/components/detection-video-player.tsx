@@ -12,6 +12,7 @@ interface DetectionVideoPlayerProps {
   src: string;
   cameraId: string;
   streamUrl?: string;
+  detectionClasses?: string[];
   poster?: string;
   autoPlay?: boolean;
   muted?: boolean;
@@ -29,6 +30,7 @@ export function DetectionVideoPlayer({
   src,
   cameraId,
   streamUrl,
+  detectionClasses,
   poster,
   autoPlay = true,
   muted = true,
@@ -50,7 +52,7 @@ export function DetectionVideoPlayer({
   const fpsCountRef = useRef(0);
   const fpsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Auto-enable MJPEG mode when AI detections are active
+  // Auto-enable MJPEG mode when live
   useEffect(() => {
     if (visible && live && !mjpegError) {
       setMjpegMode(true);
@@ -111,8 +113,14 @@ export function DetectionVideoPlayer({
   ).values()];
 
   const detectionServiceUrl = process.env.NEXT_PUBLIC_DETECTION_SERVICE_URL || 'http://localhost:8001';
+  // undefined → all classes; ['person',...] → specific; [] → no detection (raw video)
+  const classesParam = detectionClasses === undefined
+    ? ''
+    : detectionClasses.length === 0
+      ? '&classes=none'
+      : `&classes=${detectionClasses.join(',')}`;
   const mjpegUrl = streamUrl
-    ? `${detectionServiceUrl}/stream/mjpeg?camera_url=${encodeURIComponent(streamUrl)}`
+    ? `${detectionServiceUrl}/stream/mjpeg?camera_url=${encodeURIComponent(streamUrl)}${classesParam}`
     : `/api/stream/${cameraId}`;
 
   return (
@@ -176,19 +184,8 @@ export function DetectionVideoPlayer({
         </div>
       )}
 
-      {/* Detection count + toggle — top right */}
+      {/* Detection toggle — top right */}
       <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
-        {objectCount > 0 && visible && (
-          <Badge
-            variant="secondary"
-            className="bg-black/60 text-white border-0 text-[10px] px-1.5 py-0.5"
-          >
-            {personCount > 0 && `${personCount} чел.`}
-            {personCount > 0 && objectCount > personCount && ' / '}
-            {objectCount > personCount && `${objectCount - personCount} объект.`}
-            {objectCount === 0 && personCount === 0 && '0'}
-          </Badge>
-        )}
         <div
           className="relative"
           onMouseEnter={() => setShowLegend(true)}

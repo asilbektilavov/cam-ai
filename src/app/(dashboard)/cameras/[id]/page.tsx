@@ -20,6 +20,10 @@ import {
   Users,
   Shield,
   Target,
+  Car,
+  PawPrint,
+  Box,
+  Filter,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,6 +32,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -77,6 +82,11 @@ export default function CameraDetailPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [selectedClasses, setSelectedClasses] = useState<Set<string>>(
+    new Set(['person', 'vehicle', 'animal', 'other'])
+  );
+  const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
   const [onvifForm, setOnvifForm] = useState({
     onvifHost: '',
     onvifPort: 80,
@@ -108,6 +118,29 @@ export default function CameraDetailPage() {
     fetchCamera();
   }, [fetchCamera]);
 
+  // Poll real-time detection counts from detection-service
+  useEffect(() => {
+    if (!camera?.streamUrl || selectedClasses.size === 0) {
+      setLiveCounts({ personCount: 0, totalCount: 0 });
+      return;
+    }
+    const detUrl = process.env.NEXT_PUBLIC_DETECTION_SERVICE_URL || 'http://localhost:8001';
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `${detUrl}/stream/counts?camera_url=${encodeURIComponent(camera.streamUrl)}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setLiveCounts(data);
+        }
+      } catch { /* ignore */ }
+    };
+    poll();
+    const interval = setInterval(poll, 1000);
+    return () => clearInterval(interval);
+  }, [camera?.streamUrl, selectedClasses.size]);
+
   const handleStreamToggle = async () => {
     if (!camera) return;
     const action = camera.isStreaming ? 'stop' : 'start';
@@ -137,6 +170,29 @@ export default function CameraDetailPage() {
       setSaving(false);
     }
   };
+
+  const DETECTION_CATEGORIES = [
+    { id: 'person', label: 'Люди', icon: Users, color: '#3B82F6' },
+    { id: 'vehicle', label: 'Транспорт', icon: Car, color: '#22C55E' },
+    { id: 'animal', label: 'Животные', icon: PawPrint, color: '#8B5CF6' },
+    { id: 'other', label: 'Прочее', icon: Box, color: '#6B7280' },
+  ];
+
+  const toggleClass = (cls: string) => {
+    setSelectedClasses((prev) => {
+      const next = new Set(prev);
+      if (next.has(cls)) {
+        next.delete(cls);
+      } else {
+        next.add(cls);
+      }
+      return next;
+    });
+  };
+
+  const detectionClassesArray = selectedClasses.size === 4
+    ? undefined // all selected = no filter
+    : Array.from(selectedClasses);
 
   if (loading) {
     return (
@@ -204,6 +260,7 @@ export default function CameraDetailPage() {
                 src={camera.isStreaming ? `/api/cameras/${cameraId}/stream` : ''}
                 cameraId={cameraId}
                 streamUrl={camera.streamUrl}
+                detectionClasses={detectionClassesArray}
                 live
                 className="absolute inset-0 w-full h-full"
               />
@@ -260,6 +317,54 @@ export default function CameraDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Detection Filter */}
+          {(camera.isStreaming || camera.isMonitoring) && (
+            <Card>
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2 mb-2.5">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Фильтр детекции</span>
+                  {selectedClasses.size > 0 && liveCounts.totalCount > 0 && (
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                      {liveCounts.personCount > 0 && `${liveCounts.personCount} чел.`}
+                      {liveCounts.personCount > 0 && liveCounts.totalCount > liveCounts.personCount && ' / '}
+                      {liveCounts.totalCount > liveCounts.personCount && `${liveCounts.totalCount - liveCounts.personCount} объект.`}
+                    </Badge>
+                  )}
+                  <span className="text-xs text-muted-foreground ml-auto">
+                    {selectedClasses.size === 0
+                      ? 'Детекция выкл.'
+                      : selectedClasses.size === 4
+                        ? 'Все объекты'
+                        : `${selectedClasses.size} из 4`}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {DETECTION_CATEGORIES.map((cat) => {
+                    const Icon = cat.icon;
+                    const active = selectedClasses.has(cat.id);
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => toggleClass(cat.id)}
+                        className={cn(
+                          'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border',
+                          active
+                            ? 'border-transparent text-white'
+                            : 'border-border text-muted-foreground bg-muted/50 hover:bg-muted'
+                        )}
+                        style={active ? { backgroundColor: cat.color } : undefined}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        {cat.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Camera Info Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

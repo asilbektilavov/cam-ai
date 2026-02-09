@@ -48,6 +48,38 @@ PERSON_CLASSES = {0}
 ANIMAL_CLASSES = {15, 16}
 BIKE_CLASSES = {1, 3}
 
+# Detection filter categories (name → set of YOLO class IDs)
+FILTER_CATEGORIES: dict[str, set[int]] = {
+    "person": {0},
+    "vehicle": {1, 2, 3, 5, 7},
+    "animal": {15, 16},
+}
+
+
+def parse_class_filter(classes_param: str | None) -> set[int] | None:
+    """Parse 'classes' query param into a set of allowed YOLO class IDs.
+    Returns None if all classes allowed.
+    Returns {-2} sentinel for 'none' (raw video, no YOLO)."""
+    if not classes_param:
+        return None
+
+    if classes_param.strip().lower() == "none":
+        return {-2}  # sentinel: skip YOLO entirely
+
+    allowed: set[int] = set()
+    has_other = False
+    for token in classes_param.split(","):
+        token = token.strip().lower()
+        if token in FILTER_CATEGORIES:
+            allowed |= FILTER_CATEGORIES[token]
+        elif token == "other":
+            has_other = True
+
+    if has_other:
+        allowed.add(-1)  # sentinel for "include unknown classes"
+
+    return allowed if allowed else None
+
 
 def get_model():
     global _model
@@ -753,7 +785,7 @@ def _render_label(text: str, color_rgb: tuple[int, int, int]) -> np.ndarray:
 
 
 def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
-    """Draw bounding boxes and labels. Boxes via OpenCV, Cyrillic via cached Pillow labels."""
+    """Draw bounding boxes, labels, and count badge. Boxes via OpenCV, Cyrillic via cached Pillow labels."""
     h, w = img.shape[:2]
 
     for det in detections:
@@ -793,6 +825,27 @@ def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
         if paste_w > 0 and paste_h > 0:
             img[ly:ly + paste_h, lx:lx + paste_w] = label_img[:paste_h, :paste_w]
 
+    # Count badge (top-right corner)
+    if detections:
+        person_count = sum(1 for d in detections if d.get("type") == "person")
+        other_count = len(detections) - person_count
+        parts = []
+        if person_count > 0:
+            parts.append(f"{person_count} чел.")
+        if other_count > 0:
+            parts.append(f"{other_count} объект.")
+        count_text = " / ".join(parts)
+
+        badge_img = _render_label(count_text, (0, 0, 0))
+        bh, bw = badge_img.shape[:2]
+        bx = w - bw - 10
+        by = 10
+        if bx > 0:
+            # Semi-transparent background
+            overlay = img[by:by + bh, bx:bx + bw].copy()
+            cv2.addWeighted(badge_img, 0.85, overlay, 0.15, 0, overlay)
+            img[by:by + bh, bx:bx + bw] = overlay
+
     return img
 
 
@@ -805,12 +858,16 @@ FRAME_INTERVAL = 1.0 / TARGET_FPS  # ~33ms
 class MjpegStream:
     """Dual-thread MJPEG stream: YOLO runs in background, output at 30fps."""
 
-    def __init__(self, camera_url: str):
+    def __init__(self, camera_url: str, allowed_classes: set[int] | None = None):
         self.camera_url = camera_url
+        self.allowed_classes = allowed_classes
+        self.skip_yolo = allowed_classes == {-2}  # "none" mode: raw video
         self.stop_event = threading.Event()
         self.lock = threading.Lock()
         self.latest_jpeg: bytes | None = None
         self.yolo_fps: float = 0.0
+        self.person_count: int = 0
+        self.total_count: int = 0
         self._worker: threading.Thread | None = None
 
     def start(self):
@@ -824,24 +881,45 @@ class MjpegStream:
 
     def _yolo_loop(self):
         """Background thread: fetch frames → YOLO → draw → cache JPEG."""
-        model = get_model()
+        import traceback
+        try:
+            self._yolo_loop_inner()
+        except Exception as e:
+            print(f"[MjpegStream] Worker crashed: {e}")
+            traceback.print_exc()
+
+    def _yolo_loop_inner(self):
+        print(f"[MjpegStream] Worker started: skip_yolo={self.skip_yolo}, url={self.camera_url}", flush=True)
+        model = None if self.skip_yolo else get_model()
 
         # Try cv2.VideoCapture with MJPEG stream (faster than HTTP polling)
         cap = None
         use_http = False
         base = self.camera_url.rstrip("/")
 
-        # Try MJPEG stream endpoints (IP Webcam app, RTSP, etc.)
-        for stream_path in ["/video", "/mjpegfeed", ""]:
-            try_url = base + stream_path
-            if "rtsp://" in try_url or "mjpg" in try_url or "mjpeg" in try_url or stream_path == "/video":
-                test_cap = cv2.VideoCapture(try_url)
-                if test_cap.isOpened():
-                    ret, _ = test_cap.read()
-                    if ret:
-                        cap = test_cap
-                        break
-                    test_cap.release()
+        # Skip VideoCapture probing in raw mode (no YOLO) — just use HTTP
+        if not self.skip_yolo:
+            def _try_cap(url: str, out: dict):
+                try:
+                    c = cv2.VideoCapture(url)
+                    if c.isOpened():
+                        ret, _ = c.read()
+                        if ret:
+                            out["cap"] = c
+                            return
+                    c.release()
+                except Exception:
+                    pass
+
+            for stream_path in ["/video", "/mjpegfeed"]:
+                try_url = base + stream_path
+                result: dict = {}
+                t = threading.Thread(target=_try_cap, args=(try_url, result), daemon=True)
+                t.start()
+                t.join(timeout=2.0)
+                if "cap" in result:
+                    cap = result["cap"]
+                    break
 
         if cap is None:
             use_http = True
@@ -850,15 +928,34 @@ class MjpegStream:
         http_client = httpx.Client() if use_http else None
         fps_counter = 0
         fps_timer = time.monotonic()
+        print(f"[MjpegStream] Entering loop: use_http={use_http}, cap={cap is not None}, stream_url={stream_url}", flush=True)
 
+        cap_read_fails = 0
         try:
             while not self.stop_event.is_set():
                 # ── Grab frame ──
                 img = None
                 if cap and cap.isOpened():
-                    ret, img = cap.read()
-                    if not ret:
-                        img = None
+                    # Wrap cap.read() in thread with timeout to avoid blocking
+                    frame_result: dict = {}
+                    def _read_cap():
+                        ret, f = cap.read()
+                        if ret and f is not None:
+                            frame_result["frame"] = f
+                    rt = threading.Thread(target=_read_cap, daemon=True)
+                    rt.start()
+                    rt.join(timeout=2.0)
+                    if "frame" in frame_result:
+                        img = frame_result["frame"]
+                        cap_read_fails = 0
+                    else:
+                        cap_read_fails += 1
+                        if cap_read_fails >= 2:
+                            print(f"[MjpegStream] VideoCapture stuck, switching to HTTP polling", flush=True)
+                            cap.release()
+                            cap = None
+                            use_http = True
+                            http_client = httpx.Client()
                 elif http_client:
                     try:
                         resp = http_client.get(stream_url, timeout=2.0)
@@ -872,36 +969,64 @@ class MjpegStream:
                     time.sleep(0.03)
                     continue
 
+                if fps_counter == 0:
+                    print(f"[MjpegStream] First frame received: {img.shape}", flush=True)
+
                 h, w = img.shape[:2]
 
-                # ── YOLO inference ──
-                results = model(img, conf=CONFIDENCE, verbose=False)
+                if self.skip_yolo:
+                    # Raw video mode — no YOLO, no boxes
+                    _, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    with self.lock:
+                        self.latest_jpeg = jpeg.tobytes()
+                        self.person_count = 0
+                        self.total_count = 0
+                else:
+                    # ── YOLO inference ──
+                    results = model(img, conf=CONFIDENCE, verbose=False)
 
-                detections = []
-                for result in results:
-                    for box in result.boxes:
-                        x1, y1, x2, y2 = box.xyxy[0].tolist()
-                        conf_val = float(box.conf[0])
-                        cls_id = int(box.cls[0])
-                        cls_name = model.names.get(cls_id, "unknown")
-                        det_type, label, color = classify_detection(cls_id, cls_name)
-                        detections.append({
-                            "type": det_type,
-                            "label": label,
-                            "confidence": conf_val,
-                            "bbox": {
-                                "x": x1 / w, "y": y1 / h,
-                                "w": (x2 - x1) / w, "h": (y2 - y1) / h,
-                            },
-                            "color": color,
-                        })
+                    # Build set of all "named" class IDs for "other" filtering
+                    named_ids: set[int] = set()
+                    for ids in FILTER_CATEGORIES.values():
+                        named_ids |= ids
+                    has_other = self.allowed_classes is not None and -1 in self.allowed_classes
 
-                # ── Draw + encode ──
-                annotated = draw_detections(img, detections)
-                _, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    detections = []
+                    for result in results:
+                        for box in result.boxes:
+                            cls_id = int(box.cls[0])
 
-                with self.lock:
-                    self.latest_jpeg = jpeg.tobytes()
+                            # Filter by allowed classes
+                            if self.allowed_classes is not None:
+                                in_named = cls_id in self.allowed_classes
+                                in_other = has_other and cls_id not in named_ids
+                                if not in_named and not in_other:
+                                    continue
+
+                            x1, y1, x2, y2 = box.xyxy[0].tolist()
+                            conf_val = float(box.conf[0])
+                            cls_name = model.names.get(cls_id, "unknown")
+                            det_type, label, color = classify_detection(cls_id, cls_name)
+                            detections.append({
+                                "type": det_type,
+                                "label": label,
+                                "confidence": conf_val,
+                                "bbox": {
+                                    "x": x1 / w, "y": y1 / h,
+                                    "w": (x2 - x1) / w, "h": (y2 - y1) / h,
+                                },
+                                "color": color,
+                            })
+
+                    # ── Draw + encode ──
+                    annotated = draw_detections(img, detections)
+                    _, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+                    pc = sum(1 for d in detections if d.get("type") == "person")
+                    with self.lock:
+                        self.latest_jpeg = jpeg.tobytes()
+                        self.person_count = pc
+                        self.total_count = len(detections)
 
                 # FPS tracking
                 fps_counter += 1
@@ -939,14 +1064,22 @@ _active_streams: dict[str, MjpegStream] = {}
 
 
 @app.get("/stream/mjpeg")
-async def stream_mjpeg(camera_url: str = Query(..., description="Camera base URL")):
+async def stream_mjpeg(
+    camera_url: str = Query(..., description="Camera base URL"),
+    classes: str | None = Query(None, description="Comma-separated filter: person,vehicle,animal,other"),
+):
     """Stream MJPEG with YOLO detections at 30fps."""
-    # Stop existing stream for this camera
-    if camera_url in _active_streams:
-        _active_streams[camera_url].stop()
+    allowed = parse_class_filter(classes)
+    stream_key = f"{camera_url}|{classes or 'all'}"
 
-    stream = MjpegStream(camera_url)
-    _active_streams[camera_url] = stream
+    # Stop existing stream for this camera+filter combo
+    for key in list(_active_streams.keys()):
+        if key.startswith(camera_url + "|"):
+            _active_streams[key].stop()
+            del _active_streams[key]
+
+    stream = MjpegStream(camera_url, allowed_classes=allowed)
+    _active_streams[stream_key] = stream
     stream.start()
 
     return StreamingResponse(
@@ -958,6 +1091,19 @@ async def stream_mjpeg(camera_url: str = Query(..., description="Camera base URL
             "Connection": "keep-alive",
         },
     )
+
+
+@app.get("/stream/counts")
+async def stream_counts(camera_url: str = Query(..., description="Camera base URL")):
+    """Return real-time detection counts for an active MJPEG stream."""
+    for key, stream in _active_streams.items():
+        if key.startswith(camera_url + "|"):
+            with stream.lock:
+                return {
+                    "personCount": stream.person_count,
+                    "totalCount": stream.total_count,
+                }
+    return {"personCount": 0, "totalCount": 0}
 
 
 @app.get("/health")
