@@ -120,25 +120,20 @@ export default function AnalyticsPage() {
   };
 
   const handleExport = (format: string) => {
-    if (format === 'CSV') {
-      const link = document.createElement('a');
-      link.href = `/api/analytics/export?format=csv&period=${period}`;
-      link.download = `analytics-${period}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      toast.success('CSV-файл скачивается');
-    } else if (format === 'JSON') {
-      const link = document.createElement('a');
-      link.href = `/api/analytics/export?format=json&period=${period}`;
-      link.download = `analytics-${period}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      toast.success('JSON-файл скачивается');
-    } else {
-      toast.info(`Экспорт в ${format} пока недоступен`);
-    }
+    const formatMap: Record<string, string> = {
+      CSV: 'csv',
+      JSON: 'json',
+      PDF: 'pdf',
+      Excel: 'xlsx',
+    };
+    const ext = formatMap[format] || format.toLowerCase();
+    const link = document.createElement('a');
+    link.href = `/api/analytics/export?format=${ext}&period=${period}`;
+    link.download = `analytics-${period}.${ext}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success(`${format}-файл скачивается`);
   };
 
   const formatTime = (timestamp: string) => {
@@ -250,6 +245,12 @@ export default function AnalyticsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => handleExport('PDF')} className="cursor-pointer">
+                Экспорт в PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport('Excel')} className="cursor-pointer">
+                Экспорт в Excel
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => handleExport('CSV')} className="cursor-pointer">
                 Экспорт в CSV
               </DropdownMenuItem>

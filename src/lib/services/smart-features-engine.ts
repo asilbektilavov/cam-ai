@@ -49,6 +49,26 @@ interface TamperState {
   lastAlertTime: number;
 }
 
+interface LineCrossingState {
+  /** Previous centroids: trackId -> { cx, cy } */
+  prevCentroids: Map<number, { cx: number; cy: number }>;
+  lastAlertTime: number;
+}
+
+interface LPRState {
+  lastAlertTime: number;
+  /** Recently seen plates to avoid duplicate alerts */
+  recentPlates: Map<string, number>;
+}
+
+interface BehaviorState {
+  lastAlertTime: number;
+}
+
+interface CrowdDensityState {
+  lastAlertTime: number;
+}
+
 interface CameraState {
   workstation: WorkstationState;
   loitering: LoiteringState;
@@ -58,6 +78,10 @@ interface CameraState {
   abandonedObject: AbandonedObjectState;
   fallDetection: FallDetectionState;
   tamper: TamperState;
+  lineCrossing: LineCrossingState;
+  lpr: LPRState;
+  behavior: BehaviorState;
+  crowdDensity: CrowdDensityState;
 }
 
 // Cooldown: don't spam alerts for the same feature on the same camera
@@ -87,6 +111,10 @@ class SmartFeaturesEngine {
       abandonedObject: { trackedObjects: new Map() },
       fallDetection: { prevPersonBoxes: [], lastAlertTime: 0 },
       tamper: { prevBrightness: null, tamperFrameCount: 0, lastAlertTime: 0 },
+      lineCrossing: { prevCentroids: new Map(), lastAlertTime: 0 },
+      lpr: { lastAlertTime: 0, recentPlates: new Map() },
+      behavior: { lastAlertTime: 0 },
+      crowdDensity: { lastAlertTime: 0 },
     });
   }
 
@@ -166,12 +194,16 @@ class SmartFeaturesEngine {
         case 'tamper_detection':
           this.evaluateTamperDetection(feature, state, cameraId, organizationId, branchId, cameraName, cameraLocation, frameBrightness, detections);
           break;
+        case 'line_crossing':
+          if (detections) {
+            this.evaluateLineCrossing(feature, state, cameraId, organizationId, branchId, cameraName, cameraLocation, detections);
+          }
+          break;
         case 'fire_smoke_detection':
         case 'ppe_detection':
         case 'lpr_detection':
         case 'heatmap_tracking':
-        case 'line_crossing':
-          // These are handled directly by ai-analyzer via prompts
+          // fire/smoke and lpr are handled by handleFireSmoke() and handlePlates()
           break;
       }
     }
@@ -514,6 +546,342 @@ class SmartFeaturesEngine {
       };
       appEvents.emit('smart-alert', alert);
       this.emitCameraEvent('tamper_detected', cameraId, organizationId, branchId, { ...alert });
+    }
+  }
+
+  // ── Line Crossing Detection ──────────────────────────────────────────
+  // Uses centroid tracking to detect when persons cross a configured virtual line.
+  private evaluateLineCrossing(
+    feature: FeatureConfig,
+    state: CameraState,
+    cameraId: string,
+    organizationId: string,
+    branchId: string,
+    cameraName: string,
+    cameraLocation: string,
+    detections: Array<{ type: string; label: string; confidence: number; bbox: { x: number; y: number; w: number; h: number } }>
+  ): void {
+    const now = Date.now();
+    if (now - state.lineCrossing.lastAlertTime < ALERT_COOLDOWN_MS) return;
+
+    // Get configured line points from feature config
+    const linePoints = feature.config.linePoints as Array<{ x: number; y: number }> | undefined;
+    if (!linePoints || linePoints.length < 2) return;
+
+    const personDetections = detections.filter(d => d.type === 'person');
+    const currentCentroids = new Map<number, { cx: number; cy: number }>();
+
+    for (let i = 0; i < personDetections.length; i++) {
+      const d = personDetections[i];
+      const cx = d.bbox.x + d.bbox.w / 2;
+      const cy = d.bbox.y + d.bbox.h / 2;
+
+      // Match to closest previous centroid
+      let bestMatch = -1;
+      let bestDist = 0.15;
+      for (const [pidx, prev] of state.lineCrossing.prevCentroids.entries()) {
+        const dist = Math.sqrt((cx - prev.cx) ** 2 + (cy - prev.cy) ** 2);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestMatch = pidx;
+        }
+      }
+
+      if (bestMatch >= 0) {
+        const prev = state.lineCrossing.prevCentroids.get(bestMatch)!;
+        // Check if line segment (prev -> current) crosses the configured line
+        if (this.segmentsIntersect(
+          prev.cx, prev.cy, cx, cy,
+          linePoints[0].x, linePoints[0].y, linePoints[1].x, linePoints[1].y
+        )) {
+          state.lineCrossing.lastAlertTime = now;
+
+          const alert: SmartAlert = {
+            featureType: 'line_crossing',
+            cameraId,
+            cameraName,
+            cameraLocation,
+            organizationId,
+            branchId,
+            integrationId: feature.integrationId,
+            severity: 'warning',
+            message: 'Обнаружено пересечение виртуальной линии',
+            metadata: {
+              from: { x: prev.cx, y: prev.cy },
+              to: { x: cx, y: cy },
+              linePoints,
+            },
+          };
+          appEvents.emit('smart-alert', alert);
+          this.emitCameraEvent('line_crossing', cameraId, organizationId, branchId, { ...alert });
+
+          // Create DB event
+          void prisma.event.create({
+            data: {
+              cameraId,
+              organizationId,
+              branchId,
+              type: 'line_crossing',
+              severity: 'warning',
+              description: `Пересечение виртуальной линии на камере ${cameraName}`,
+            },
+          });
+        }
+      }
+
+      currentCentroids.set(i, { cx, cy });
+    }
+
+    state.lineCrossing.prevCentroids = currentCentroids;
+  }
+
+  /** Check if two line segments intersect (P1-P2 and P3-P4). */
+  private segmentsIntersect(
+    p1x: number, p1y: number, p2x: number, p2y: number,
+    p3x: number, p3y: number, p4x: number, p4y: number
+  ): boolean {
+    const d1 = this.crossProduct(p3x, p3y, p4x, p4y, p1x, p1y);
+    const d2 = this.crossProduct(p3x, p3y, p4x, p4y, p2x, p2y);
+    const d3 = this.crossProduct(p1x, p1y, p2x, p2y, p3x, p3y);
+    const d4 = this.crossProduct(p1x, p1y, p2x, p2y, p4x, p4y);
+
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+        ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+      return true;
+    }
+    return false;
+  }
+
+  private crossProduct(ax: number, ay: number, bx: number, by: number, cx: number, cy: number): number {
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  }
+
+  // ── Public handlers called by camera-monitor ──────────────────────
+
+  /**
+   * Handle fire/smoke detection results from Python service.
+   */
+  async handleFireSmoke(
+    cameraId: string,
+    organizationId: string,
+    branchId: string,
+    type: 'fire' | 'smoke',
+    confidence: number,
+    regions: Array<{ bbox: { x: number; y: number; w: number; h: number }; area: number }>
+  ): Promise<void> {
+    const features = await this.getActiveFeatures(cameraId);
+    const feature = features.find(f => f.featureType === 'fire_smoke_detection');
+    if (!feature) return;
+
+    let state = this.cameraStates.get(cameraId);
+    if (!state) { this.initCamera(cameraId); state = this.cameraStates.get(cameraId)!; }
+
+    const now = Date.now();
+    if (now - state.fireSmoke.lastAlertTime < ALERT_COOLDOWN_MS) return;
+    state.fireSmoke.lastAlertTime = now;
+
+    const camera = await prisma.camera.findUnique({
+      where: { id: cameraId },
+      select: { name: true, location: true },
+    });
+    if (!camera) return;
+
+    const label = type === 'fire' ? 'огня' : 'дыма';
+    const alert: SmartAlert = {
+      featureType: 'fire_smoke_detection',
+      cameraId,
+      cameraName: camera.name,
+      cameraLocation: camera.location,
+      organizationId,
+      branchId,
+      integrationId: feature.integrationId,
+      severity: 'critical',
+      message: `Обнаружение ${label}! Уверенность: ${Math.round(confidence * 100)}%`,
+      metadata: { type, confidence, regions },
+    };
+    appEvents.emit('smart-alert', alert);
+    this.emitCameraEvent(type === 'fire' ? 'fire_detected' : 'smoke_detected', cameraId, organizationId, branchId, { ...alert });
+
+    // Create DB event
+    await prisma.event.create({
+      data: {
+        cameraId,
+        organizationId,
+        branchId,
+        type: type === 'fire' ? 'fire_detected' : 'smoke_detected',
+        severity: 'critical',
+        description: `Обнаружение ${label} на камере ${camera.name} (${Math.round(confidence * 100)}%)`,
+      },
+    });
+  }
+
+  /**
+   * Handle license plate detection results.
+   */
+  async handlePlates(
+    cameraId: string,
+    organizationId: string,
+    branchId: string,
+    plates: Array<{ text: string; confidence: number; bbox: { x: number; y: number; w: number; h: number } }>
+  ): Promise<void> {
+    const features = await this.getActiveFeatures(cameraId);
+    const feature = features.find(f => f.featureType === 'lpr_detection');
+    if (!feature) return;
+
+    let state = this.cameraStates.get(cameraId);
+    if (!state) { this.initCamera(cameraId); state = this.cameraStates.get(cameraId)!; }
+
+    const now = Date.now();
+
+    const camera = await prisma.camera.findUnique({
+      where: { id: cameraId },
+      select: { name: true, location: true },
+    });
+    if (!camera) return;
+
+    for (const plate of plates) {
+      // Check if we already alerted for this plate recently (5min cooldown per plate)
+      const lastSeen = state.lpr.recentPlates.get(plate.text);
+      if (lastSeen && now - lastSeen < ALERT_COOLDOWN_MS) continue;
+      state.lpr.recentPlates.set(plate.text, now);
+
+      const alert: SmartAlert = {
+        featureType: 'lpr_detection',
+        cameraId,
+        cameraName: camera.name,
+        cameraLocation: camera.location,
+        organizationId,
+        branchId,
+        integrationId: feature.integrationId,
+        severity: 'info',
+        message: `Распознан номер: ${plate.text} (${Math.round(plate.confidence * 100)}%)`,
+        metadata: { plateText: plate.text, confidence: plate.confidence, bbox: plate.bbox },
+      };
+      appEvents.emit('smart-alert', alert);
+      this.emitCameraEvent('plate_detected', cameraId, organizationId, branchId, { ...alert });
+
+      // Create DB event
+      await prisma.event.create({
+        data: {
+          cameraId,
+          organizationId,
+          branchId,
+          type: 'plate_detected',
+          severity: 'info',
+          description: `Номер ${plate.text} обнаружен на камере ${camera.name}`,
+        },
+      });
+
+      // Save plate detection to PlateDetection table
+      try {
+        const existingPlate = await prisma.licensePlate.findFirst({
+          where: { number: plate.text, organizationId },
+        });
+
+        await prisma.plateDetection.create({
+          data: {
+            number: plate.text,
+            confidence: plate.confidence,
+            cameraId,
+            licensePlateId: existingPlate?.id || null,
+          },
+        });
+      } catch { /* ignore duplicate or DB errors */ }
+    }
+
+    // Cleanup old plates from cache (>10 min old)
+    for (const [text, ts] of state.lpr.recentPlates.entries()) {
+      if (now - ts > ALERT_COOLDOWN_MS * 2) {
+        state.lpr.recentPlates.delete(text);
+      }
+    }
+  }
+
+  /**
+   * Handle behavior analysis results (running, fighting, falling + speed + density).
+   */
+  async handleBehavior(
+    cameraId: string,
+    organizationId: string,
+    branchId: string,
+    behaviors: Array<{ behavior: string; label: string; confidence: number; bbox: { x: number; y: number; w: number; h: number } }>,
+    speeds: Array<{ personIndex: number; speedMps: number; speedKmh: number; bbox: { x: number; y: number; w: number; h: number } }>,
+    crowdDensity: { personCount: number; density: number; level: string; label: string }
+  ): Promise<void> {
+    let state = this.cameraStates.get(cameraId);
+    if (!state) { this.initCamera(cameraId); state = this.cameraStates.get(cameraId)!; }
+
+    const now = Date.now();
+
+    const camera = await prisma.camera.findUnique({
+      where: { id: cameraId },
+      select: { name: true, location: true },
+    });
+    if (!camera) return;
+
+    // Handle behavior alerts
+    if (behaviors.length > 0 && now - state.behavior.lastAlertTime >= ALERT_COOLDOWN_MS) {
+      state.behavior.lastAlertTime = now;
+
+      for (const b of behaviors) {
+        const severity = b.behavior === 'fighting' ? 'critical' as const : 'warning' as const;
+        const alert: SmartAlert = {
+          featureType: 'behavior_analytics',
+          cameraId,
+          cameraName: camera.name,
+          cameraLocation: camera.location,
+          organizationId,
+          branchId,
+          integrationId: null,
+          severity,
+          message: `${b.label} обнаружен(о) на камере ${camera.name} (${Math.round(b.confidence * 100)}%)`,
+          metadata: { behavior: b.behavior, confidence: b.confidence, bbox: b.bbox },
+        };
+        appEvents.emit('smart-alert', alert);
+
+        await prisma.event.create({
+          data: {
+            cameraId,
+            organizationId,
+            branchId,
+            type: b.behavior === 'falling' ? 'fall_detected' : 'alert',
+            severity,
+            description: alert.message,
+          },
+        });
+      }
+    }
+
+    // Handle crowd density alerts (crowded/very_crowded)
+    if ((crowdDensity.level === 'crowded' || crowdDensity.level === 'very_crowded') &&
+        now - state.crowdDensity.lastAlertTime >= ALERT_COOLDOWN_MS) {
+      state.crowdDensity.lastAlertTime = now;
+
+      const alert: SmartAlert = {
+        featureType: 'crowd_density',
+        cameraId,
+        cameraName: camera.name,
+        cameraLocation: camera.location,
+        organizationId,
+        branchId,
+        integrationId: null,
+        severity: crowdDensity.level === 'very_crowded' ? 'critical' : 'warning',
+        message: `${crowdDensity.label}: ${crowdDensity.personCount} чел. (плотность: ${crowdDensity.density} чел/м²)`,
+        metadata: { ...crowdDensity },
+      };
+      appEvents.emit('smart-alert', alert);
+      this.emitCameraEvent('alert', cameraId, organizationId, branchId, { ...alert });
+
+      await prisma.event.create({
+        data: {
+          cameraId,
+          organizationId,
+          branchId,
+          type: 'crowd',
+          severity: crowdDensity.level === 'very_crowded' ? 'critical' : 'warning',
+          description: alert.message,
+        },
+      });
     }
   }
 

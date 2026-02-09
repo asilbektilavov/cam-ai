@@ -21,7 +21,9 @@ interface MonitorState {
   lastFrame: Buffer | null;
   activeSessionId: string | null;
   noMotionCount: number;
-  yoloInProgress: boolean; // prevent overlapping YOLO calls
+  yoloInProgress: boolean;
+  // Counters for throttled secondary detections
+  pollCount: number;
 }
 
 const NO_MOTION_TIMEOUT_POLLS = 60; // ~30s at 500ms poll interval
@@ -61,6 +63,7 @@ class CameraMonitor {
       activeSessionId: null,
       noMotionCount: 0,
       yoloInProgress: false,
+      pollCount: 0,
     };
 
     this.monitors.set(cameraId, state);
@@ -164,9 +167,11 @@ class CameraMonitor {
   /**
    * Lightweight YOLO detection on poll frame — emits SSE detections every 1.5s
    * for real-time bounding boxes. No DB writes, no Gemini, no frame saving.
+   * Also runs fire/plates/behavior detection every 10th frame to reduce CPU load.
    */
   private async emitLiveDetections(state: MonitorState, frame: Buffer): Promise<void> {
     state.yoloInProgress = true;
+    state.pollCount++;
     try {
       const t0 = Date.now();
       const detections = await yoloDetector.detect(frame);
@@ -186,6 +191,16 @@ class CameraMonitor {
 
       // Feed people count into counter
       peopleCounter.recordCount(state.cameraId, personCount);
+
+      // Every 10th frame: run secondary detections (fire, plates, behavior)
+      const runSecondary = state.pollCount % 10 === 0;
+
+      // Fire/smoke detection (non-blocking, throttled)
+      if (runSecondary) {
+        void this.runFireDetection(state, frame);
+        void this.runPlateDetection(state, frame);
+        void this.runBehaviorAnalysis(state, frame);
+      }
 
       const event: CameraEvent = {
         type: 'frame_analyzed',
@@ -236,6 +251,126 @@ class CameraMonitor {
       // Silent fail — non-critical for bounding boxes
     } finally {
       state.yoloInProgress = false;
+    }
+  }
+
+  /**
+   * Fire/smoke detection via OpenCV HSV — emits SSE events and creates DB events.
+   */
+  private async runFireDetection(state: MonitorState, frame: Buffer): Promise<void> {
+    try {
+      const result = await yoloDetector.detectFire(frame);
+      if (!result) return;
+
+      if (result.fireDetected) {
+        const event: CameraEvent = {
+          type: 'fire_detected',
+          cameraId: state.cameraId,
+          organizationId: state.organizationId,
+          branchId: state.branchId,
+          data: {
+            confidence: result.fireConfidence,
+            regions: result.fireRegions,
+          },
+        };
+        appEvents.emit('camera-event', event);
+
+        // Delegate to smart features engine for alert + DB event
+        void smartFeaturesEngine.handleFireSmoke(
+          state.cameraId, state.organizationId, state.branchId,
+          'fire', result.fireConfidence, result.fireRegions
+        );
+      }
+
+      if (result.smokeDetected) {
+        const event: CameraEvent = {
+          type: 'smoke_detected',
+          cameraId: state.cameraId,
+          organizationId: state.organizationId,
+          branchId: state.branchId,
+          data: {
+            confidence: result.smokeConfidence,
+            regions: result.smokeRegions,
+          },
+        };
+        appEvents.emit('camera-event', event);
+
+        void smartFeaturesEngine.handleFireSmoke(
+          state.cameraId, state.organizationId, state.branchId,
+          'smoke', result.smokeConfidence, result.smokeRegions
+        );
+      }
+    } catch {
+      // Silent fail
+    }
+  }
+
+  /**
+   * License plate detection via YOLO + EasyOCR — emits SSE events.
+   */
+  private async runPlateDetection(state: MonitorState, frame: Buffer): Promise<void> {
+    try {
+      const result = await yoloDetector.detectPlates(frame);
+      if (!result || result.plates.length === 0) return;
+
+      for (const plate of result.plates) {
+        const event: CameraEvent = {
+          type: 'plate_detected',
+          cameraId: state.cameraId,
+          organizationId: state.organizationId,
+          branchId: state.branchId,
+          data: {
+            plateText: plate.text,
+            confidence: plate.confidence,
+            bbox: plate.bbox,
+          },
+        };
+        appEvents.emit('camera-event', event);
+      }
+
+      // Delegate to smart features engine
+      void smartFeaturesEngine.handlePlates(
+        state.cameraId, state.organizationId, state.branchId,
+        result.plates
+      );
+    } catch {
+      // Silent fail
+    }
+  }
+
+  /**
+   * Behavior analytics (running, fighting, falling) + speed + crowd density.
+   */
+  private async runBehaviorAnalysis(state: MonitorState, frame: Buffer): Promise<void> {
+    try {
+      const result = await yoloDetector.analyzeBehavior(frame, state.cameraId);
+      if (!result) return;
+
+      // Emit behavior alerts
+      for (const b of result.behaviors) {
+        const eventType = b.behavior === 'falling' ? 'fall_detected' as const : 'alert' as const;
+        const event: CameraEvent = {
+          type: eventType,
+          cameraId: state.cameraId,
+          organizationId: state.organizationId,
+          branchId: state.branchId,
+          data: {
+            behavior: b.behavior,
+            label: b.label,
+            confidence: b.confidence,
+            bbox: b.bbox,
+          },
+        };
+        appEvents.emit('camera-event', event);
+      }
+
+      // Delegate to smart features engine for alerts
+      void smartFeaturesEngine.handleBehavior(
+        state.cameraId, state.organizationId, state.branchId,
+        result.behaviors, result.speeds, result.crowdDensity
+      );
+    } catch {
+      // Silent fail
     }
   }
 
