@@ -53,6 +53,7 @@ FILTER_CATEGORIES: dict[str, set[int]] = {
     "person": {0},
     "vehicle": {1, 2, 3, 5, 7},
     "animal": {15, 16},
+    "fire": {-3},  # sentinel: HSV-based fire/smoke detection (not a YOLO class)
 }
 
 
@@ -828,10 +829,13 @@ def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
     # Count badge (top-right corner)
     if detections:
         person_count = sum(1 for d in detections if d.get("type") == "person")
-        other_count = len(detections) - person_count
+        fire_count = sum(1 for d in detections if d.get("type") in ("fire", "smoke"))
+        other_count = len(detections) - person_count - fire_count
         parts = []
         if person_count > 0:
             parts.append(f"{person_count} чел.")
+        if fire_count > 0:
+            parts.append(f"{fire_count} огонь/дым")
         if other_count > 0:
             parts.append(f"{other_count} объект.")
         count_text = " / ".join(parts)
@@ -868,6 +872,7 @@ class MjpegStream:
         self.yolo_fps: float = 0.0
         self.person_count: int = 0
         self.total_count: int = 0
+        self.fire_count: int = 0
         self._worker: threading.Thread | None = None
 
     def start(self):
@@ -1018,15 +1023,40 @@ class MjpegStream:
                                 "color": color,
                             })
 
+                    # ── Fire/smoke detection (HSV-based) ──
+                    run_fire = self.allowed_classes is None or -3 in self.allowed_classes
+                    if run_fire:
+                        fire_result = detect_fire_smoke(img)
+                        if fire_result["fireDetected"]:
+                            for region in fire_result["fireRegions"]:
+                                detections.append({
+                                    "type": "fire",
+                                    "label": "Огонь",
+                                    "confidence": fire_result["fireConfidence"],
+                                    "bbox": region["bbox"],
+                                    "color": "#EF4444",
+                                })
+                        if fire_result["smokeDetected"]:
+                            for region in fire_result["smokeRegions"]:
+                                detections.append({
+                                    "type": "smoke",
+                                    "label": "Дым",
+                                    "confidence": fire_result["smokeConfidence"],
+                                    "bbox": region["bbox"],
+                                    "color": "#F59E0B",
+                                })
+
                     # ── Draw + encode ──
                     annotated = draw_detections(img, detections)
                     _, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
                     pc = sum(1 for d in detections if d.get("type") == "person")
+                    fc = sum(1 for d in detections if d.get("type") in ("fire", "smoke"))
                     with self.lock:
                         self.latest_jpeg = jpeg.tobytes()
                         self.person_count = pc
                         self.total_count = len(detections)
+                        self.fire_count = fc
 
                 # FPS tracking
                 fps_counter += 1
@@ -1102,8 +1132,9 @@ async def stream_counts(camera_url: str = Query(..., description="Camera base UR
                 return {
                     "personCount": stream.person_count,
                     "totalCount": stream.total_count,
+                    "fireCount": stream.fire_count,
                 }
-    return {"personCount": 0, "totalCount": 0}
+    return {"personCount": 0, "totalCount": 0, "fireCount": 0}
 
 
 @app.get("/health")

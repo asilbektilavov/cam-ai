@@ -23,6 +23,7 @@ import {
   Car,
   PawPrint,
   Box,
+  Flame,
   Filter,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -84,7 +85,7 @@ export default function CameraDetailPage() {
   const [saving, setSaving] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedClasses, setSelectedClasses] = useState<Set<string>>(
-    new Set(['person', 'vehicle', 'animal', 'other'])
+    new Set(['person', 'vehicle', 'animal', 'fire', 'other'])
   );
   const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
   const [onvifForm, setOnvifForm] = useState({
@@ -175,6 +176,7 @@ export default function CameraDetailPage() {
     { id: 'person', label: 'Люди', icon: Users, color: '#3B82F6' },
     { id: 'vehicle', label: 'Транспорт', icon: Car, color: '#22C55E' },
     { id: 'animal', label: 'Животные', icon: PawPrint, color: '#8B5CF6' },
+    { id: 'fire', label: 'Пожар', icon: Flame, color: '#EF4444' },
     { id: 'other', label: 'Прочее', icon: Box, color: '#6B7280' },
   ];
 
@@ -190,7 +192,7 @@ export default function CameraDetailPage() {
     });
   };
 
-  const detectionClassesArray = selectedClasses.size === 4
+  const detectionClassesArray = selectedClasses.size === DETECTION_CATEGORIES.length
     ? undefined // all selected = no filter
     : Array.from(selectedClasses);
 
@@ -335,9 +337,9 @@ export default function CameraDetailPage() {
                   <span className="text-xs text-muted-foreground ml-auto">
                     {selectedClasses.size === 0
                       ? 'Детекция выкл.'
-                      : selectedClasses.size === 4
+                      : selectedClasses.size === DETECTION_CATEGORIES.length
                         ? 'Все объекты'
-                        : `${selectedClasses.size} из 4`}
+                        : `${selectedClasses.size} из ${DETECTION_CATEGORIES.length}`}
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-2">
