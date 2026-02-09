@@ -261,21 +261,30 @@ def detect_plates(img: np.ndarray, vehicle_boxes: list[dict] | None = None) -> l
 
         for bbox_pts, text, conf in results:
             clean = text.upper().replace(" ", "").replace("-", "")
-            if len(clean) >= 3 and conf > 0.2 and PLATE_PATTERN.search(clean):
-                pts = np.array(bbox_pts)
-                px_min, py_min = pts.min(axis=0)
-                px_max, py_max = pts.max(axis=0)
+            # Stricter filtering for full-frame: higher confidence, plate-like shape
+            if len(clean) < 4 or len(clean) > 10 or conf < 0.3:
+                continue
+            if not PLATE_PATTERN.search(clean):
+                continue
+            pts = np.array(bbox_pts)
+            px_min, py_min = pts.min(axis=0)
+            px_max, py_max = pts.max(axis=0)
+            box_w = float(px_max - px_min)
+            box_h = float(py_max - py_min)
+            # Plates are wider than tall (aspect ratio 1.5-7)
+            if box_h > 0 and not (1.5 <= box_w / box_h <= 7.0):
+                continue
 
-                plates.append({
-                    "text": clean,
-                    "confidence": round(float(conf), 3),
-                    "bbox": {
-                        "x": round(float(px_min) / w, 4),
-                        "y": round(float(py_min) / h, 4),
-                        "w": round(float(px_max - px_min) / w, 4),
-                        "h": round(float(py_max - py_min) / h, 4),
-                    },
-                })
+            plates.append({
+                "text": clean,
+                "confidence": round(float(conf), 3),
+                "bbox": {
+                    "x": round(float(px_min) / w, 4),
+                    "y": round(float(py_min) / h, 4),
+                    "w": round(box_w / w, 4),
+                    "h": round(box_h / h, 4),
+                },
+            })
 
     # Deduplicate by text
     seen = set()

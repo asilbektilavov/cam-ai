@@ -345,7 +345,7 @@ if __name__ == "__main__":
 
     print("\n4. License Plate Recognition")
     proof_plates("synthetic_plate.jpg", "06_lpr_synthetic.jpg")
-    proof_plates("license_plate.jpg", "07_lpr_real.jpg")
+    proof_plates("realistic_plate.jpg", "07_lpr_realistic.jpg")
 
     print("\n5. Behavior Analysis")
     proof_behavior("meeting_people.jpg", "08_behavior_people.jpg")
