@@ -16,7 +16,7 @@ app = FastAPI(title="CamAI YOLO Detection Service")
 
 # Lazy-load model on first request
 _model = None
-CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.75"))
+CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.40"))
 
 # YOLO COCO class mapping to our detection types
 CLASS_TYPE_MAP: dict[int, tuple[str, str, str]] = {
@@ -201,9 +201,9 @@ def get_ocr_reader():
     return _ocr_reader
 
 
-# Plate character filter — only alphanumeric
+# Plate character filter — alphanumeric, min 3 chars total
 import re
-PLATE_PATTERN = re.compile(r"[A-Z0-9]{2,}")
+PLATE_PATTERN = re.compile(r"[A-Z0-9]{3,}")
 
 
 def detect_plates(img: np.ndarray, vehicle_boxes: list[dict] | None = None) -> list[dict]:
@@ -238,7 +238,7 @@ def detect_plates(img: np.ndarray, vehicle_boxes: list[dict] | None = None) -> l
             for bbox_pts, text, conf in results:
                 clean = text.upper().replace(" ", "").replace("-", "")
                 # Filter: at least 4 alphanumeric chars, confidence > 0.3
-                if len(clean) >= 4 and conf > 0.3 and PLATE_PATTERN.search(clean):
+                if len(clean) >= 3 and conf > 0.2 and PLATE_PATTERN.search(clean):
                     # Convert local crop coords to normalized frame coords
                     pts = np.array(bbox_pts)
                     px_min, py_min = pts.min(axis=0)
@@ -261,7 +261,7 @@ def detect_plates(img: np.ndarray, vehicle_boxes: list[dict] | None = None) -> l
 
         for bbox_pts, text, conf in results:
             clean = text.upper().replace(" ", "").replace("-", "")
-            if len(clean) >= 4 and conf > 0.3 and PLATE_PATTERN.search(clean):
+            if len(clean) >= 3 and conf > 0.2 and PLATE_PATTERN.search(clean):
                 pts = np.array(bbox_pts)
                 px_min, py_min = pts.min(axis=0)
                 px_max, py_max = pts.max(axis=0)
