@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -192,9 +192,13 @@ export default function CameraDetailPage() {
     });
   };
 
-  const detectionClassesArray = selectedClasses.size === DETECTION_CATEGORIES.length
-    ? undefined // all selected = no filter
-    : Array.from(selectedClasses);
+  const detectionClassesArray = useMemo(
+    () => selectedClasses.size === DETECTION_CATEGORIES.length
+      ? undefined // all selected = no filter
+      : Array.from(selectedClasses),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedClasses]
+  );
 
   if (loading) {
     return (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Eye, EyeOff, Cpu } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -56,6 +56,9 @@ export function DetectionVideoPlayer({
   useEffect(() => {
     if (visible && live && !mjpegError) {
       setMjpegMode(true);
+      // Reset FPS counter — MJPEG badge replaces FPS display
+      setDetFps(0);
+      fpsCountRef.current = 0;
     } else {
       setMjpegMode(false);
     }
@@ -72,10 +75,12 @@ export function DetectionVideoPlayer({
     };
   }, []);
 
-  // SSE subscription for live detections (still used for counts/badges)
+  // SSE subscription for live detections — skip processing in MJPEG mode
+  // (server-side MJPEG already draws bounding boxes; SSE events are redundant)
   useEventStream(
     useCallback(
       (event) => {
+        if (mjpegMode) return; // MJPEG mode: server draws boxes, skip SSE
         if (
           event.type === 'frame_analyzed' &&
           event.cameraId === cameraId &&
@@ -95,7 +100,7 @@ export function DetectionVideoPlayer({
           }
         }
       },
-      [cameraId]
+      [cameraId, mjpegMode]
     )
   );
 
@@ -130,6 +135,7 @@ export function DetectionVideoPlayer({
         <div className="absolute inset-0 bg-black">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
+            key={mjpegUrl}
             src={mjpegUrl}
             alt="AI Detection Stream"
             className="w-full h-full object-contain"

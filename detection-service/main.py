@@ -6,6 +6,7 @@ import time
 import math
 import asyncio
 import threading
+import functools
 from collections import defaultdict
 from typing import Optional
 
@@ -27,6 +28,7 @@ app.add_middleware(
 
 # Lazy-load model on first request
 _model = None
+_model_lock = threading.Lock()
 CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.40"))
 
 # YOLO COCO class mapping to our detection types
@@ -85,8 +87,10 @@ def parse_class_filter(classes_param: str | None) -> set[int] | None:
 def get_model():
     global _model
     if _model is None:
-        from ultralytics import YOLO
-        _model = YOLO("yolov8n.pt")
+        with _model_lock:
+            if _model is None:  # double-check after acquiring lock
+                from ultralytics import YOLO
+                _model = YOLO("yolov8n.pt")
     return _model
 
 
@@ -343,7 +347,8 @@ def detect_plates(img: np.ndarray, vehicle_boxes: list[dict] | None = None) -> l
 
 # ─── Behavior Analytics (Optical Flow) ──────────────────────────────
 
-_prev_frames: dict[str, np.ndarray] = {}  # camera_id -> previous gray frame
+_prev_frames: dict[str, tuple[np.ndarray, float]] = {}  # camera_id -> (gray frame, timestamp)
+_PREV_TTL = 60.0  # seconds — purge entries older than this
 
 
 def analyze_behavior(
@@ -357,12 +362,19 @@ def analyze_behavior(
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     h, w = img.shape[:2]
+    now = time.monotonic()
 
     behaviors = []
 
-    prev_gray = _prev_frames.get(camera_id)
+    # TTL cleanup — purge stale entries
+    stale = [k for k, (_, ts) in _prev_frames.items() if now - ts > _PREV_TTL]
+    for k in stale:
+        del _prev_frames[k]
+
+    entry = _prev_frames.get(camera_id)
+    prev_gray = entry[0] if entry else None
     if prev_gray is None or prev_gray.shape != gray.shape:
-        _prev_frames[camera_id] = gray
+        _prev_frames[camera_id] = (gray, now)
         return behaviors
 
     # Calculate dense optical flow
@@ -372,7 +384,7 @@ def analyze_behavior(
         iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
     )
 
-    _prev_frames[camera_id] = gray
+    _prev_frames[camera_id] = (gray, now)
 
     # Analyze motion for each person
     for i, pbox in enumerate(person_boxes):
@@ -483,11 +495,18 @@ def estimate_speeds(
     """Estimate speed of tracked persons using centroid displacement."""
     global _prev_centroids
 
+    now = time.monotonic()
+
+    # TTL cleanup — purge stale camera entries
+    stale = [k for k, v in _prev_centroids.items()
+             if v and all(now - ts > _PREV_TTL for _, _, ts in v.values())]
+    for k in stale:
+        del _prev_centroids[k]
+
     if camera_id not in _prev_centroids:
         _prev_centroids[camera_id] = {}
 
     prev = _prev_centroids[camera_id]
-    now = time.monotonic()
     speeds = []
 
     current_centroids: dict[int, tuple[float, float, float]] = {}
@@ -724,24 +743,28 @@ from PIL import Image, ImageDraw, ImageFont
 
 # Pillow font for Cyrillic labels
 _pil_font = None
+_font_lock = threading.Lock()
 
 
 def get_pil_font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     global _pil_font
     if _pil_font is None:
-        for path in [
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]:
-            try:
-                _pil_font = ImageFont.truetype(path, size)
-                break
-            except (OSError, IOError):
-                continue
-        if _pil_font is None:
-            _pil_font = ImageFont.load_default()
+        with _font_lock:
+            if _pil_font is not None:
+                return _pil_font
+            for path in [
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/System/Library/Fonts/Helvetica.ttc",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            ]:
+                try:
+                    _pil_font = ImageFont.truetype(path, size)
+                    break
+                except (OSError, IOError):
+                    continue
+            if _pil_font is None:
+                _pil_font = ImageFont.load_default()
     return _pil_font
 
 
@@ -757,44 +780,37 @@ def hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
     return (b, g, r)
 
 
-# Pre-rendered Cyrillic label cache: (text, color_rgb) -> BGR numpy array
-_label_img_cache: dict[tuple[str, tuple], np.ndarray] = {}
-
-
+# Pre-rendered Cyrillic label cache with LRU eviction (max 512 entries)
+@functools.lru_cache(maxsize=512)
 def _render_label(text: str, color_rgb: tuple[int, int, int]) -> np.ndarray:
-    """Render Cyrillic text label as a small BGR numpy array (cached)."""
-    key = (text, color_rgb)
-    if key in _label_img_cache:
-        return _label_img_cache[key]
-
+    """Render Cyrillic text label as a small BGR numpy array (LRU cached)."""
     font = get_pil_font(14)
-    # Measure text size
     tmp = Image.new("RGB", (1, 1))
     draw = ImageDraw.Draw(tmp)
     bbox = draw.textbbox((0, 0), text, font=font)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
+    tw = max(bbox[2] - bbox[0], 1)
+    th = max(bbox[3] - bbox[1], 1)
 
-    # Render small label image
     label_img = Image.new("RGB", (tw + 8, th + 4), color_rgb)
     draw = ImageDraw.Draw(label_img)
     draw.text((4, 1), text, fill=(255, 255, 255), font=font)
 
-    result = cv2.cvtColor(np.array(label_img), cv2.COLOR_RGB2BGR)
-    _label_img_cache[key] = result
-    return result
+    return cv2.cvtColor(np.array(label_img), cv2.COLOR_RGB2BGR)
 
 
 def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
     """Draw bounding boxes, labels, and count badge. Boxes via OpenCV, Cyrillic via cached Pillow labels."""
     h, w = img.shape[:2]
+    if h == 0 or w == 0:
+        return img
 
     for det in detections:
         bbox = det["bbox"]
-        x1 = int(bbox["x"] * w)
-        y1 = int(bbox["y"] * h)
-        x2 = x1 + int(bbox["w"] * w)
-        y2 = y1 + int(bbox["h"] * h)
+        # Clamp coordinates to image bounds
+        x1 = max(0, min(int(bbox["x"] * w), w - 1))
+        y1 = max(0, min(int(bbox["y"] * h), h - 1))
+        x2 = max(x1 + 1, min(x1 + int(bbox["w"] * w), w))
+        y2 = max(y1 + 1, min(y1 + int(bbox["h"] * h), h))
         color_bgr = hex_to_bgr(det.get("color", "#3B82F6"))
         color_rgb = hex_to_rgb(det.get("color", "#3B82F6"))
         conf = det.get("confidence", 0)
@@ -804,15 +820,18 @@ def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
         cv2.rectangle(img, (x1, y1), (x2, y2), color_bgr, 2)
 
         # Corner accents
-        cl = min(14, (x2 - x1) // 3, (y2 - y1) // 3)
-        cv2.line(img, (x1, y1), (x1 + cl, y1), color_bgr, 3)
-        cv2.line(img, (x1, y1), (x1, y1 + cl), color_bgr, 3)
-        cv2.line(img, (x2, y1), (x2 - cl, y1), color_bgr, 3)
-        cv2.line(img, (x2, y1), (x2, y1 + cl), color_bgr, 3)
-        cv2.line(img, (x1, y2), (x1 + cl, y2), color_bgr, 3)
-        cv2.line(img, (x1, y2), (x1, y2 - cl), color_bgr, 3)
-        cv2.line(img, (x2, y2), (x2 - cl, y2), color_bgr, 3)
-        cv2.line(img, (x2, y2), (x2, y2 - cl), color_bgr, 3)
+        bw_box = x2 - x1
+        bh_box = y2 - y1
+        if bw_box > 6 and bh_box > 6:
+            cl = min(14, bw_box // 3, bh_box // 3)
+            cv2.line(img, (x1, y1), (x1 + cl, y1), color_bgr, 3)
+            cv2.line(img, (x1, y1), (x1, y1 + cl), color_bgr, 3)
+            cv2.line(img, (x2, y1), (x2 - cl, y1), color_bgr, 3)
+            cv2.line(img, (x2, y1), (x2, y1 + cl), color_bgr, 3)
+            cv2.line(img, (x1, y2), (x1 + cl, y2), color_bgr, 3)
+            cv2.line(img, (x1, y2), (x1, y2 - cl), color_bgr, 3)
+            cv2.line(img, (x2, y2), (x2 - cl, y2), color_bgr, 3)
+            cv2.line(img, (x2, y2), (x2, y2 - cl), color_bgr, 3)
 
         # Label: pre-rendered Cyrillic text (small numpy paste, no full-frame PIL)
         text = f"{label} {int(conf * 100)}%"
@@ -820,7 +839,6 @@ def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
         lh, lw = label_img.shape[:2]
         ly = max(y1 - lh - 2, 0)
         lx = max(x1, 0)
-        # Clip to image bounds
         paste_w = min(lw, w - lx)
         paste_h = min(lh, h - ly)
         if paste_w > 0 and paste_h > 0:
@@ -841,14 +859,14 @@ def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
         count_text = " / ".join(parts)
 
         badge_img = _render_label(count_text, (0, 0, 0))
-        bh, bw = badge_img.shape[:2]
-        bx = w - bw - 10
+        bh_b, bw_b = badge_img.shape[:2]
+        bx = w - bw_b - 10
         by = 10
-        if bx > 0:
-            # Semi-transparent background
-            overlay = img[by:by + bh, bx:bx + bw].copy()
+        # Clamp badge to image bounds
+        if bx > 0 and by + bh_b <= h and bx + bw_b <= w:
+            overlay = img[by:by + bh_b, bx:bx + bw_b].copy()
             cv2.addWeighted(badge_img, 0.85, overlay, 0.15, 0, overlay)
-            img[by:by + bh, bx:bx + bw] = overlay
+            img[by:by + bh_b, bx:bx + bw_b] = overlay
 
     return img
 
@@ -857,6 +875,9 @@ def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
 
 TARGET_FPS = 30
 FRAME_INTERVAL = 1.0 / TARGET_FPS  # ~33ms
+MAX_INPUT_FPS = 20  # Cap input frame rate to save CPU
+MIN_FRAME_INTERVAL = 1.0 / MAX_INPUT_FPS
+MAX_PROCESS_WIDTH = 1280  # Resize frames wider than this before processing
 
 
 class MjpegStream:
@@ -905,16 +926,20 @@ class MjpegStream:
         # Skip VideoCapture probing in raw mode (no YOLO) — just use HTTP
         if not self.skip_yolo:
             def _try_cap(url: str, out: dict):
+                c = None
                 try:
                     c = cv2.VideoCapture(url)
                     if c.isOpened():
                         ret, _ = c.read()
                         if ret:
                             out["cap"] = c
+                            c = None  # transferred ownership to caller
                             return
-                    c.release()
                 except Exception:
                     pass
+                finally:
+                    if c is not None:
+                        c.release()
 
             for stream_path in ["/video", "/mjpegfeed"]:
                 try_url = base + stream_path
@@ -977,7 +1002,12 @@ class MjpegStream:
                 if fps_counter == 0:
                     print(f"[MjpegStream] First frame received: {img.shape}", flush=True)
 
+                # Resize large frames for performance
                 h, w = img.shape[:2]
+                if w > MAX_PROCESS_WIDTH and not self.skip_yolo:
+                    scale = MAX_PROCESS_WIDTH / w
+                    img = cv2.resize(img, (MAX_PROCESS_WIDTH, int(h * scale)))
+                    h, w = img.shape[:2]
 
                 if self.skip_yolo:
                     # Raw video mode — no YOLO, no boxes
@@ -1058,13 +1088,19 @@ class MjpegStream:
                         self.total_count = len(detections)
                         self.fire_count = fc
 
-                # FPS tracking
+                # FPS tracking + rate limiting
                 fps_counter += 1
                 now = time.monotonic()
                 if now - fps_timer >= 1.0:
                     self.yolo_fps = fps_counter / (now - fps_timer)
                     fps_counter = 0
                     fps_timer = now
+
+                # Cap input frame rate to avoid wasting CPU
+                elapsed = time.monotonic() - now
+                sleep_needed = MIN_FRAME_INTERVAL - elapsed
+                if sleep_needed > 0:
+                    time.sleep(sleep_needed)
 
         finally:
             if cap:
@@ -1089,8 +1125,9 @@ class MjpegStream:
             await asyncio.sleep(FRAME_INTERVAL)
 
 
-# Active streams registry
+# Active streams registry (protected by _streams_lock)
 _active_streams: dict[str, MjpegStream] = {}
+_streams_lock = threading.Lock()
 
 
 @app.get("/stream/mjpeg")
@@ -1103,17 +1140,30 @@ async def stream_mjpeg(
     stream_key = f"{camera_url}|{classes or 'all'}"
 
     # Stop existing stream for this camera+filter combo
-    for key in list(_active_streams.keys()):
-        if key.startswith(camera_url + "|"):
-            _active_streams[key].stop()
-            del _active_streams[key]
+    with _streams_lock:
+        for key in list(_active_streams.keys()):
+            if key.startswith(camera_url + "|"):
+                _active_streams[key].stop()
+                del _active_streams[key]
 
-    stream = MjpegStream(camera_url, allowed_classes=allowed)
-    _active_streams[stream_key] = stream
+        stream = MjpegStream(camera_url, allowed_classes=allowed)
+        _active_streams[stream_key] = stream
     stream.start()
 
+    async def _guarded_generate():
+        """Wrap generate() to clean up stream on client disconnect."""
+        try:
+            async for chunk in stream.generate():
+                yield chunk
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
+        finally:
+            stream.stop()
+            with _streams_lock:
+                _active_streams.pop(stream_key, None)
+
     return StreamingResponse(
-        stream.generate(),
+        _guarded_generate(),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -1126,14 +1176,15 @@ async def stream_mjpeg(
 @app.get("/stream/counts")
 async def stream_counts(camera_url: str = Query(..., description="Camera base URL")):
     """Return real-time detection counts for an active MJPEG stream."""
-    for key, stream in _active_streams.items():
-        if key.startswith(camera_url + "|"):
-            with stream.lock:
-                return {
-                    "personCount": stream.person_count,
-                    "totalCount": stream.total_count,
-                    "fireCount": stream.fire_count,
-                }
+    with _streams_lock:
+        for key, stream in _active_streams.items():
+            if key.startswith(camera_url + "|"):
+                with stream.lock:
+                    return {
+                        "personCount": stream.person_count,
+                        "totalCount": stream.total_count,
+                        "fireCount": stream.fire_count,
+                    }
     return {"personCount": 0, "totalCount": 0, "fireCount": 0}
 
 
