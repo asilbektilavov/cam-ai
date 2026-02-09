@@ -4,15 +4,26 @@ import io
 import os
 import time
 import math
+import asyncio
+import threading
 from collections import defaultdict
 from typing import Optional
 
-from fastapi import FastAPI, File, UploadFile, Form
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, UploadFile, Form, Query
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import cv2
+import httpx
 
 app = FastAPI(title="CamAI YOLO Detection Service")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Lazy-load model on first request
 _model = None
@@ -672,6 +683,281 @@ async def analyze_behavior_endpoint(
         "personCount": len(person_boxes),
         "inferenceMs": round((time.monotonic() - start) * 1000),
     }
+
+
+# ─── MJPEG Streaming with Server-Side Bounding Boxes ─────────────
+
+from PIL import Image, ImageDraw, ImageFont
+
+# Pillow font for Cyrillic labels
+_pil_font = None
+
+
+def get_pil_font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    global _pil_font
+    if _pil_font is None:
+        for path in [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ]:
+            try:
+                _pil_font = ImageFont.truetype(path, size)
+                break
+            except (OSError, IOError):
+                continue
+        if _pil_font is None:
+            _pil_font = ImageFont.load_default()
+    return _pil_font
+
+
+def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert hex color to RGB tuple."""
+    h = hex_color.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
+    """Convert hex color to BGR tuple for OpenCV."""
+    r, g, b = hex_to_rgb(hex_color)
+    return (b, g, r)
+
+
+# Pre-rendered Cyrillic label cache: (text, color_rgb) -> BGR numpy array
+_label_img_cache: dict[tuple[str, tuple], np.ndarray] = {}
+
+
+def _render_label(text: str, color_rgb: tuple[int, int, int]) -> np.ndarray:
+    """Render Cyrillic text label as a small BGR numpy array (cached)."""
+    key = (text, color_rgb)
+    if key in _label_img_cache:
+        return _label_img_cache[key]
+
+    font = get_pil_font(14)
+    # Measure text size
+    tmp = Image.new("RGB", (1, 1))
+    draw = ImageDraw.Draw(tmp)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+
+    # Render small label image
+    label_img = Image.new("RGB", (tw + 8, th + 4), color_rgb)
+    draw = ImageDraw.Draw(label_img)
+    draw.text((4, 1), text, fill=(255, 255, 255), font=font)
+
+    result = cv2.cvtColor(np.array(label_img), cv2.COLOR_RGB2BGR)
+    _label_img_cache[key] = result
+    return result
+
+
+def draw_detections(img: np.ndarray, detections: list[dict]) -> np.ndarray:
+    """Draw bounding boxes and labels. Boxes via OpenCV, Cyrillic via cached Pillow labels."""
+    h, w = img.shape[:2]
+
+    for det in detections:
+        bbox = det["bbox"]
+        x1 = int(bbox["x"] * w)
+        y1 = int(bbox["y"] * h)
+        x2 = x1 + int(bbox["w"] * w)
+        y2 = y1 + int(bbox["h"] * h)
+        color_bgr = hex_to_bgr(det.get("color", "#3B82F6"))
+        color_rgb = hex_to_rgb(det.get("color", "#3B82F6"))
+        conf = det.get("confidence", 0)
+        label = det.get("label", "")
+
+        # Main rectangle
+        cv2.rectangle(img, (x1, y1), (x2, y2), color_bgr, 2)
+
+        # Corner accents
+        cl = min(14, (x2 - x1) // 3, (y2 - y1) // 3)
+        cv2.line(img, (x1, y1), (x1 + cl, y1), color_bgr, 3)
+        cv2.line(img, (x1, y1), (x1, y1 + cl), color_bgr, 3)
+        cv2.line(img, (x2, y1), (x2 - cl, y1), color_bgr, 3)
+        cv2.line(img, (x2, y1), (x2, y1 + cl), color_bgr, 3)
+        cv2.line(img, (x1, y2), (x1 + cl, y2), color_bgr, 3)
+        cv2.line(img, (x1, y2), (x1, y2 - cl), color_bgr, 3)
+        cv2.line(img, (x2, y2), (x2 - cl, y2), color_bgr, 3)
+        cv2.line(img, (x2, y2), (x2, y2 - cl), color_bgr, 3)
+
+        # Label: pre-rendered Cyrillic text (small numpy paste, no full-frame PIL)
+        text = f"{label} {int(conf * 100)}%"
+        label_img = _render_label(text, color_rgb)
+        lh, lw = label_img.shape[:2]
+        ly = max(y1 - lh - 2, 0)
+        lx = max(x1, 0)
+        # Clip to image bounds
+        paste_w = min(lw, w - lx)
+        paste_h = min(lh, h - ly)
+        if paste_w > 0 and paste_h > 0:
+            img[ly:ly + paste_h, lx:lx + paste_w] = label_img[:paste_h, :paste_w]
+
+    return img
+
+
+# ─── MJPEG Stream: dual-thread pipeline for 30fps output ─────────
+
+TARGET_FPS = 30
+FRAME_INTERVAL = 1.0 / TARGET_FPS  # ~33ms
+
+
+class MjpegStream:
+    """Dual-thread MJPEG stream: YOLO runs in background, output at 30fps."""
+
+    def __init__(self, camera_url: str):
+        self.camera_url = camera_url
+        self.stop_event = threading.Event()
+        self.lock = threading.Lock()
+        self.latest_jpeg: bytes | None = None
+        self.yolo_fps: float = 0.0
+        self._worker: threading.Thread | None = None
+
+    def start(self):
+        self._worker = threading.Thread(target=self._yolo_loop, daemon=True)
+        self._worker.start()
+
+    def stop(self):
+        self.stop_event.set()
+        if self._worker:
+            self._worker.join(timeout=3)
+
+    def _yolo_loop(self):
+        """Background thread: fetch frames → YOLO → draw → cache JPEG."""
+        model = get_model()
+
+        # Try cv2.VideoCapture with MJPEG stream (faster than HTTP polling)
+        cap = None
+        use_http = False
+        base = self.camera_url.rstrip("/")
+
+        # Try MJPEG stream endpoints (IP Webcam app, RTSP, etc.)
+        for stream_path in ["/video", "/mjpegfeed", ""]:
+            try_url = base + stream_path
+            if "rtsp://" in try_url or "mjpg" in try_url or "mjpeg" in try_url or stream_path == "/video":
+                test_cap = cv2.VideoCapture(try_url)
+                if test_cap.isOpened():
+                    ret, _ = test_cap.read()
+                    if ret:
+                        cap = test_cap
+                        break
+                    test_cap.release()
+
+        if cap is None:
+            use_http = True
+        stream_url = base + "/shot.jpg"
+
+        http_client = httpx.Client() if use_http else None
+        fps_counter = 0
+        fps_timer = time.monotonic()
+
+        try:
+            while not self.stop_event.is_set():
+                # ── Grab frame ──
+                img = None
+                if cap and cap.isOpened():
+                    ret, img = cap.read()
+                    if not ret:
+                        img = None
+                elif http_client:
+                    try:
+                        resp = http_client.get(stream_url, timeout=2.0)
+                        if resp.status_code == 200:
+                            nparr = np.frombuffer(resp.content, np.uint8)
+                            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    except Exception:
+                        pass
+
+                if img is None:
+                    time.sleep(0.03)
+                    continue
+
+                h, w = img.shape[:2]
+
+                # ── YOLO inference ──
+                results = model(img, conf=CONFIDENCE, verbose=False)
+
+                detections = []
+                for result in results:
+                    for box in result.boxes:
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+                        conf_val = float(box.conf[0])
+                        cls_id = int(box.cls[0])
+                        cls_name = model.names.get(cls_id, "unknown")
+                        det_type, label, color = classify_detection(cls_id, cls_name)
+                        detections.append({
+                            "type": det_type,
+                            "label": label,
+                            "confidence": conf_val,
+                            "bbox": {
+                                "x": x1 / w, "y": y1 / h,
+                                "w": (x2 - x1) / w, "h": (y2 - y1) / h,
+                            },
+                            "color": color,
+                        })
+
+                # ── Draw + encode ──
+                annotated = draw_detections(img, detections)
+                _, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+                with self.lock:
+                    self.latest_jpeg = jpeg.tobytes()
+
+                # FPS tracking
+                fps_counter += 1
+                now = time.monotonic()
+                if now - fps_timer >= 1.0:
+                    self.yolo_fps = fps_counter / (now - fps_timer)
+                    fps_counter = 0
+                    fps_timer = now
+
+        finally:
+            if cap:
+                cap.release()
+            if http_client:
+                http_client.close()
+
+    async def generate(self):
+        """Async generator: output latest JPEG at 30fps."""
+        while not self.stop_event.is_set():
+            with self.lock:
+                jpeg_bytes = self.latest_jpeg
+
+            if jpeg_bytes:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(jpeg_bytes)).encode() + b"\r\n"
+                    b"\r\n" + jpeg_bytes + b"\r\n"
+                )
+
+            await asyncio.sleep(FRAME_INTERVAL)
+
+
+# Active streams registry
+_active_streams: dict[str, MjpegStream] = {}
+
+
+@app.get("/stream/mjpeg")
+async def stream_mjpeg(camera_url: str = Query(..., description="Camera base URL")):
+    """Stream MJPEG with YOLO detections at 30fps."""
+    # Stop existing stream for this camera
+    if camera_url in _active_streams:
+        _active_streams[camera_url].stop()
+
+    stream = MjpegStream(camera_url)
+    _active_streams[camera_url] = stream
+    stream.start()
+
+    return StreamingResponse(
+        stream.generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/health")

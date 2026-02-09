@@ -54,8 +54,9 @@ def load_images():
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/shot.jpg", "/", "/video"):
-            # Rotate frames every 1 second for realistic motion
-            idx = int(time.time() - _start_time) % len(_images_data)
+            # Rotate frames at ~10fps (natural camera speed)
+            elapsed = time.time() - _start_time
+            idx = int(elapsed * 10) % len(_images_data)
             frame = _images_data[idx]
             self.send_response(200)
             self.send_header("Content-Type", "image/jpeg")

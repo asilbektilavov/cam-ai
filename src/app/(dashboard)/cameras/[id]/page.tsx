@@ -199,10 +199,11 @@ export default function CameraDetailPage() {
         <div className="space-y-4">
           {/* Video Player */}
           <div className="relative aspect-video rounded-lg overflow-hidden bg-gradient-to-br from-gray-800 to-gray-900">
-            {camera.isStreaming ? (
+            {camera.isStreaming || camera.isMonitoring ? (
               <DetectionVideoPlayer
-                src={`/api/cameras/${cameraId}/stream`}
+                src={camera.isStreaming ? `/api/cameras/${cameraId}/stream` : ''}
                 cameraId={cameraId}
+                streamUrl={camera.streamUrl}
                 live
                 className="absolute inset-0 w-full h-full"
               />

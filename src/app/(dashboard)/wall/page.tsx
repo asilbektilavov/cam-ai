@@ -591,6 +591,7 @@ function WallSlot({
       <DetectionVideoPlayer
         src={`/api/cameras/${cameraId}/stream`}
         cameraId={cameraId}
+        streamUrl={camera?.streamUrl}
         live={true}
         autoPlay={true}
         muted={true}

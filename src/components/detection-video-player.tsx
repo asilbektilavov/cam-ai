@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Cpu } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { VideoPlayer } from '@/components/video-player';
@@ -11,6 +11,7 @@ import { useEventStream } from '@/hooks/use-event-stream';
 interface DetectionVideoPlayerProps {
   src: string;
   cameraId: string;
+  streamUrl?: string;
   poster?: string;
   autoPlay?: boolean;
   muted?: boolean;
@@ -22,11 +23,12 @@ interface DetectionVideoPlayerProps {
   showDetections?: boolean;
 }
 
-const DETECTION_TTL_MS = 3_000; // detections disappear after 3s (stay fresh)
+const DETECTION_TTL_MS = 3_000;
 
 export function DetectionVideoPlayer({
   src,
   cameraId,
+  streamUrl,
   poster,
   autoPlay = true,
   muted = true,
@@ -41,10 +43,21 @@ export function DetectionVideoPlayer({
   const [visible, setVisible] = useState(initialShow);
   const [showLegend, setShowLegend] = useState(false);
   const [detFps, setDetFps] = useState(0);
+  const [mjpegMode, setMjpegMode] = useState(false);
+  const [mjpegError, setMjpegError] = useState(false);
   const lastUpdateRef = useRef(Date.now());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fpsCountRef = useRef(0);
   const fpsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Auto-enable MJPEG mode when AI detections are active
+  useEffect(() => {
+    if (visible && live && !mjpegError) {
+      setMjpegMode(true);
+    } else {
+      setMjpegMode(false);
+    }
+  }, [visible, live, mjpegError]);
 
   // FPS counter — updates every second
   useEffect(() => {
@@ -57,7 +70,7 @@ export function DetectionVideoPlayer({
     };
   }, []);
 
-  // SSE subscription for live detections
+  // SSE subscription for live detections (still used for counts/badges)
   useEventStream(
     useCallback(
       (event) => {
@@ -69,13 +82,10 @@ export function DetectionVideoPlayer({
           const newDetections = event.data.detections as Detection[];
           fpsCountRef.current++;
 
-          // Only update boxes when we have actual detections.
-          // Empty detections are handled by TTL expiry (avoids flickering).
           if (newDetections.length > 0) {
             setDetections(newDetections);
             lastUpdateRef.current = Date.now();
 
-            // Reset TTL — boxes disappear after DETECTION_TTL_MS of no new detections
             if (timerRef.current) clearTimeout(timerRef.current);
             timerRef.current = setTimeout(() => {
               setDetections([]);
@@ -87,7 +97,6 @@ export function DetectionVideoPlayer({
     )
   );
 
-  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -97,42 +106,73 @@ export function DetectionVideoPlayer({
   const objectCount = detections.length;
   const personCount = detections.filter((d) => d.type === 'person').length;
 
-  // Unique detection types for legend
   const detectionTypes = [...new Map(
     detections.map((d) => [d.type, { label: d.label, color: d.color }])
   ).values()];
 
+  const detectionServiceUrl = process.env.NEXT_PUBLIC_DETECTION_SERVICE_URL || 'http://localhost:8001';
+  const mjpegUrl = streamUrl
+    ? `${detectionServiceUrl}/stream/mjpeg?camera_url=${encodeURIComponent(streamUrl)}`
+    : `/api/stream/${cameraId}`;
+
   return (
     <div className={cn('relative', className)}>
-      {/* Video Player — DetectionOverlay is passed as child so it renders
-          INSIDE the video wrapper (same stacking context as the HW-accelerated video) */}
-      <VideoPlayer
-        src={src}
-        poster={poster}
-        autoPlay={autoPlay}
-        muted={muted}
-        controls={controls}
-        live={live}
-        playbackRate={playbackRate}
-        className="h-full w-full"
-        onError={onError}
-      >
-        <DetectionOverlay detections={detections} visible={visible} />
-      </VideoPlayer>
+      {/* MJPEG mode: show server-rendered stream with bounding boxes */}
+      {mjpegMode && visible ? (
+        <div className="absolute inset-0 bg-black">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={mjpegUrl}
+            alt="AI Detection Stream"
+            className="w-full h-full object-contain"
+            onError={() => {
+              setMjpegError(true);
+              setMjpegMode(false);
+            }}
+          />
+        </div>
+      ) : (
+        <VideoPlayer
+          src={src}
+          poster={poster}
+          autoPlay={autoPlay}
+          muted={muted}
+          controls={controls}
+          live={live}
+          playbackRate={playbackRate}
+          className="h-full w-full"
+          onError={onError}
+        >
+          <DetectionOverlay detections={detections} visible={visible} />
+        </VideoPlayer>
+      )}
 
       {/* AI status indicator — bottom left */}
-      {visible && detFps > 0 && (
+      {visible && (
         <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5">
-          <Badge
-            variant="secondary"
-            className="bg-black/60 text-green-400 border-0 text-[10px] px-1.5 py-0.5 gap-1"
-          >
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-400" />
-            </span>
-            AI {detFps} fps
-          </Badge>
+          {mjpegMode ? (
+            <Badge
+              variant="secondary"
+              className="bg-black/60 text-green-400 border-0 text-[10px] px-1.5 py-0.5 gap-1"
+            >
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-400" />
+              </span>
+              AI MJPEG
+            </Badge>
+          ) : detFps > 0 ? (
+            <Badge
+              variant="secondary"
+              className="bg-black/60 text-green-400 border-0 text-[10px] px-1.5 py-0.5 gap-1"
+            >
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-400" />
+              </span>
+              AI {detFps} fps
+            </Badge>
+          ) : null}
         </div>
       )}
 

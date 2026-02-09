@@ -71,8 +71,8 @@ export default function BranchesPage() {
 
   const fetchBranches = useCallback(async () => {
     try {
-      const data = await apiGet<{ branches: Branch[] }>('/api/branches');
-      setBranches(data.branches);
+      const data = await apiGet<{ branches: Branch[] } | Branch[]>('/api/branches');
+      setBranches(Array.isArray(data) ? data : data.branches ?? []);
     } catch (err) {
       console.error('Failed to fetch branches:', err);
     } finally {
