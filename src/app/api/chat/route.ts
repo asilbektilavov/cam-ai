@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 
   // Build camera list for context
   const cameraList = cameras
-    .map((c) => `- ${c.name} (${c.location}) — статус: ${c.status}`)
+    .map((c) => `- ${c.name} (${c.location}) — статус: ${c.status}, id: ${c.id}`)
     .join('\n');
 
   // Build events list for context
@@ -78,6 +78,8 @@ export async function POST(req: NextRequest) {
     timeZone: 'Asia/Tashkent',
   });
 
+  const todayISO = new Date().toISOString().split('T')[0];
+
   const systemPrompt = `Ты — ИИ-ассистент системы видеонаблюдения CamAI. Отвечай на русском языке.
 
 У пользователя есть следующие камеры:
@@ -87,6 +89,43 @@ ${cameraList || 'Камеры не найдены.'}
 ${eventsList || 'Событий не найдено.'}
 
 Текущая дата и время: ${now}
+Текущая дата ISO: ${todayISO}
+
+## Навигация по архиву и аналитике
+
+Ты умеешь помогать пользователю перейти к нужному месту в системе. Когда пользователь просит показать архив, запись, аналитику или статистику — ты должен вернуть в конце ответа специальный JSON-блок навигации.
+
+Формат: в самом конце твоего текстового ответа добавь строку вида:
+<!--NAV:{"type":"archive","cameraQuery":"парковка","timestamp":"2026-02-09T14:00:00","action":"play"}-->
+
+Поддерживаемые типы навигации:
+
+1. **archive** — открыть архив записи конкретной камеры:
+   <!--NAV:{"type":"archive","cameraQuery":"ключевое слово камеры","timestamp":"ISO дата-время","action":"play"}-->
+   - cameraQuery: ключевое слово для поиска камеры по имени (парковка, вход, касса, склад и т.д.)
+   - timestamp: ISO 8601 дата-время (например, "2026-02-09T14:00:00")
+   - action: "play"
+
+2. **analytics** — открыть страницу аналитики:
+   <!--NAV:{"type":"analytics","period":"day|week|month","date":"ISO дата"}-->
+   - Используй когда спрашивают "сколько людей было", "статистика", "отчет"
+
+3. **heatmap** — открыть тепловую карту:
+   <!--NAV:{"type":"heatmap","cameraQuery":"ключевое слово камеры","period":"day|week|month"}-->
+   - Используй когда спрашивают про тепловую карту, heat map, зоны активности
+
+4. **events** — открыть журнал событий:
+   <!--NAV:{"type":"events","severity":"all|critical|warning","date":"ISO дата"}-->
+   - Используй когда спрашивают про последние события, тревоги, инциденты
+
+Правила:
+- "вчера" = вчерашняя дата от ${todayISO}
+- "позавчера" = 2 дня назад от ${todayISO}
+- Если пользователь указывает конкретную дату (например "5 февраля"), используй эту дату
+- Если время не указано, используй начало дня "T00:00:00"
+- Если камера не указана для archive, используй пустую строку "" для cameraQuery
+- НЕ добавляй навигацию, если вопрос не требует перехода (например, простые вопросы о текущем состоянии)
+- Текстовый ответ перед навигацией должен быть полезным и информативным
 
 Отвечай кратко и по существу. Если спрашивают о конкретном времени или камере, ищи в предоставленных данных.`;
 
@@ -100,13 +139,29 @@ ${eventsList || 'Событий не найдено.'}
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
+        let fullText = '';
         try {
           for await (const chunk of result.stream) {
             const text = chunk.text();
             if (text) {
+              fullText += text;
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
             }
           }
+
+          // After streaming is complete, parse the navigation block if present
+          const navMatch = fullText.match(/<!--NAV:(.*?)-->/);
+          if (navMatch) {
+            try {
+              const navigation = JSON.parse(navMatch[1]);
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ navigation })}\n\n`)
+              );
+            } catch {
+              // Malformed navigation JSON — skip it
+            }
+          }
+
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();
         } catch (err) {

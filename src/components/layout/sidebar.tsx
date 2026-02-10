@@ -27,6 +27,12 @@ import {
   ClipboardList,
   Stethoscope,
   SearchCode,
+  Users,
+  ShoppingBag,
+  Volume2,
+  Server,
+  Key,
+  HardHat,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -51,6 +57,14 @@ const navItems = [
   { href: '/diagnostics', label: 'Диагностика', icon: Stethoscope },
   { href: '/integrations', label: 'Интеграции', icon: Plug },
   { href: '/settings', label: 'Настройки', icon: Settings },
+];
+
+const advancedItems = [
+  { href: '/cross-tracking', label: 'Кросс-трекинг', icon: Users },
+  { href: '/shelf-monitoring', label: 'Мониторинг полок', icon: ShoppingBag },
+  { href: '/audio-analytics', label: 'Аудио-аналитика', icon: Volume2 },
+  { href: '/failover', label: 'Отказоустойчивость', icon: Server },
+  { href: '/licenses', label: 'Лицензии', icon: Key },
 ];
 
 export function Sidebar() {
@@ -97,7 +111,7 @@ export function Sidebar() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
           {navItems.map((item, index) => {
             const isActive = pathname === item.href;
             return (
@@ -121,6 +135,37 @@ export function Sidebar() {
                 </Link>
                 {index === 0 && <Separator className="my-2" />}
               </div>
+            );
+          })}
+
+          {/* Advanced Features */}
+          <Separator className="my-2" />
+          {sidebarOpen && (
+            <p className="px-3 py-1 text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">
+              Расширенные функции
+            </p>
+          )}
+          {advancedItems.map((item) => {
+            const isActive = pathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => {
+                  if (window.innerWidth < 768) {
+                    setSidebarOpen(false);
+                  }
+                }}
+                className={cn(
+                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                )}
+              >
+                <item.icon className="h-5 w-5 shrink-0" />
+                {sidebarOpen && <span>{item.label}</span>}
+              </Link>
             );
           })}
         </nav>

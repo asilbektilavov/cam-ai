@@ -1,15 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
-import { Video, Eye, EyeOff } from 'lucide-react';
+import { Video, Eye, EyeOff, Chrome, Github, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
+
+interface OAuthProviders {
+  google: boolean;
+  github: boolean;
+  oidc: boolean;
+  oidcName?: string;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,6 +24,16 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState<string | null>(null);
+  const [providers, setProviders] = useState<OAuthProviders | null>(null);
+
+  // Fetch available OAuth providers on mount
+  useEffect(() => {
+    fetch('/api/auth/providers')
+      .then((res) => res.json())
+      .then((data) => setProviders(data))
+      .catch(() => setProviders({ google: false, github: false, oidc: false }));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +59,18 @@ export default function LoginPage() {
     }
     setLoading(false);
   };
+
+  const handleOAuthSignIn = async (provider: string) => {
+    setOauthLoading(provider);
+    try {
+      await signIn(provider, { callbackUrl: '/select-venue' });
+    } catch {
+      toast.error('Ошибка авторизации. Попробуйте позже.');
+      setOauthLoading(null);
+    }
+  };
+
+  const hasOAuth = providers && (providers.google || providers.github || providers.oidc);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
@@ -97,6 +126,73 @@ export default function LoginPage() {
               {loading ? 'Вход...' : 'Войти'}
             </Button>
           </form>
+
+          {/* OAuth Divider & Buttons */}
+          {hasOAuth && (
+            <>
+              <div className="relative my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">или</span>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {providers.google && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    disabled={!!oauthLoading}
+                    onClick={() => handleOAuthSignIn('google')}
+                  >
+                    {oauthLoading === 'google' ? (
+                      <span className="animate-spin mr-2 size-4 border-2 border-current border-t-transparent rounded-full" />
+                    ) : (
+                      <Chrome className="mr-2 h-4 w-4" />
+                    )}
+                    Войти через Google
+                  </Button>
+                )}
+
+                {providers.github && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    disabled={!!oauthLoading}
+                    onClick={() => handleOAuthSignIn('github')}
+                  >
+                    {oauthLoading === 'github' ? (
+                      <span className="animate-spin mr-2 size-4 border-2 border-current border-t-transparent rounded-full" />
+                    ) : (
+                      <Github className="mr-2 h-4 w-4" />
+                    )}
+                    Войти через GitHub
+                  </Button>
+                )}
+
+                {providers.oidc && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    disabled={!!oauthLoading}
+                    onClick={() => handleOAuthSignIn('oidc')}
+                  >
+                    {oauthLoading === 'oidc' ? (
+                      <span className="animate-spin mr-2 size-4 border-2 border-current border-t-transparent rounded-full" />
+                    ) : (
+                      <ShieldCheck className="mr-2 h-4 w-4" />
+                    )}
+                    Войти через {providers.oidcName || 'SSO'}
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
 
           <div className="mt-4 text-center text-sm text-muted-foreground">
             Нет аккаунта?{' '}

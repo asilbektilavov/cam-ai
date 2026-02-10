@@ -1188,9 +1188,23 @@ async def stream_counts(camera_url: str = Query(..., description="Camera base UR
     return {"personCount": 0, "totalCount": 0, "fireCount": 0}
 
 
+# ─── Extensions: Phase 2/3 features ───────────────────────────────
+from extensions import router as ext_router
+app.include_router(ext_router)
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": "yolov8n"}
+    return {
+        "status": "ok",
+        "model": "yolov8n",
+        "features": [
+            "detect", "detect-fire", "detect-plates", "analyze-behavior",
+            "detect-ppe", "detect-shelf-fullness", "extract-features",
+            "match-persons", "dewarp", "analyze-audio",
+            "stream/mjpeg", "stream/counts",
+        ],
+    }
 
 
 if __name__ == "__main__":

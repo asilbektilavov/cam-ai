@@ -1,20 +1,52 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { MessageCircle, Send, X, Bot, User, Sparkles } from 'lucide-react';
+import {
+  MessageCircle,
+  Send,
+  X,
+  Bot,
+  User,
+  Sparkles,
+  Archive,
+  BarChart3,
+  Flame,
+  CalendarClock,
+  ExternalLink,
+} from 'lucide-react';
+
+interface NavigationData {
+  type: 'archive' | 'analytics' | 'heatmap' | 'events';
+  cameraQuery?: string;
+  timestamp?: string;
+  action?: string;
+  period?: string;
+  date?: string;
+  severity?: string;
+}
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  navigation?: NavigationData;
 }
 
 const STORAGE_KEY = 'camai-chat-messages';
 
 const QUICK_ACTIONS = [
+  { label: 'Что было вчера?', icon: CalendarClock },
+  { label: 'Покажи архив', icon: Archive },
+  { label: 'Статистика за неделю', icon: BarChart3 },
+  { label: 'Последние события', icon: Flame },
+];
+
+// Legacy quick actions kept for compatibility
+const LEGACY_QUICK_ACTIONS = [
   'Что случилось за последний час?',
   'Сводка за сегодня',
   'Критические события',
@@ -26,7 +58,7 @@ function loadMessages(): ChatMessage[] {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return parsed.map((m: { role: string; content: string; timestamp: string }) => ({
+    return parsed.map((m: { role: string; content: string; timestamp: string; navigation?: NavigationData }) => ({
       ...m,
       timestamp: new Date(m.timestamp),
     }));
@@ -44,7 +76,74 @@ function saveMessages(messages: ChatMessage[]) {
   }
 }
 
+function getNavigationLabel(nav: NavigationData): string {
+  switch (nav.type) {
+    case 'archive':
+      return 'Перейти к архиву';
+    case 'analytics':
+      return 'Открыть аналитику';
+    case 'heatmap':
+      return 'Открыть тепловую карту';
+    case 'events':
+      return 'Открыть журнал событий';
+    default:
+      return 'Перейти';
+  }
+}
+
+function getNavigationIcon(nav: NavigationData) {
+  switch (nav.type) {
+    case 'archive':
+      return Archive;
+    case 'analytics':
+      return BarChart3;
+    case 'heatmap':
+      return Flame;
+    case 'events':
+      return CalendarClock;
+    default:
+      return ExternalLink;
+  }
+}
+
+function buildNavigationUrl(nav: NavigationData): string {
+  const params = new URLSearchParams();
+
+  switch (nav.type) {
+    case 'archive':
+      if (nav.cameraQuery) params.set('camera', nav.cameraQuery);
+      if (nav.timestamp) params.set('time', nav.timestamp);
+      if (nav.action) params.set('action', nav.action);
+      return `/cameras${params.toString() ? '?' + params.toString() : ''}`;
+
+    case 'analytics':
+      if (nav.period) params.set('period', nav.period);
+      if (nav.date) params.set('date', nav.date);
+      return `/analytics${params.toString() ? '?' + params.toString() : ''}`;
+
+    case 'heatmap':
+      params.set('tab', 'heatmap');
+      if (nav.cameraQuery) params.set('camera', nav.cameraQuery);
+      if (nav.period) params.set('period', nav.period);
+      return `/analytics${params.toString() ? '?' + params.toString() : ''}`;
+
+    case 'events':
+      if (nav.severity && nav.severity !== 'all') params.set('severity', nav.severity);
+      if (nav.date) params.set('date', nav.date);
+      return `/analytics${params.toString() ? '?' + params.toString() : ''}`;
+
+    default:
+      return '/dashboard';
+  }
+}
+
+/** Strip the <!--NAV:...--> tag from visible message text */
+function cleanMessageContent(content: string): string {
+  return content.replace(/<!--NAV:.*?-->/g, '').trim();
+}
+
 export function AiChat({ className }: { className?: string }) {
+  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -81,6 +180,14 @@ export function AiChat({ className }: { className?: string }) {
       inputRef.current.focus();
     }
   }, [isOpen]);
+
+  const handleNavigation = useCallback(
+    (nav: NavigationData) => {
+      const url = buildNavigationUrl(nav);
+      router.push(url);
+    },
+    [router]
+  );
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -126,6 +233,7 @@ export function AiChat({ className }: { className?: string }) {
 
         const decoder = new TextDecoder();
         let accumulated = '';
+        let navigation: NavigationData | undefined;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -143,6 +251,9 @@ export function AiChat({ className }: { className?: string }) {
                 const parsed = JSON.parse(data);
                 if (parsed.error) {
                   accumulated += `\n[Ошибка: ${parsed.error}]`;
+                } else if (parsed.navigation) {
+                  // Navigation data received from the backend
+                  navigation = parsed.navigation;
                 } else if (parsed.text) {
                   accumulated += parsed.text;
                 }
@@ -152,13 +263,18 @@ export function AiChat({ className }: { className?: string }) {
             }
           }
 
-          // Update the assistant message with accumulated text
-          const currentText = accumulated;
+          // Update the assistant message with accumulated text (strip NAV tags)
+          const currentText = cleanMessageContent(accumulated);
+          const currentNav = navigation;
           setMessages((prev) => {
             const updated = [...prev];
             const lastIdx = updated.length - 1;
             if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
-              updated[lastIdx] = { ...updated[lastIdx], content: currentText };
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                content: currentText,
+                navigation: currentNav,
+              };
             }
             return updated;
           });
@@ -241,65 +357,130 @@ export function AiChat({ className }: { className?: string }) {
                 <p className="text-xs text-muted-foreground">
                   Задайте вопрос о событиях, камерах или аналитике.
                 </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Я могу открыть архив, аналитику или тепловую карту.
+                </p>
               </div>
             )}
 
             <div className="flex flex-col gap-3">
-              {messages.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={cn(
-                    'flex gap-2 max-w-[85%]',
-                    msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
-                  )}
-                >
-                  <div
-                    className={cn(
-                      'flex items-center justify-center size-6 rounded-full shrink-0 mt-0.5',
-                      msg.role === 'user'
-                        ? 'bg-blue-500 text-white'
-                        : 'bg-gradient-to-r from-blue-500/10 to-purple-600/10'
-                    )}
-                  >
-                    {msg.role === 'user' ? (
-                      <User className="size-3.5" />
-                    ) : (
-                      <Bot className="size-3.5 text-blue-500" />
+              {messages.map((msg, idx) => {
+                const NavIcon = msg.navigation ? getNavigationIcon(msg.navigation) : null;
+                return (
+                  <div key={idx} className="flex flex-col gap-1">
+                    <div
+                      className={cn(
+                        'flex gap-2 max-w-[85%]',
+                        msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          'flex items-center justify-center size-6 rounded-full shrink-0 mt-0.5',
+                          msg.role === 'user'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gradient-to-r from-blue-500/10 to-purple-600/10'
+                        )}
+                      >
+                        {msg.role === 'user' ? (
+                          <User className="size-3.5" />
+                        ) : (
+                          <Bot className="size-3.5 text-blue-500" />
+                        )}
+                      </div>
+                      <div
+                        className={cn(
+                          'rounded-lg px-3 py-2 text-sm leading-relaxed',
+                          msg.role === 'user'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-muted text-foreground'
+                        )}
+                      >
+                        {msg.content || (
+                          <span className="inline-flex items-center gap-1 text-muted-foreground">
+                            <span className="animate-pulse">Думаю</span>
+                            <span className="animate-bounce [animation-delay:0ms]">.</span>
+                            <span className="animate-bounce [animation-delay:150ms]">.</span>
+                            <span className="animate-bounce [animation-delay:300ms]">.</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Navigation Action Button */}
+                    {msg.role === 'assistant' && msg.navigation && msg.content && (
+                      <div className="ml-8 mt-1">
+                        <button
+                          onClick={() => handleNavigation(msg.navigation!)}
+                          className={cn(
+                            'inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium',
+                            'bg-gradient-to-r from-blue-500 to-purple-600 text-white',
+                            'hover:from-blue-600 hover:to-purple-700 transition-all',
+                            'shadow-sm hover:shadow-md'
+                          )}
+                        >
+                          {NavIcon && <NavIcon className="size-3.5" />}
+                          {getNavigationLabel(msg.navigation)}
+                          <ExternalLink className="size-3" />
+                        </button>
+                      </div>
                     )}
                   </div>
-                  <div
-                    className={cn(
-                      'rounded-lg px-3 py-2 text-sm leading-relaxed',
-                      msg.role === 'user'
-                        ? 'bg-blue-500 text-white'
-                        : 'bg-muted text-foreground'
-                    )}
-                  >
-                    {msg.content || (
-                      <span className="inline-flex items-center gap-1 text-muted-foreground">
-                        <span className="animate-pulse">Думаю</span>
-                        <span className="animate-bounce [animation-delay:0ms]">.</span>
-                        <span className="animate-bounce [animation-delay:150ms]">.</span>
-                        <span className="animate-bounce [animation-delay:300ms]">.</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </ScrollArea>
 
           {/* Quick Actions */}
           {messages.length === 0 && (
-            <div className="flex flex-wrap gap-1.5 px-4 pb-2">
-              {QUICK_ACTIONS.map((action) => (
+            <div className="px-4 pb-2">
+              <div className="grid grid-cols-2 gap-1.5 mb-2">
+                {QUICK_ACTIONS.map((action) => {
+                  const Icon = action.icon;
+                  return (
+                    <button
+                      key={action.label}
+                      onClick={() => sendMessage(action.label)}
+                      disabled={isLoading}
+                      className={cn(
+                        'flex items-center gap-1.5 text-xs px-2.5 py-2 rounded-lg border border-border',
+                        'bg-background text-muted-foreground',
+                        'hover:bg-accent hover:text-accent-foreground transition-colors',
+                        'disabled:opacity-50'
+                      )}
+                    >
+                      <Icon className="size-3.5 shrink-0 text-blue-500" />
+                      <span className="truncate">{action.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {LEGACY_QUICK_ACTIONS.map((action) => (
+                  <button
+                    key={action}
+                    onClick={() => sendMessage(action)}
+                    disabled={isLoading}
+                    className="text-xs px-2.5 py-1 rounded-full border border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+                  >
+                    {action}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Suggested Actions (shown after messages) */}
+          {messages.length > 0 && !isLoading && (
+            <div className="flex flex-wrap gap-1 px-4 pb-1">
+              {QUICK_ACTIONS.slice(0, 3).map((action) => (
                 <button
-                  key={action}
-                  onClick={() => sendMessage(action)}
+                  key={action.label}
+                  onClick={() => sendMessage(action.label)}
                   disabled={isLoading}
-                  className="text-xs px-2.5 py-1 rounded-full border border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+                  className="text-[10px] px-2 py-0.5 rounded-full border border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
                 >
-                  {action}
+                  {action.label}
                 </button>
               ))}
             </div>
