@@ -5,6 +5,7 @@ async function request<T>(
   options?: RequestInit
 ): Promise<T> {
   const response = await fetch(BASE_URL + url, {
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...options?.headers,

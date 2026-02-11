@@ -181,6 +181,7 @@ export default function MapPage() {
 
       const res = await fetch('/api/floor-plans', {
         method: 'POST',
+        credentials: 'include',
         body: formData,
       });
 

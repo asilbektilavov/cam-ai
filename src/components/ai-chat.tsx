@@ -219,6 +219,7 @@ export function AiChat({ className }: { className?: string }) {
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: trimmed }),
           signal: abortRef.current.signal,

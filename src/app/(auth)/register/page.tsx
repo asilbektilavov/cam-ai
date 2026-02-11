@@ -37,8 +37,8 @@ export default function RegisterPage() {
       return;
     }
 
-    if (password.length < 6) {
-      toast.error('Пароль должен содержать минимум 6 символов');
+    if (password.length < 8) {
+      toast.error('Пароль должен содержать минимум 8 символов');
       setLoading(false);
       return;
     }
@@ -134,7 +134,7 @@ export default function RegisterPage() {
                 <Input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Минимум 6 символов"
+                  placeholder="Минимум 8 символов"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />

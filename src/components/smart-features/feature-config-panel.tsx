@@ -27,6 +27,7 @@ import { IntegrationSelector } from './integration-selector';
 import { QueueMonitorConfig } from './queue-monitor-config';
 import { LoiteringConfig } from './loitering-config';
 import { WorkstationConfig } from './workstation-config';
+import { LineCrossingConfig } from './line-crossing-config';
 
 interface FeatureData {
   id?: string;
@@ -279,6 +280,7 @@ export function FeatureConfigPanel({ cameraId }: FeatureConfigPanelProps) {
             {isEnabled && isExpanded && meta.type !== 'person_search' && (
               <FeatureSettings
                 featureType={meta.type}
+                cameraId={cameraId}
                 config={(feature?.config || meta.defaultConfig) as Record<string, unknown>}
                 integrationId={feature?.integrationId || null}
                 saving={isSaving}
@@ -300,12 +302,14 @@ export function FeatureConfigPanel({ cameraId }: FeatureConfigPanelProps) {
 
 function FeatureSettings({
   featureType,
+  cameraId,
   config,
   integrationId,
   saving,
   onSave,
 }: {
   featureType: string;
+  cameraId: string;
   config: Record<string, unknown>;
   integrationId: string | null;
   saving: boolean;
@@ -331,6 +335,13 @@ function FeatureSettings({
       {featureType === 'workstation_monitor' && (
         <WorkstationConfig
           config={localConfig as { minPeople?: number; maxAbsenceSeconds?: number }}
+          onChange={(c) => setLocalConfig(c)}
+        />
+      )}
+      {featureType === 'line_crossing' && (
+        <LineCrossingConfig
+          cameraId={cameraId}
+          config={localConfig as { linePoints?: { x: number; y: number }[]; direction?: 'in' | 'out' | 'both' }}
           onChange={(c) => setLocalConfig(c)}
         />
       )}

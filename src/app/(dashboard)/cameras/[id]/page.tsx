@@ -25,6 +25,7 @@ import {
   Box,
   Flame,
   Filter,
+  DoorOpen,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -45,6 +46,7 @@ import { PtzControls } from '@/components/ptz-controls';
 import { ExportDialog } from '@/components/export-dialog';
 import HeatmapOverlay from '@/components/heatmap-overlay';
 import PeopleCounterWidget from '@/components/people-counter-widget';
+import OccupancyWidget from '@/components/occupancy-widget';
 import { apiGet, apiPost, apiPatch } from '@/lib/api-client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -413,6 +415,10 @@ export default function CameraDetailPage() {
                 <Users className="h-4 w-4 mr-1.5" />
                 Подсчёт людей
               </TabsTrigger>
+              <TabsTrigger value="occupancy">
+                <DoorOpen className="h-4 w-4 mr-1.5" />
+                Заполняемость
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="heatmap">
@@ -431,6 +437,13 @@ export default function CameraDetailPage() {
 
             <TabsContent value="people">
               <PeopleCounterWidget
+                cameraId={cameraId}
+                cameraName={camera.name}
+              />
+            </TabsContent>
+
+            <TabsContent value="occupancy">
+              <OccupancyWidget
                 cameraId={cameraId}
                 cameraName={camera.name}
               />

@@ -3,7 +3,11 @@ import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound, badRequest } from '@/lib/api-utils';
 import { checkPermission, RBACError } from '@/lib/rbac';
 
-const VALID_TYPES = ['queue_monitor', 'loitering_detection', 'workstation_monitor', 'person_search'];
+const VALID_TYPES = [
+  'queue_monitor', 'loitering_detection', 'workstation_monitor', 'person_search',
+  'abandoned_object', 'fall_detection', 'tamper_detection', 'fire_smoke_detection',
+  'ppe_detection', 'lpr_detection', 'line_crossing',
+];
 
 export async function PUT(
   req: NextRequest,

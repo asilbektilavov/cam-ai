@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { appEvents, SmartAlert, CameraEvent } from './event-emitter';
+import { occupancyTracker, CrossingDirection } from './occupancy-tracker';
 
 interface FeatureConfig {
   featureType: string;
@@ -551,6 +552,7 @@ class SmartFeaturesEngine {
 
   // ── Line Crossing Detection ──────────────────────────────────────────
   // Uses centroid tracking to detect when persons cross a configured virtual line.
+  // Determines direction (in/out) via cross product and feeds OccupancyTracker.
   private evaluateLineCrossing(
     feature: FeatureConfig,
     state: CameraState,
@@ -562,14 +564,17 @@ class SmartFeaturesEngine {
     detections: Array<{ type: string; label: string; confidence: number; bbox: { x: number; y: number; w: number; h: number } }>
   ): void {
     const now = Date.now();
-    if (now - state.lineCrossing.lastAlertTime < ALERT_COOLDOWN_MS) return;
 
     // Get configured line points from feature config
     const linePoints = feature.config.linePoints as Array<{ x: number; y: number }> | undefined;
     if (!linePoints || linePoints.length < 2) return;
 
+    // Zone direction filter (if configured): 'in', 'out', or 'both'
+    const zoneDirection = (feature.config.direction as string) || 'both';
+
     const personDetections = detections.filter(d => d.type === 'person');
     const currentCentroids = new Map<number, { cx: number; cy: number }>();
+    const alertCooldownPassed = now - state.lineCrossing.lastAlertTime >= ALERT_COOLDOWN_MS;
 
     for (let i = 0; i < personDetections.length; i++) {
       const d = personDetections[i];
@@ -594,38 +599,63 @@ class SmartFeaturesEngine {
           prev.cx, prev.cy, cx, cy,
           linePoints[0].x, linePoints[0].y, linePoints[1].x, linePoints[1].y
         )) {
-          state.lineCrossing.lastAlertTime = now;
+          // Determine direction via cross product of line vector x movement vector
+          const lineDx = linePoints[1].x - linePoints[0].x;
+          const lineDy = linePoints[1].y - linePoints[0].y;
+          const moveDx = cx - prev.cx;
+          const moveDy = cy - prev.cy;
+          const cross = lineDx * moveDy - lineDy * moveDx;
+          const direction: CrossingDirection = cross > 0 ? 'out' : 'in';
 
-          const alert: SmartAlert = {
-            featureType: 'line_crossing',
-            cameraId,
-            cameraName,
-            cameraLocation,
-            organizationId,
-            branchId,
-            integrationId: feature.integrationId,
-            severity: 'warning',
-            message: 'Обнаружено пересечение виртуальной линии',
-            metadata: {
-              from: { x: prev.cx, y: prev.cy },
-              to: { x: cx, y: cy },
-              linePoints,
-            },
-          };
-          appEvents.emit('smart-alert', alert);
-          this.emitCameraEvent('line_crossing', cameraId, organizationId, branchId, { ...alert });
+          // Always feed OccupancyTracker (no cooldown)
+          occupancyTracker.recordCrossing(cameraId, direction);
 
-          // Create DB event
-          void prisma.event.create({
-            data: {
+          // Emit occupancy_update event for real-time SSE
+          const occupancy = occupancyTracker.getOccupancy(cameraId);
+          this.emitCameraEvent('occupancy_update', cameraId, organizationId, branchId, {
+            direction,
+            ...occupancy,
+          });
+
+          // Emit alert only when cooldown has passed and direction matches zone config
+          const directionMatchesZone = zoneDirection === 'both' || zoneDirection === direction;
+          if (alertCooldownPassed && directionMatchesZone) {
+            state.lineCrossing.lastAlertTime = now;
+
+            const dirLabel = direction === 'in' ? 'Вход' : 'Выход';
+            const alert: SmartAlert = {
+              featureType: 'line_crossing',
               cameraId,
+              cameraName,
+              cameraLocation,
               organizationId,
               branchId,
-              type: 'line_crossing',
+              integrationId: feature.integrationId,
               severity: 'warning',
-              description: `Пересечение виртуальной линии на камере ${cameraName}`,
-            },
-          });
+              message: `${dirLabel}: пересечение виртуальной линии`,
+              metadata: {
+                direction,
+                from: { x: prev.cx, y: prev.cy },
+                to: { x: cx, y: cy },
+                linePoints,
+                occupancy: occupancy.currentOccupancy,
+              },
+            };
+            appEvents.emit('smart-alert', alert);
+            this.emitCameraEvent('line_crossing', cameraId, organizationId, branchId, { ...alert });
+
+            // Create DB event
+            void prisma.event.create({
+              data: {
+                cameraId,
+                organizationId,
+                branchId,
+                type: 'line_crossing',
+                severity: 'warning',
+                description: `${dirLabel} через виртуальную линию на камере ${cameraName}`,
+              },
+            });
+          }
         }
       }
 

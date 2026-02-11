@@ -171,7 +171,27 @@ export default function DiagnosticsPage() {
     );
   }
 
-  if (!data) return null;
+  if (!data) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold">Диагностика системы</h1>
+          <p className="text-muted-foreground">Мониторинг здоровья и производительности</p>
+        </div>
+        <Card className="border-red-500/30 bg-red-500/5">
+          <CardContent className="p-6 text-center">
+            <XCircle className="h-12 w-12 text-red-500 mx-auto mb-3" />
+            <h2 className="text-lg font-semibold mb-2">Не удалось загрузить данные диагностики</h2>
+            <p className="text-sm text-muted-foreground mb-4">Проверьте подключение к серверу и повторите попытку</p>
+            <Button variant="outline" onClick={() => { setLoading(true); fetchDiagnostics(); }}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Повторить
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

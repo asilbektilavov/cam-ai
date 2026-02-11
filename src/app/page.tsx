@@ -186,7 +186,7 @@ export default function LandingPage() {
             <span className="font-semibold">CamAI</span>
           </div>
           <p className="text-sm text-muted-foreground">
-            &copy; 2025 CamAI. Все права защищены.
+            &copy; {new Date().getFullYear()} CamAI. Все права защищены.
           </p>
         </div>
       </footer>

@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import { Video, Eye, EyeOff, Chrome, Github, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -19,7 +18,6 @@ interface OAuthProviders {
 }
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -45,19 +43,25 @@ export default function LoginPage() {
       return;
     }
 
-    const result = await signIn('credentials', {
-      email,
-      password,
-      redirect: false,
-    });
+    try {
+      const result = await signIn('credentials', {
+        email,
+        password,
+        redirect: false,
+      });
 
-    if (result?.error) {
-      toast.error('Неверный email или пароль');
-    } else {
+      if (result?.error || result?.ok === false) {
+        toast.error('Неверный email или пароль');
+        setLoading(false);
+        return;
+      }
+
       toast.success('Добро пожаловать!');
-      router.push('/select-venue');
+      window.location.href = '/select-venue';
+    } catch {
+      toast.error('Ошибка сервера. Попробуйте позже.');
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleOAuthSignIn = async (provider: string) => {
@@ -201,11 +205,15 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <div className="mt-6 p-3 rounded-lg bg-muted/50 text-center">
+          <button
+            type="button"
+            onClick={() => { setEmail('admin@demo.com'); setPassword('admin123'); }}
+            className="mt-6 w-full p-3 rounded-lg bg-muted/50 text-center hover:bg-muted transition-colors cursor-pointer"
+          >
             <p className="text-xs text-muted-foreground">
               Демо: admin@demo.com / admin123
             </p>
-          </div>
+          </button>
         </CardContent>
       </Card>
     </div>

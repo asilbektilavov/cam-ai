@@ -220,8 +220,8 @@ export default function SettingsPage() {
       toast.error('Введите текущий пароль');
       return;
     }
-    if (newPassword.length < 6) {
-      toast.error('Пароль должен содержать минимум 6 символов');
+    if (newPassword.length < 8) {
+      toast.error('Пароль должен содержать минимум 8 символов');
       return;
     }
     if (newPassword !== confirmNewPassword) {
@@ -461,7 +461,7 @@ export default function SettingsPage() {
                   <Input
                     id="new-pass"
                     type={showPasswords ? 'text' : 'password'}
-                    placeholder="Минимум 6 символов"
+                    placeholder="Минимум 8 символов"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                   />
