@@ -17,7 +17,11 @@ export async function GET() {
     throw e;
   }
 
-  const orgId = session.user.organizationId;
+  const orgId = (session.user as { organizationId?: string }).organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'No organization' }, { status: 400 });
+  }
+
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
     select: { geminiApiKey: true },
@@ -49,7 +53,11 @@ export async function PUT(req: NextRequest) {
     throw e;
   }
 
-  const orgId = session.user.organizationId;
+  const orgId = (session.user as { organizationId?: string }).organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'No organization' }, { status: 400 });
+  }
+
   const body = await req.json();
   const { apiKey } = body;
 
@@ -98,7 +106,10 @@ export async function DELETE() {
     throw e;
   }
 
-  const orgId = session.user.organizationId;
+  const orgId = (session.user as { organizationId?: string }).organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'No organization' }, { status: 400 });
+  }
 
   await prisma.organization.update({
     where: { id: orgId },
