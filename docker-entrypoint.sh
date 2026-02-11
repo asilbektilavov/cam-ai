@@ -3,6 +3,16 @@ set -e
 
 echo "=== CamAI Starting ==="
 
+# Validate critical env vars
+if [ -z "${GEMINI_API_KEY:-}" ]; then
+  echo "  [WARN] GEMINI_API_KEY не задан — AI-анализ (Gemini) не будет работать."
+  echo "         Пользователи могут добавить свой ключ в Настройки → ИИ-анализ."
+fi
+
+if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  echo "  [INFO] TELEGRAM_BOT_TOKEN не задан — Telegram-уведомления отключены."
+fi
+
 # Run database migrations
 echo "[1/2] Applying database migrations..."
 npx prisma migrate deploy 2>/dev/null || echo "  Migrations already up to date"

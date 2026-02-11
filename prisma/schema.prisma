@@ -12,6 +12,7 @@ model Organization {
   name            String
   slug            String           @unique
   analysisMode    String           @default("yolo_gemini_events") // yolo_only | yolo_gemini_events | yolo_gemini_always
+  geminiApiKey    String?          // per-org Gemini API key (overrides env var)
   createdAt       DateTime         @default(now())
   users           User[]
   branches        Branch[]

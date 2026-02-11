@@ -3,9 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { checkPermission, RBACError } from '@/lib/rbac';
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+import { getGeminiApiKey } from '@/lib/gemini-key';
 
 export async function POST(req: NextRequest) {
   const session = await getAuthSession();
@@ -128,6 +126,17 @@ ${eventsList || 'Событий не найдено.'}
 - Текстовый ответ перед навигацией должен быть полезным и информативным
 
 Отвечай кратко и по существу. Если спрашивают о конкретном времени или камере, ищи в предоставленных данных.`;
+
+  const apiKey = await getGeminiApiKey(orgId);
+  if (!apiKey) {
+    return new Response(
+      JSON.stringify({ error: 'Gemini API ключ не настроен. Добавьте его в Настройки → ИИ-анализ.' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   try {
     const result = await model.generateContentStream({

@@ -18,6 +18,9 @@ import {
   Brain,
   Sparkles,
   ShieldCheck,
+  Key,
+  Check,
+  Trash2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,7 +39,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
-import { apiGet, apiPatch, apiPost, apiPut } from '@/lib/api-client';
+import { apiGet, apiPatch, apiPost, apiPut, apiDelete } from '@/lib/api-client';
 
 interface ProfileData {
   name: string;
@@ -123,6 +126,17 @@ export default function SettingsPage() {
   const [analysisModeLoading, setAnalysisModeLoading] = useState(true);
   const [savingAnalysisMode, setSavingAnalysisMode] = useState(false);
 
+  // Gemini API key
+  const [geminiKeyInput, setGeminiKeyInput] = useState('');
+  const [geminiKeyInfo, setGeminiKeyInfo] = useState<{
+    hasOrgKey: boolean;
+    hasEnvKey: boolean;
+    maskedKey: string | null;
+    source: string;
+  } | null>(null);
+  const [geminiKeyLoading, setGeminiKeyLoading] = useState(true);
+  const [savingGeminiKey, setSavingGeminiKey] = useState(false);
+
   // Sync
   const [syncLoading, setSyncLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -145,6 +159,51 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setAnalysisModeLoading(false));
   }, []);
+
+  // Load Gemini key info
+  const fetchGeminiKeyInfo = useCallback(() => {
+    apiGet<{ hasOrgKey: boolean; hasEnvKey: boolean; maskedKey: string | null; source: string }>(
+      '/api/settings/gemini-key'
+    )
+      .then((data) => setGeminiKeyInfo(data))
+      .catch(() => {})
+      .finally(() => setGeminiKeyLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchGeminiKeyInfo();
+  }, [fetchGeminiKeyInfo]);
+
+  const handleSaveGeminiKey = async () => {
+    if (!geminiKeyInput.trim()) {
+      toast.error('Введите API ключ');
+      return;
+    }
+    setSavingGeminiKey(true);
+    try {
+      await apiPut('/api/settings/gemini-key', { apiKey: geminiKeyInput });
+      toast.success('Gemini API ключ сохранён и проверен');
+      setGeminiKeyInput('');
+      fetchGeminiKeyInfo();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка сохранения ключа');
+    } finally {
+      setSavingGeminiKey(false);
+    }
+  };
+
+  const handleDeleteGeminiKey = async () => {
+    setSavingGeminiKey(true);
+    try {
+      await apiDelete('/api/settings/gemini-key');
+      toast.success('API ключ удалён');
+      fetchGeminiKeyInfo();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка удаления ключа');
+    } finally {
+      setSavingGeminiKey(false);
+    }
+  };
 
   // Load profile data
   useEffect(() => {
@@ -725,6 +784,98 @@ export default function SettingsPage() {
                     </Badge>
                   </button>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Gemini API Key */}
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Key className="h-5 w-5" />
+                Gemini API ключ
+              </CardTitle>
+              <CardDescription>
+                Для работы ИИ-функций (анализ сцены, AI-чат, саммари) нужен ключ Google Gemini API.
+                Получите бесплатно на{' '}
+                <a
+                  href="https://aistudio.google.com/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 underline"
+                >
+                  aistudio.google.com
+                </a>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {geminiKeyLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  {/* Current status */}
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`h-2.5 w-2.5 rounded-full ${
+                        geminiKeyInfo?.source !== 'none' ? 'bg-green-500' : 'bg-red-500'
+                      }`}
+                    />
+                    <span className="text-sm">
+                      {geminiKeyInfo?.source === 'organization' && (
+                        <>Ключ организации: <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{geminiKeyInfo.maskedKey}</code></>
+                      )}
+                      {geminiKeyInfo?.source === 'environment' && (
+                        <>Используется системный ключ (установлен администратором)</>
+                      )}
+                      {geminiKeyInfo?.source === 'none' && (
+                        <span className="text-red-500">Ключ не настроен — ИИ-функции не работают</span>
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Input */}
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      placeholder="AIza..."
+                      value={geminiKeyInput}
+                      onChange={(e) => setGeminiKeyInput(e.target.value)}
+                      className="font-mono text-sm"
+                    />
+                    <Button
+                      onClick={handleSaveGeminiKey}
+                      disabled={savingGeminiKey || !geminiKeyInput.trim()}
+                      className="gap-1.5 shrink-0"
+                    >
+                      {savingGeminiKey ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4" />
+                      )}
+                      Проверить и сохранить
+                    </Button>
+                  </div>
+
+                  {geminiKeyInfo?.hasOrgKey && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDeleteGeminiKey}
+                      disabled={savingGeminiKey}
+                      className="text-red-500 hover:text-red-600 gap-1.5"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Удалить ключ организации
+                    </Button>
+                  )}
+
+                  <p className="text-xs text-muted-foreground">
+                    При сохранении ключ проверяется тестовым запросом к Gemini API.
+                    Ключ хранится в зашифрованной базе данных и доступен только вашей организации.
+                  </p>
+                </>
               )}
             </CardContent>
           </Card>

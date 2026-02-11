@@ -7,8 +7,17 @@ import { smartFeaturesEngine } from './smart-features-engine';
 import { heatmapGenerator } from './heatmap-generator';
 import { peopleCounter } from './people-counter';
 import { yoloDetector, YoloDetection } from './yolo-detector';
+import { getGeminiApiKey } from '@/lib/gemini-key';
 
+// Fallback instance for env-only key
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+
+async function getGenAI(orgId: string) {
+  const key = await getGeminiApiKey(orgId);
+  if (!key) return null;
+  if (key === process.env.GEMINI_API_KEY) return genAI;
+  return new GoogleGenerativeAI(key);
+}
 
 const BASE_PROMPT = `You are a security camera AI analyst. Analyze this surveillance camera frame and respond ONLY with valid JSON (no markdown, no code blocks).
 
@@ -234,7 +243,9 @@ export async function analyzeFrame(
     const mode = await getAnalysisMode(organizationId);
     const runGemini = shouldTriggerGemini(mode, yoloDetections);
 
-    if (!runGemini || !process.env.GEMINI_API_KEY) {
+    const orgGenAI = await getGenAI(organizationId);
+
+    if (!runGemini || !orgGenAI) {
       // YOLO-only: save detections and people count, no Gemini
       await prisma.analysisFrame.update({
         where: { id: frameId },
@@ -253,7 +264,7 @@ export async function analyzeFrame(
     const base64Image = imageBuffer.toString('base64');
     const prompt = await buildPrompt(cameraId);
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = orgGenAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const result = await model.generateContent([
       prompt,

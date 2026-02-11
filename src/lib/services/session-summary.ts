@@ -1,7 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { prisma } from '@/lib/prisma';
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+import { getGeminiApiKey } from '@/lib/gemini-key';
 
 const SUMMARY_PROMPT = `You are a security camera AI analyst. Based on the following chronological sequence of frame descriptions from a surveillance camera session, write a concise summary in Russian.
 
@@ -15,13 +14,9 @@ Frame descriptions (chronological order):
 `;
 
 export async function generateSessionSummary(
-  sessionId: string
+  sessionId: string,
+  organizationId?: string
 ): Promise<void> {
-  if (!process.env.GEMINI_API_KEY) {
-    console.warn('[AI] GEMINI_API_KEY not set, skipping summary');
-    return;
-  }
-
   try {
     const session = await prisma.analysisSession.findUnique({
       where: { id: sessionId },
@@ -30,10 +25,18 @@ export async function generateSessionSummary(
           orderBy: { capturedAt: 'asc' },
           select: { description: true, peopleCount: true, capturedAt: true },
         },
+        camera: { select: { organizationId: true } },
       },
     });
 
     if (!session || session.frames.length === 0) return;
+
+    const orgId = organizationId || session.camera.organizationId;
+    const apiKey = await getGeminiApiKey(orgId);
+    if (!apiKey) {
+      console.warn('[AI] No Gemini API key available, skipping summary');
+      return;
+    }
 
     const frameDescriptions = session.frames
       .filter((f) => f.description)
@@ -51,6 +54,7 @@ export async function generateSessionSummary(
       return;
     }
 
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(
       SUMMARY_PROMPT + frameDescriptions
