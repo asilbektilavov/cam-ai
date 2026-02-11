@@ -47,9 +47,11 @@ next-env.d.ts
 prisma/dev.db
 prisma/dev.db-journal
 
-# frame storage
+# frame storage & runtime data
 /data/frames/
 /data/search-photos/
+/data/streams/
+/data/recordings/
 
 # sqlite db copies
 dev.db
