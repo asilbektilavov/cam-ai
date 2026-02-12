@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { checkPermission, RBACError } from '@/lib/rbac';
+import { cameraMonitor } from '@/lib/services/camera-monitor';
+import { streamManager } from '@/lib/services/stream-manager';
 
 export async function GET(
   _req: NextRequest,
@@ -113,6 +115,10 @@ export async function DELETE(
     where: { id, organizationId: orgId },
   });
   if (deleted.count === 0) return notFound('Camera not found');
+
+  // Stop monitoring and streaming for deleted camera
+  await cameraMonitor.stopMonitoring(id).catch(() => {});
+  await streamManager.stopStream(id).catch(() => {});
 
   return NextResponse.json({ success: true });
 }
