@@ -119,13 +119,13 @@ function startGrabber(streamUrl: string): RtspGrabber {
 
   // Persistent ffmpeg → continuous MJPEG output to stdout
   // -q:v 5: JPEG quality (1=best, 31=worst)
-  // -r 15: 15fps for fresher frames (lower latency for detection overlay)
+  // -r 10: limit to 10 fps for detection
   const proc = spawn('ffmpeg', [
     ...inputArgs,
     '-f', 'image2pipe',
     '-vcodec', 'mjpeg',
     '-q:v', '5',
-    '-r', '15',
+    '-r', '10',
     '-',
   ], {
     stdio: ['ignore', 'pipe', 'ignore'],

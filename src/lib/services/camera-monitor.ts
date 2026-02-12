@@ -33,7 +33,7 @@ interface MonitorState {
 }
 
 const NO_MOTION_TIMEOUT_POLLS = 150; // ~30s at 200ms effective poll
-const POLL_INTERVAL_MS = 70; // 70ms = up to ~14fps YOLO detection (faster for vehicle tracking)
+const POLL_INTERVAL_MS = 100; // 100ms = up to ~10fps YOLO detection
 
 /**
  * Derive a substream URL from the main stream URL.
