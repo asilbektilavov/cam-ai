@@ -35,18 +35,18 @@ const FRAME_MS = 1000 / TARGET_FPS;
 const DEFAULT_PIPELINE_LATENCY_MS = 155;
 
 // Velocity EMA smoothing: lower = faster adaptation to new velocity
-const VELOCITY_SMOOTH = 0.3;
+const VELOCITY_SMOOTH = 0.2;
 // When velocity changes direction or magnitude sharply, use much less smoothing
 const VELOCITY_SMOOTH_FAST = 0.05;
 // Threshold for "sharp change" — if raw velocity differs from smoothed by this much
-const SHARP_CHANGE_THRESHOLD = 0.0004; // normalized units per ms
+const SHARP_CHANGE_THRESHOLD = 0.0008; // normalized units per ms
 
 const MAX_COAST_MS = 2000;
 const FADE_START_MS = 1200;
-const IOU_THRESHOLD = 0.08;
+const IOU_THRESHOLD = 0.12;
 const MIN_BOX_W = 0.02;
 const MIN_BOX_H = 0.03;
-const MAX_V_PER_MS = 0.005; // Max velocity (~5x frame width per second)
+const MAX_V_PER_MS = 0.012; // Max velocity (~12x frame width per second — fast vehicles)
 
 // Jitter deadzone: velocities below this are snapped to 0
 const JITTER_DEADZONE = 0.00003; // ~0.03 normalized units per ms ≈ 1.8px/s on 1080p

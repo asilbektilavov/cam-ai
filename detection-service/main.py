@@ -99,8 +99,8 @@ def classify_detection(class_id: int, class_name: str):
         det_type, label, color = CLASS_TYPE_MAP[class_id]
         return det_type, label, color
 
-    # Fallback for other classes
-    return "object", class_name.capitalize(), "#6B7280"
+    # Skip irrelevant COCO classes (toilet, bench, etc.) — return None to filter out
+    return None
 
 
 def decode_image(contents: bytes):
@@ -610,7 +610,10 @@ async def detect(image: UploadFile = File(...)):
             cls_id = int(box.cls[0])
             cls_name = model.names.get(cls_id, "unknown")
 
-            det_type, label, color = classify_detection(cls_id, cls_name)
+            classified = classify_detection(cls_id, cls_name)
+            if classified is None:
+                continue
+            det_type, label, color = classified
 
             detections.append({
                 "type": det_type,
@@ -1041,7 +1044,10 @@ class MjpegStream:
                             x1, y1, x2, y2 = box.xyxy[0].tolist()
                             conf_val = float(box.conf[0])
                             cls_name = model.names.get(cls_id, "unknown")
-                            det_type, label, color = classify_detection(cls_id, cls_name)
+                            classified = classify_detection(cls_id, cls_name)
+                            if classified is None:
+                                continue
+                            det_type, label, color = classified
                             detections.append({
                                 "type": det_type,
                                 "label": label,

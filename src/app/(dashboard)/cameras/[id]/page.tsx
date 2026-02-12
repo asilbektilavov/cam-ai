@@ -217,8 +217,14 @@ export default function CameraDetailPage() {
   // Filter detections by selected categories
   const filteredDetections = useMemo(() => {
     if (selectedClasses.size === 0) return [];
-    // Filter by confidence + category, then apply NMS to remove duplicate boxes on same object
-    const filtered = liveDetections.filter(d => d.confidence >= 0.7 && selectedClasses.has(typeToCategory(d.type)));
+    // Filter by confidence (per-category) + category, then apply NMS to remove duplicate boxes
+    // People: 0.7 (strict — avoid ghost boxes), Vehicles: 0.45 (YOLO is binary for cars), Others: 0.55
+    const filtered = liveDetections.filter(d => {
+      const cat = typeToCategory(d.type);
+      if (!selectedClasses.has(cat)) return false;
+      const minConf = cat === 'person' ? 0.7 : cat === 'vehicle' ? 0.45 : 0.55;
+      return d.confidence >= minConf;
+    });
     // NMS: sort by confidence desc, remove boxes with IoU > 0.5 against higher-confidence box
     const kept: typeof filtered = [];
     for (const det of filtered.sort((a, b) => b.confidence - a.confidence)) {
