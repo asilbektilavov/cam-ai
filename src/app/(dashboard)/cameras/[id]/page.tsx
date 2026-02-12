@@ -92,8 +92,12 @@ export default function CameraDetailPage() {
   const [selectedClasses, setSelectedClasses] = useState<Set<string>>(
     new Set(['person', 'vehicle', 'animal', 'fire', 'other'])
   );
+  const [selectedOtherTypes, setSelectedOtherTypes] = useState<Set<string>>(
+    new Set(['backpack', 'handbag', 'suitcase', 'knife', 'cell_phone', 'bottle'])
+  );
   const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
   const [liveDetections, setLiveDetections] = useState<Detection[]>([]);
+  const [fireDetections, setFireDetections] = useState<Detection[]>([]);
   const [measuredLatency, setMeasuredLatency] = useState<number | undefined>();
   const latencyEmaRef = useRef<number | null>(null);
 
@@ -114,15 +118,10 @@ export default function CameraDetailPage() {
       for (const t of ['cat', 'dog', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear']) types.add(t);
     }
     if (selectedClasses.has('other')) {
-      for (const t of [
-        'traffic_light', 'fire_hydrant', 'stop_sign', 'bench', 'backpack', 'umbrella',
-        'handbag', 'suitcase', 'bottle', 'cup', 'knife', 'bowl', 'chair', 'couch',
-        'potted_plant', 'dining_table', 'tv', 'laptop', 'mouse', 'keyboard',
-        'cell_phone', 'book', 'clock', 'vase', 'scissors',
-      ]) types.add(t);
+      for (const t of selectedOtherTypes) types.add(t);
     }
     return types;
-  }, [selectedClasses]);
+  }, [selectedClasses, selectedOtherTypes]);
 
   const {
     detections: browserDetections,
@@ -212,6 +211,34 @@ export default function CameraDetailPage() {
     { id: 'other', label: 'Прочее', icon: Box, color: '#6B7280' },
   ];
 
+  const OTHER_SUBTYPES = [
+    { type: 'backpack',      label: 'Рюкзак' },
+    { type: 'handbag',       label: 'Сумка' },
+    { type: 'suitcase',      label: 'Чемодан' },
+    { type: 'umbrella',      label: 'Зонт' },
+    { type: 'bottle',        label: 'Бутылка' },
+    { type: 'cup',           label: 'Чашка' },
+    { type: 'knife',         label: 'Нож' },
+    { type: 'scissors',      label: 'Ножницы' },
+    { type: 'cell_phone',    label: 'Телефон' },
+    { type: 'laptop',        label: 'Ноутбук' },
+    { type: 'keyboard',      label: 'Клавиатура' },
+    { type: 'mouse',         label: 'Мышь' },
+    { type: 'tv',            label: 'Монитор' },
+    { type: 'book',          label: 'Книга' },
+    { type: 'clock',         label: 'Часы' },
+    { type: 'vase',          label: 'Ваза' },
+    { type: 'chair',         label: 'Стул' },
+    { type: 'couch',         label: 'Диван' },
+    { type: 'dining_table',  label: 'Стол' },
+    { type: 'potted_plant',  label: 'Растение' },
+    { type: 'bench',         label: 'Скамейка' },
+    { type: 'traffic_light', label: 'Светофор' },
+    { type: 'fire_hydrant',  label: 'Гидрант' },
+    { type: 'stop_sign',     label: 'Знак стоп' },
+    { type: 'bowl',          label: 'Миска' },
+  ];
+
   const toggleClass = (cls: string) => {
     setSelectedClasses((prev) => {
       const next = new Set(prev);
@@ -224,15 +251,13 @@ export default function CameraDetailPage() {
     });
   };
 
-  // SSE: receive live YOLO detections (used as fallback when browser detection unavailable)
+  // SSE: receive live YOLO detections + fire/smoke events
   useEventStream(
     useCallback(
       (event) => {
-        if (
-          event.type === 'frame_analyzed' &&
-          event.cameraId === cameraId &&
-          Array.isArray(event.data.detections)
-        ) {
+        if (event.cameraId !== cameraId) return;
+
+        if (event.type === 'frame_analyzed' && Array.isArray(event.data.detections)) {
           const dets = event.data.detections as Detection[];
           const now = Date.now();
 
@@ -250,6 +275,24 @@ export default function CameraDetailPage() {
             setMeasuredLatency(Math.round(latencyEmaRef.current));
           }
         }
+
+        // Fire/smoke from server-side HSV detection
+        if (event.type === 'fire_detected' || event.type === 'smoke_detected') {
+          const regions = event.data.regions as Array<{ bbox: { x: number; y: number; w: number; h: number } }> | undefined;
+          const confidence = (event.data.confidence as number) || 0.8;
+          const isFire = event.type === 'fire_detected';
+          const dets: Detection[] = (regions || []).map(r => ({
+            type: isFire ? 'fire' : 'smoke',
+            label: isFire ? 'Огонь' : 'Дым',
+            confidence,
+            bbox: r.bbox,
+            classId: -1,
+            color: isFire ? '#EF4444' : '#F59E0B',
+          }));
+          setFireDetections(dets);
+          // Auto-clear after 3s (fire detection runs every ~30 polls)
+          setTimeout(() => setFireDetections([]), 3000);
+        }
       },
       [cameraId]
     )
@@ -262,13 +305,17 @@ export default function CameraDetailPage() {
   const filteredDetections = useMemo(() => {
     if (selectedClasses.size === 0) return [];
 
+    // Fire/smoke detections from server (always merged, regardless of browser/SSE mode)
+    const fireDets = selectedClasses.has('fire') ? fireDetections : [];
+
     // Browser detections are already filtered by enabledClasses in the hook
-    if (useBrowser) return browserDetections;
+    if (useBrowser) return [...browserDetections, ...fireDets];
 
     // Fallback: SSE server detections — filter by confidence + category + NMS
     const filtered = liveDetections.filter(d => {
       const cat = typeToCategory(d.type);
       if (!selectedClasses.has(cat)) return false;
+      if (cat === 'other' && !selectedOtherTypes.has(d.type)) return false;
       const minConf = cat === 'person' ? 0.7 : cat === 'vehicle' ? 0.45 : 0.55;
       return d.confidence >= minConf;
     });
@@ -286,8 +333,8 @@ export default function CameraDetailPage() {
       });
       if (!dominated) kept.push(det);
     }
-    return kept;
-  }, [liveDetections, browserDetections, useBrowser, selectedClasses, typeToCategory]);
+    return [...kept, ...fireDets];
+  }, [liveDetections, browserDetections, fireDetections, useBrowser, selectedClasses, selectedOtherTypes, typeToCategory]);
 
   // Update counts from filtered detections
   useEffect(() => {
@@ -483,10 +530,60 @@ export default function CameraDetailPage() {
                       >
                         <Icon className="h-3.5 w-3.5" />
                         {cat.label}
+                        {cat.id === 'other' && active && (
+                          <span className="ml-0.5 opacity-75">({selectedOtherTypes.size})</span>
+                        )}
                       </button>
                     );
                   })}
                 </div>
+                {selectedClasses.has('other') && (
+                  <div className="mt-3 pt-3 border-t">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium text-muted-foreground">Объекты для отслеживания</span>
+                      <div className="flex gap-2">
+                        <button
+                          className="text-[10px] text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedOtherTypes(new Set(OTHER_SUBTYPES.map(s => s.type)))}
+                        >
+                          Все
+                        </button>
+                        <button
+                          className="text-[10px] text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedOtherTypes(new Set())}
+                        >
+                          Сброс
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {OTHER_SUBTYPES.map((sub) => {
+                        const active = selectedOtherTypes.has(sub.type);
+                        return (
+                          <button
+                            key={sub.type}
+                            onClick={() => {
+                              setSelectedOtherTypes((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(sub.type)) next.delete(sub.type);
+                                else next.add(sub.type);
+                                return next;
+                              });
+                            }}
+                            className={cn(
+                              'px-2 py-0.5 rounded-full text-[11px] border transition-colors',
+                              active
+                                ? 'bg-gray-600 text-white border-gray-600'
+                                : 'bg-muted/50 text-muted-foreground border-border hover:bg-muted'
+                            )}
+                          >
+                            {sub.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
