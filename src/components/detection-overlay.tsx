@@ -32,7 +32,7 @@ const TARGET_FPS = 60;
 const FRAME_MS = 1000 / TARGET_FPS;
 
 // ── Tracking tuning ──────────────────────────────────────────────────
-const DEFAULT_PIPELINE_LATENCY_MS = 155;
+const DEFAULT_PIPELINE_LATENCY_MS = 350;
 
 // Velocity EMA smoothing: lower = faster adaptation to new velocity
 const VELOCITY_SMOOTH = 0.2;

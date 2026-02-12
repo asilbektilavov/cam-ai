@@ -119,13 +119,13 @@ function startGrabber(streamUrl: string): RtspGrabber {
 
   // Persistent ffmpeg → continuous MJPEG output to stdout
   // -q:v 5: JPEG quality (1=best, 31=worst)
-  // -r 10: limit to 10 fps for fresher frames with low latency
+  // -r 15: 15fps for fresher frames (lower latency for detection overlay)
   const proc = spawn('ffmpeg', [
     ...inputArgs,
     '-f', 'image2pipe',
     '-vcodec', 'mjpeg',
     '-q:v', '5',
-    '-r', '10',
+    '-r', '15',
     '-',
   ], {
     stdio: ['ignore', 'pipe', 'ignore'],
@@ -355,6 +355,15 @@ export async function fetchSnapshot(streamUrl: string, cameraId?: string): Promi
     return fetchHlsSnapshot(streamUrl);
   }
   return fetchHttpSnapshot(streamUrl);
+}
+
+/**
+ * Get the timestamp when the latest frame was captured by the grabber.
+ * Returns 0 if no grabber is active or no frame available.
+ */
+export function getFrameTimestamp(streamUrl: string): number {
+  const grabber = grabbers.get(streamUrl);
+  return grabber?.updatedAt ?? 0;
 }
 
 /**

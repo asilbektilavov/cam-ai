@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { compareFrames, fetchSnapshot, startRtspGrabber, stopRtspGrabber } from './motion-detector';
+import { compareFrames, fetchSnapshot, getFrameTimestamp, startRtspGrabber, stopRtspGrabber } from './motion-detector';
 import { saveFrame } from './frame-storage';
 import { appEvents, CameraEvent } from './event-emitter';
 import { analyzeFrame } from './ai-analyzer';
@@ -33,7 +33,7 @@ interface MonitorState {
 }
 
 const NO_MOTION_TIMEOUT_POLLS = 150; // ~30s at 200ms effective poll
-const POLL_INTERVAL_MS = 100; // 100ms = up to ~10fps YOLO detection
+const POLL_INTERVAL_MS = 70; // 70ms = up to ~14fps YOLO detection (faster for vehicle tracking)
 
 /**
  * Derive a substream URL from the main stream URL.
@@ -222,8 +222,10 @@ class CameraMonitor {
     const tSnap = Date.now();
 
     // Fire YOLO immediately after snapshot (before compareFrames) to minimize latency
+    // Pass actual frame capture time from grabber (not poll time) for accurate latency measurement
+    const frameCapturedAt = getFrameTimestamp(state.activeStreamUrl) || Date.now();
     if (!state.yoloInProgress) {
-      void this.emitLiveDetections(state, currentFrame);
+      void this.emitLiveDetections(state, currentFrame, frameCapturedAt);
     }
 
     if (!state.lastFrame) {
@@ -262,7 +264,7 @@ class CameraMonitor {
    * for real-time bounding boxes. No DB writes, no Gemini, no frame saving.
    * Also runs fire/plates/behavior detection every 10th frame to reduce CPU load.
    */
-  private async emitLiveDetections(state: MonitorState, frame: Buffer): Promise<void> {
+  private async emitLiveDetections(state: MonitorState, frame: Buffer, frameCapturedAt: number): Promise<void> {
     state.yoloInProgress = true;
     state.pollCount++;
     try {
@@ -304,7 +306,7 @@ class CameraMonitor {
           detections,
           peopleCount: personCount,
           sessionId: state.activeSessionId,
-          capturedAt: t0, // timestamp before YOLO — used by frontend for latency measurement
+          capturedAt: frameCapturedAt, // actual frame capture time from grabber — used by frontend for latency measurement
         },
       };
       appEvents.emit('camera-event', event);
