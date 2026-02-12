@@ -106,7 +106,7 @@ export default function CamerasPage() {
     alreadyAdded: boolean;
     existingCameraId?: string;
   }>>([]);
-  const [scanCredentials, setScanCredentials] = useState({ username: 'admin', password: 'admin' });
+  const [scanCredentials, setScanCredentials] = useState({ username: 'admin', password: '' });
   const [showCredentials, setShowCredentials] = useState(false);
   const [addingCameraIp, setAddingCameraIp] = useState<string | null>(null);
   const [testingCameraIp, setTestingCameraIp] = useState<string | null>(null);
@@ -193,10 +193,18 @@ export default function CamerasPage() {
   };
 
   const handleSelectDiscovered = (cam: { ip: string; suggestedUrl: string; brand?: string; name?: string }) => {
+    // Replace hardcoded credentials with user-provided ones (or placeholder)
+    let url = cam.suggestedUrl;
+    if (url.startsWith('rtsp://')) {
+      const user = showCredentials ? scanCredentials.username : 'admin';
+      const pass = showCredentials ? scanCredentials.password : '';
+      const cred = pass ? `${user}:${pass}` : user;
+      url = url.replace(/rtsp:\/\/[^@]*@/, `rtsp://${cred}@`);
+    }
     setNewCamera({
       ...newCamera,
       name: cam.name || cam.brand || 'Камера',
-      streamUrl: cam.suggestedUrl,
+      streamUrl: url,
       location: `IP: ${cam.ip}`,
     });
     setScanDialogOpen(false);
@@ -210,10 +218,17 @@ export default function CamerasPage() {
     }
     setAddingCameraIp(cam.ip);
     try {
+      let url = cam.suggestedUrl;
+      if (url.startsWith('rtsp://')) {
+        const user = showCredentials ? scanCredentials.username : 'admin';
+        const pass = showCredentials ? scanCredentials.password : '';
+        const cred = pass ? `${user}:${pass}` : user;
+        url = url.replace(/rtsp:\/\/[^@]*@/, `rtsp://${cred}@`);
+      }
       await apiPost('/api/cameras', {
         name: cam.name || cam.brand || 'Камера',
         location: `IP: ${cam.ip}`,
-        streamUrl: cam.suggestedUrl,
+        streamUrl: url,
         branchId: selectedBranchId,
         resolution: '1920x1080',
         fps: 30,
@@ -359,6 +374,18 @@ export default function CamerasPage() {
               <DialogTitle>Добавить камеру</DialogTitle>
               <DialogDescription>Поддерживаются RTSP камеры (Hikvision, Dahua и др.) и IP Webcam</DialogDescription>
             </DialogHeader>
+            <Button
+              variant="outline"
+              className="w-full gap-2 mt-2"
+              onClick={() => {
+                setDialogOpen(false);
+                handleScanNetwork();
+              }}
+              disabled={scanning}
+            >
+              {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              Найти камеры в сети
+            </Button>
             <div className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Название камеры</Label>

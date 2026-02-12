@@ -66,6 +66,15 @@ function getLocalAddresses(): Set<string> {
   return addresses;
 }
 
+function getGatewayAddresses(subnets: string[]): Set<string> {
+  const gateways = new Set<string>();
+  for (const subnet of subnets) {
+    gateways.add(`${subnet}.1`);
+    gateways.add(`${subnet}.254`);
+  }
+  return gateways;
+}
+
 async function checkPort(ip: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -95,15 +104,59 @@ function guessBrand(ports: number[]): string | undefined {
   return undefined;
 }
 
-function buildSuggestedUrl(ip: string, ports: number[], brand?: string): string {
+// Common RTSP paths to probe (ordered by popularity)
+const RTSP_PATHS = [
+  '/Streaming/Channels/101',   // Hikvision
+  '/stream1',                  // Generic / Chinese cameras
+  '/cam/realmonitor?channel=1&subtype=0', // Dahua
+  '/live/main',                // Trassir
+  '/h264Preview_01_main',      // Dahua alt
+  '/live/ch00_1',              // Uniview
+  '/MediaInput/h264',          // Axis
+  '/1',                        // Simple path
+  '/live',                     // Generic
+];
+
+async function probeRtspPath(ip: string, port: number, user: string, pass: string): Promise<string | null> {
+  for (const path of RTSP_PATHS) {
+    try {
+      const cred = pass ? `${user}:${pass}` : user;
+      const url = `rtsp://${cred}@${ip}:${port}${path}`;
+      // Quick TCP connect + send RTSP OPTIONS to check if path responds
+      const ok = await new Promise<boolean>((resolve) => {
+        const socket = new net.Socket();
+        socket.setTimeout(1500);
+        let responded = false;
+        socket.once('connect', () => {
+          socket.write(`OPTIONS ${url} RTSP/1.0\r\nCSeq: 1\r\n\r\n`);
+        });
+        socket.on('data', (data) => {
+          const str = data.toString();
+          responded = true;
+          socket.destroy();
+          // 200 OK = path exists; 401 = path exists but needs auth (still valid path)
+          resolve(str.includes('RTSP/1.0 200') || str.includes('RTSP/1.0 401'));
+        });
+        socket.once('timeout', () => { socket.destroy(); resolve(false); });
+        socket.once('error', () => { socket.destroy(); resolve(false); });
+        socket.once('close', () => { if (!responded) resolve(false); });
+        socket.connect(port, ip);
+      });
+      if (ok) return path;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function buildSuggestedUrl(ip: string, ports: number[], brand?: string, detectedPath?: string | null): string {
   if (brand === 'IP Webcam' || (ports.includes(8080) && !ports.includes(554))) {
     return `http://${ip}:8080/video`;
   }
-  if (brand === 'Dahua') {
-    return `rtsp://admin:admin@${ip}:554/cam/realmonitor?channel=1&subtype=0`;
-  }
   if (ports.includes(554)) {
-    return `rtsp://admin:admin@${ip}:554/Streaming/Channels/101`;
+    const path = detectedPath || (brand === 'Dahua' ? '/cam/realmonitor?channel=1&subtype=0' : '/Streaming/Channels/101');
+    return `rtsp://admin@${ip}:554${path}`;
   }
   if (ports.includes(8554)) {
     return `rtsp://${ip}:8554/stream`;
@@ -118,15 +171,16 @@ export async function discoverCameras(): Promise<DiscoveredCamera[]> {
   }
 
   const localAddresses = getLocalAddresses();
+  const gatewayAddresses = getGatewayAddresses(subnets);
   const discovered: DiscoveredCamera[] = [];
   const seenIps = new Set<string>();
 
-  // Build flat IP list from all subnets
+  // Build flat IP list from all subnets (skip local + gateway addresses)
   const allIps: string[] = [];
   for (const subnet of subnets) {
     for (let i = 1; i <= 254; i++) {
       const ip = `${subnet}.${i}`;
-      if (!localAddresses.has(ip) && !seenIps.has(ip)) {
+      if (!localAddresses.has(ip) && !gatewayAddresses.has(ip) && !seenIps.has(ip)) {
         seenIps.add(ip);
         allIps.push(ip);
       }
@@ -150,21 +204,34 @@ export async function discoverCameras(): Promise<DiscoveredCamera[]> {
     );
 
     for (const { ip, openPorts } of results) {
-      if (openPorts.length > 0) {
-        const brand = guessBrand(openPorts);
-        const hasRtsp = openPorts.includes(554) || openPorts.includes(8554) || openPorts.includes(37777);
-        const hasHttp = openPorts.includes(80) || openPorts.includes(8080);
-        const protocol = hasRtsp ? 'rtsp' as const : hasHttp ? 'http' as const : 'unknown' as const;
+      if (openPorts.length === 0) continue;
 
-        discovered.push({
-          ip,
-          ports: openPorts.sort((a, b) => a - b),
-          protocol,
-          suggestedUrl: buildSuggestedUrl(ip, openPorts, brand),
-          brand,
-          name: brand || 'Камера',
-        });
+      const hasRtsp = openPorts.includes(554) || openPorts.includes(8554) || openPorts.includes(37777);
+      const hasHttp8080 = openPorts.includes(8080);
+
+      // Skip devices with only port 80/443 and no RTSP — likely routers/printers/NAS
+      if (!hasRtsp && !hasHttp8080 && openPorts.every((p) => p === 80 || p === 443)) {
+        continue;
       }
+
+      const brand = guessBrand(openPorts);
+      const hasHttp = openPorts.includes(80) || hasHttp8080;
+      const protocol = hasRtsp ? 'rtsp' as const : hasHttp ? 'http' as const : 'unknown' as const;
+
+      // Probe RTSP paths to find working one
+      let detectedPath: string | null = null;
+      if (openPorts.includes(554)) {
+        detectedPath = await probeRtspPath(ip, 554, 'admin', '');
+      }
+
+      discovered.push({
+        ip,
+        ports: openPorts.sort((a, b) => a - b),
+        protocol,
+        suggestedUrl: buildSuggestedUrl(ip, openPorts, brand, detectedPath),
+        brand,
+        name: brand || 'Камера',
+      });
     }
   }
 
