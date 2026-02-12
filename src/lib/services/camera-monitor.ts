@@ -61,12 +61,48 @@ function deriveSubstreamUrl(streamUrl: string): string {
 class CameraMonitor {
   private monitors = new Map<string, MonitorState>();
   private static instance: CameraMonitor;
+  private restorePromise: Promise<void> | null = null;
 
   static getInstance(): CameraMonitor {
     if (!CameraMonitor.instance) {
       CameraMonitor.instance = new CameraMonitor();
     }
     return CameraMonitor.instance;
+  }
+
+  /**
+   * Auto-restore monitoring for cameras that were marked isMonitoring=true in DB
+   * but not currently being monitored in-memory (e.g. after hot-reload / restart).
+   */
+  async restoreFromDb(): Promise<void> {
+    if (this.restorePromise) return this.restorePromise;
+    this.restorePromise = this._doRestore();
+    return this.restorePromise;
+  }
+
+  private async _doRestore(): Promise<void> {
+    try {
+      const cameras = await prisma.camera.findMany({
+        where: { isMonitoring: true },
+        select: { id: true, name: true },
+      });
+
+      // Filter out cameras already monitored in-memory
+      const toRestore = cameras.filter(c => !this.monitors.has(c.id));
+      if (toRestore.length === 0) return;
+
+      console.log(`[Monitor] Auto-restoring ${toRestore.length} camera(s): ${toRestore.map(c => c.name).join(', ')}`);
+
+      for (const cam of toRestore) {
+        try {
+          await this.startMonitoring(cam.id);
+        } catch (err) {
+          console.error(`[Monitor] Failed to restore camera ${cam.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error('[Monitor] Auto-restore failed:', err);
+    }
   }
 
   isMonitoring(cameraId: string): boolean {
@@ -268,6 +304,7 @@ class CameraMonitor {
           detections,
           peopleCount: personCount,
           sessionId: state.activeSessionId,
+          capturedAt: t0, // timestamp before YOLO — used by frontend for latency measurement
         },
       };
       appEvents.emit('camera-event', event);
@@ -587,8 +624,19 @@ const globalForCameraMonitor = globalThis as unknown as {
   cameraMonitor: CameraMonitor | undefined;
 };
 
+// Invalidate stale singleton if it lacks new methods (e.g. after adding restoreFromDb)
+if (globalForCameraMonitor.cameraMonitor && typeof globalForCameraMonitor.cameraMonitor.restoreFromDb !== 'function') {
+  console.log('[Monitor] Replacing stale singleton (missing restoreFromDb)');
+  globalForCameraMonitor.cameraMonitor = undefined;
+}
+
 export const cameraMonitor =
   globalForCameraMonitor.cameraMonitor ?? CameraMonitor.getInstance();
 
 if (process.env.NODE_ENV !== 'production')
   globalForCameraMonitor.cameraMonitor = cameraMonitor;
+
+// Auto-restore monitoring: check DB for cameras with isMonitoring=true
+// but not tracked in-memory (happens after hot-reload or server restart).
+// restorePromise prevents duplicate calls.
+void cameraMonitor.restoreFromDb();

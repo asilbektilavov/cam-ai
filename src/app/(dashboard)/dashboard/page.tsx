@@ -324,6 +324,7 @@ export default function DashboardPage() {
                             <Go2rtcPlayer
                               streamName={camera.id}
                               className="absolute inset-0 w-full h-full"
+                              protocol={camera.streamUrl.toLowerCase().startsWith('rtsp://') ? 'rtsp' : 'http'}
                             />
                           ) : (
                             <CameraFeed

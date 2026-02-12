@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -93,6 +93,8 @@ export default function CameraDetailPage() {
   );
   const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
   const [liveDetections, setLiveDetections] = useState<Detection[]>([]);
+  const [measuredLatency, setMeasuredLatency] = useState<number | undefined>();
+  const latencyEmaRef = useRef<number | null>(null);
   const [onvifForm, setOnvifForm] = useState({
     onvifHost: '',
     onvifPort: 80,
@@ -194,6 +196,18 @@ export default function CameraDetailPage() {
         ) {
           const dets = event.data.detections as Detection[];
           setLiveDetections(dets);
+
+          // Measure pipeline latency from server timestamp
+          const capturedAt = event.data.capturedAt as number | undefined;
+          if (capturedAt) {
+            const latency = Math.max(0, Date.now() - capturedAt);
+            if (latencyEmaRef.current === null) {
+              latencyEmaRef.current = latency;
+            } else {
+              latencyEmaRef.current = 0.85 * latencyEmaRef.current + 0.15 * latency;
+            }
+            setMeasuredLatency(Math.round(latencyEmaRef.current));
+          }
         }
       },
       [cameraId]
@@ -203,7 +217,24 @@ export default function CameraDetailPage() {
   // Filter detections by selected categories
   const filteredDetections = useMemo(() => {
     if (selectedClasses.size === 0) return [];
-    return liveDetections.filter(d => d.confidence >= 0.7 && selectedClasses.has(typeToCategory(d.type)));
+    // Filter by confidence + category, then apply NMS to remove duplicate boxes on same object
+    const filtered = liveDetections.filter(d => d.confidence >= 0.7 && selectedClasses.has(typeToCategory(d.type)));
+    // NMS: sort by confidence desc, remove boxes with IoU > 0.5 against higher-confidence box
+    const kept: typeof filtered = [];
+    for (const det of filtered.sort((a, b) => b.confidence - a.confidence)) {
+      const dominated = kept.some(k => {
+        if (k.type !== det.type) return false;
+        const x1 = Math.max(k.bbox.x, det.bbox.x);
+        const y1 = Math.max(k.bbox.y, det.bbox.y);
+        const x2 = Math.min(k.bbox.x + k.bbox.w, det.bbox.x + det.bbox.w);
+        const y2 = Math.min(k.bbox.y + k.bbox.h, det.bbox.y + det.bbox.h);
+        const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+        const union = k.bbox.w * k.bbox.h + det.bbox.w * det.bbox.h - inter;
+        return union > 0 && inter / union > 0.45;
+      });
+      if (!dominated) kept.push(det);
+    }
+    return kept;
   }, [liveDetections, selectedClasses, typeToCategory]);
 
   // Update counts from filtered detections
@@ -278,10 +309,12 @@ export default function CameraDetailPage() {
                 <Go2rtcPlayer
                   streamName={cameraId}
                   className="absolute inset-0 w-full h-full"
+                  protocol={camera.streamUrl.toLowerCase().startsWith('rtsp://') ? 'rtsp' : 'http'}
                 />
                 <DetectionOverlay
                   detections={filteredDetections}
                   visible={selectedClasses.size > 0}
+                  pipelineLatencyMs={measuredLatency}
                 />
               </>
             ) : (

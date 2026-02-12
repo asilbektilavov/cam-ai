@@ -4,6 +4,7 @@ import path from 'path';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound, badRequest } from '@/lib/api-utils';
 import { streamManager } from '@/lib/services/stream-manager';
+import { cameraMonitor } from '@/lib/services/camera-monitor';
 import { checkPermission, RBACError } from '@/lib/rbac';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -103,7 +104,18 @@ export async function POST(
 
   try {
     if (action === 'start') {
-      const streamInfo = await streamManager.startStream(id);
+      // Start camera monitoring (go2rtc registration + YOLO detection pipeline)
+      // This is the primary path — go2rtc handles browser playback via WebRTC/MSE
+      await cameraMonitor.startMonitoring(id);
+
+      // Start HLS streaming + archive recording (best-effort, non-blocking)
+      let streamInfo = null;
+      try {
+        streamInfo = await streamManager.startStream(id);
+      } catch (err) {
+        console.warn(`[Stream API] HLS recording failed for ${id}, go2rtc playback still active:`, err);
+      }
+
       return NextResponse.json({
         success: true,
         message: `Stream started for camera "${camera.name}"`,
@@ -111,7 +123,10 @@ export async function POST(
         info: streamInfo,
       });
     } else {
+      // Stop HLS streaming + archive recording
       await streamManager.stopStream(id);
+      // Stop camera monitoring (go2rtc + YOLO)
+      await cameraMonitor.stopMonitoring(id);
       return NextResponse.json({
         success: true,
         message: `Stream stopped for camera "${camera.name}"`,

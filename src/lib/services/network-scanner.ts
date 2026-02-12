@@ -97,7 +97,7 @@ function guessBrand(ports: number[]): string | undefined {
 
 function buildSuggestedUrl(ip: string, ports: number[], brand?: string): string {
   if (brand === 'IP Webcam' || (ports.includes(8080) && !ports.includes(554))) {
-    return `http://${ip}:8080`;
+    return `http://${ip}:8080/video`;
   }
   if (brand === 'Dahua') {
     return `rtsp://admin:admin@${ip}:554/cam/realmonitor?channel=1&subtype=0`;

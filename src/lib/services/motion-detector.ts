@@ -83,20 +83,45 @@ interface RtspGrabber {
 
 const grabbers = new Map<string, RtspGrabber>();
 
-function startGrabber(rtspUrl: string): RtspGrabber {
-  const existing = grabbers.get(rtspUrl);
+/**
+ * Derive the MJPEG stream endpoint for IP Webcam / HTTP cameras.
+ * IP Webcam app serves MJPEG at /video, snapshots at /shot.jpg.
+ */
+function getHttpStreamUrl(baseUrl: string): string {
+  const url = baseUrl.replace(/\/$/, '');
+  // Already has a stream endpoint
+  if (/\/(video|mjpegfeed|videostream\.cgi)/i.test(url)) return url;
+  // Looks like a snapshot endpoint — convert to stream
+  if (/\/shot\.jpe?g$/i.test(url)) return url.replace(/\/shot\.jpe?g$/i, '/video');
+  // Base URL — append /video (IP Webcam default)
+  return url + '/video';
+}
+
+function startGrabber(streamUrl: string): RtspGrabber {
+  const existing = grabbers.get(streamUrl);
   if (existing && existing.process.exitCode === null) {
     existing.refCount++;
     return existing;
   }
 
-  // Persistent ffmpeg: RTSP → continuous MJPEG output to stdout
-  // -fps_mode vfr: variable frame rate (output frames as they arrive)
+  // Build ffmpeg args depending on protocol
+  const isRtspStream = isRtsp(streamUrl);
+  const inputUrl = isRtspStream ? streamUrl : getHttpStreamUrl(streamUrl);
+
+  const inputArgs: string[] = [];
+  if (isRtspStream) {
+    inputArgs.push('-rtsp_transport', 'tcp');
+  } else {
+    // HTTP: reconnect on failure, tell ffmpeg input is MJPEG
+    inputArgs.push('-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+  }
+  inputArgs.push('-i', inputUrl);
+
+  // Persistent ffmpeg → continuous MJPEG output to stdout
   // -q:v 5: JPEG quality (1=best, 31=worst)
   // -r 10: limit to 10 fps for fresher frames with low latency
   const proc = spawn('ffmpeg', [
-    '-rtsp_transport', 'tcp',
-    '-i', rtspUrl,
+    ...inputArgs,
     '-f', 'image2pipe',
     '-vcodec', 'mjpeg',
     '-q:v', '5',
@@ -106,12 +131,14 @@ function startGrabber(rtspUrl: string): RtspGrabber {
     stdio: ['ignore', 'pipe', 'ignore'],
   });
 
+  console.log(`[Grabber] Started for ${isRtspStream ? 'RTSP' : 'HTTP'}: ${inputUrl}`);
+
   const grabber: RtspGrabber = {
     process: proc,
     frame: null,
     updatedAt: 0,
     refCount: 1,
-    url: rtspUrl,
+    url: streamUrl,
   };
 
   // Parse MJPEG byte stream: find JPEG SOI/EOI markers to extract frames
@@ -155,12 +182,12 @@ function startGrabber(rtspUrl: string): RtspGrabber {
 
   proc.on('exit', () => {
     // Auto-cleanup on exit
-    if (grabbers.get(rtspUrl) === grabber) {
-      grabbers.delete(rtspUrl);
+    if (grabbers.get(streamUrl) === grabber) {
+      grabbers.delete(streamUrl);
     }
   });
 
-  grabbers.set(rtspUrl, grabber);
+  grabbers.set(streamUrl, grabber);
   return grabber;
 }
 
@@ -308,13 +335,13 @@ async function fetchHttpSnapshot(streamUrl: string): Promise<Buffer> {
  * For one-off requests, spawns ffmpeg per frame.
  */
 export async function fetchSnapshot(streamUrl: string, cameraId?: string): Promise<Buffer> {
+  // Check if a persistent grabber is running (works for RTSP AND HTTP cameras)
+  const grabber = grabbers.get(streamUrl);
+  if (grabber && grabber.frame) {
+    return grabber.frame;
+  }
+
   if (isRtsp(streamUrl)) {
-    // If a persistent grabber is running, use it (instant)
-    const grabber = grabbers.get(streamUrl);
-    if (grabber && grabber.frame) {
-      return grabber.frame;
-    }
-    // Otherwise one-shot
     return fetchRtspSnapshotOneshot(streamUrl);
   }
   if (isHls(streamUrl) && cameraId) {
@@ -331,24 +358,21 @@ export async function fetchSnapshot(streamUrl: string, cameraId?: string): Promi
 }
 
 /**
- * Start a persistent RTSP frame grabber for monitoring.
+ * Start a persistent frame grabber for monitoring.
+ * Works for both RTSP and HTTP MJPEG cameras (including Android IP Webcam).
  * Call this when monitoring starts. Frames will be instantly available
  * via fetchSnapshot() without spawning new ffmpeg processes.
  */
 export function startRtspGrabber(streamUrl: string): void {
-  if (isRtsp(streamUrl)) {
-    startGrabber(streamUrl);
-  }
+  startGrabber(streamUrl);
 }
 
 /**
- * Stop the persistent RTSP frame grabber.
+ * Stop the persistent frame grabber.
  * Call when monitoring stops.
  */
 export function stopRtspGrabber(streamUrl: string): void {
-  if (isRtsp(streamUrl)) {
-    stopGrabber(streamUrl);
-  }
+  stopGrabber(streamUrl);
 }
 
 /**
@@ -364,13 +388,25 @@ export async function testConnection(streamUrl: string): Promise<{
   try {
     const frame = isRtsp(streamUrl)
       ? await fetchRtspSnapshotOneshot(streamUrl)
-      : await fetchSnapshot(streamUrl);
+      : await fetchHttpSnapshot(streamUrl);
     if (frame.length < 100) {
-      return { success: false, error: 'Received invalid image data', protocol };
+      return { success: false, error: 'Получены некорректные данные изображения', protocol };
     }
     return { success: true, protocol };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Connection failed';
+    const message = error instanceof Error ? error.message : 'Ошибка подключения';
+    // More helpful error messages for HTTP cameras
+    if (protocol === 'http') {
+      if (message.includes('404')) {
+        return { success: false, error: 'Эндпоинт не найден (404). Для IP Webcam используйте URL: http://IP:8080/video', protocol };
+      }
+      if (message.includes('ECONNREFUSED')) {
+        return { success: false, error: 'Подключение отклонено. Убедитесь, что приложение IP Webcam запущено на устройстве', protocol };
+      }
+      if (message.includes('timeout') || message.includes('abort')) {
+        return { success: false, error: 'Таймаут подключения. Проверьте что устройство в той же сети', protocol };
+      }
+    }
     return { success: false, error: message, protocol };
   }
 }

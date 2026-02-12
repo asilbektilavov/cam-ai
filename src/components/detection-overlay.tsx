@@ -19,6 +19,9 @@ export interface Detection {
 interface DetectionOverlayProps {
   detections: Detection[];
   visible: boolean;
+  /** Measured pipeline latency in ms (from server capturedAt timestamp).
+   *  If not provided, falls back to DEFAULT_PIPELINE_LATENCY_MS. */
+  pipelineLatencyMs?: number;
 }
 
 // ── Visual constants ──────────────────────────────────────────────────
@@ -29,25 +32,28 @@ const TARGET_FPS = 60;
 const FRAME_MS = 1000 / TARGET_FPS;
 
 // ── Tracking tuning ──────────────────────────────────────────────────
-// Pipeline latency: time from frame capture to detection arriving on frontend
-// poll interval (~100ms) + YOLO inference (~50ms) + SSE transit (~5ms)
-const PIPELINE_LATENCY_MS = 155;
+const DEFAULT_PIPELINE_LATENCY_MS = 155;
 
-const VELOCITY_SMOOTH = 0.3;      // EMA factor for velocity (lower = faster adaptation)
-const MAX_COAST_MS = 1200;        // Keep predicting without new detection
-const FADE_START_MS = 600;        // Start fading after this many ms
-const IOU_THRESHOLD = 0.08;       // Minimum IoU to match (low for fast motion)
+// Velocity EMA smoothing: lower = faster adaptation to new velocity
+const VELOCITY_SMOOTH = 0.3;
+// When velocity changes direction or magnitude sharply, use much less smoothing
+const VELOCITY_SMOOTH_FAST = 0.05;
+// Threshold for "sharp change" — if raw velocity differs from smoothed by this much
+const SHARP_CHANGE_THRESHOLD = 0.0004; // normalized units per ms
+
+const MAX_COAST_MS = 2000;
+const FADE_START_MS = 1200;
+const IOU_THRESHOLD = 0.08;
 const MIN_BOX_W = 0.02;
 const MIN_BOX_H = 0.03;
-const MAX_V_PER_MS = 0.004;       // Max velocity in normalized units per ms (~4x frame/sec)
+const MAX_V_PER_MS = 0.005; // Max velocity (~5x frame width per second)
+
+// Jitter deadzone: velocities below this are snapped to 0
+const JITTER_DEADZONE = 0.00003; // ~0.03 normalized units per ms ≈ 1.8px/s on 1080p
 
 // ── Tracked box ───────────────────────────────────────────────────────
-// Instead of tracking a "rendered position" that drifts with alpha-beta,
-// we anchor to the LAST DETECTION position and extrapolate forward using
-// smoothed velocity + pipeline latency compensation.  This eliminates the
-// fundamental lag caused by alpha-beta pulling the box toward a stale position.
 interface TrackedBox {
-  // Last detection position (our anchor — where YOLO saw the object)
+  // Last detection position (anchor for extrapolation)
   dx: number; dy: number; dw: number; dh: number;
   // Smoothed velocity (normalized units per ms)
   vx: number; vy: number; vw: number; vh: number;
@@ -57,7 +63,7 @@ interface TrackedBox {
   color: string;
   type: string;
   // Timing
-  lastDetTime: number;   // rAF timestamp when detection was processed
+  lastDetTime: number;
   hitCount: number;
 }
 
@@ -79,31 +85,42 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+/** Apply jitter deadzone — snap small velocities to zero */
+function deadzone(v: number): number {
+  return Math.abs(v) < JITTER_DEADZONE ? 0 : v;
+}
+
 // ── Component ─────────────────────────────────────────────────────────
-export function DetectionOverlay({ detections, visible }: DetectionOverlayProps) {
+export function DetectionOverlay({ detections, visible, pipelineLatencyMs }: DetectionOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const trackedRef = useRef<TrackedBox[]>([]);
   const rafRef = useRef<number>(0);
   const lastFrameRef = useRef<number>(0);
   const pendingRef = useRef<Detection[] | null>(null);
+  const latencyRef = useRef(DEFAULT_PIPELINE_LATENCY_MS);
 
   useEffect(() => {
     pendingRef.current = detections;
   }, [detections]);
 
-  // ── Process new detections: match by IoU, update velocity ──────────
+  // Update latency from measured value
+  useEffect(() => {
+    if (pipelineLatencyMs !== undefined && pipelineLatencyMs > 0) {
+      latencyRef.current = pipelineLatencyMs;
+    }
+  }, [pipelineLatencyMs]);
+
+  // ── Process new detections ────────────────────────────────────────
   const processDetections = useCallback((dets: Detection[], now: number) => {
     const prev = trackedRef.current;
     const filtered = dets.filter(d => d.bbox.w >= MIN_BOX_W && d.bbox.h >= MIN_BOX_H);
 
-    // For matching: extrapolate each track's detection position forward
-    // by elapsed time (detection-to-detection), so we compare at the
-    // same physical time as the new detection.
+    // For matching: extrapolate each track forward by elapsed time
     const scores: { ti: number; di: number; s: number }[] = [];
     for (let ti = 0; ti < prev.length; ti++) {
       const t = prev[ti];
-      const dt = now - t.lastDetTime; // time between receive events ≈ time between captures
+      const dt = now - t.lastDetTime;
       const predX = t.dx + t.vx * dt;
       const predY = t.dy + t.vy * dt;
       const predW = Math.max(MIN_BOX_W, t.dw + t.vw * dt);
@@ -119,7 +136,7 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
     const usedD = new Set<number>();
     const result: TrackedBox[] = [];
 
-    // ── Matched tracks: compute velocity from detection-to-detection ──
+    // ── Matched tracks ──
     for (const { ti, di } of scores) {
       if (usedT.has(ti) || usedD.has(di)) continue;
       usedT.add(ti);
@@ -130,29 +147,39 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
       const dtMs = now - box.lastDetTime;
 
       if (dtMs > 1) {
-        // Raw velocity: detection position change / time
+        // Raw velocity from detection-to-detection position change
         const rawVx = (det.bbox.x - box.dx) / dtMs;
         const rawVy = (det.bbox.y - box.dy) / dtMs;
         const rawVw = (det.bbox.w - box.dw) / dtMs;
         const rawVh = (det.bbox.h - box.dh) / dtMs;
 
         if (box.hitCount <= 2) {
-          // Bootstrap: use raw velocity directly for first few frames
+          // Bootstrap: use raw velocity directly
           box.vx = clamp(rawVx, -MAX_V_PER_MS, MAX_V_PER_MS);
           box.vy = clamp(rawVy, -MAX_V_PER_MS, MAX_V_PER_MS);
           box.vw = clamp(rawVw, -MAX_V_PER_MS / 2, MAX_V_PER_MS / 2);
           box.vh = clamp(rawVh, -MAX_V_PER_MS / 2, MAX_V_PER_MS / 2);
         } else {
-          // EMA smoothing: vx = smooth * old + (1-smooth) * new
-          const s = VELOCITY_SMOOTH;
+          // Adaptive smoothing: detect sharp velocity changes
+          // (direction reversal, sudden stop, sudden acceleration)
+          const diffX = Math.abs(rawVx - box.vx);
+          const diffY = Math.abs(rawVy - box.vy);
+          const maxDiff = Math.max(diffX, diffY);
+          const s = maxDiff > SHARP_CHANGE_THRESHOLD ? VELOCITY_SMOOTH_FAST : VELOCITY_SMOOTH;
+
           box.vx = clamp(s * box.vx + (1 - s) * rawVx, -MAX_V_PER_MS, MAX_V_PER_MS);
           box.vy = clamp(s * box.vy + (1 - s) * rawVy, -MAX_V_PER_MS, MAX_V_PER_MS);
           box.vw = clamp(s * box.vw + (1 - s) * rawVw, -MAX_V_PER_MS / 2, MAX_V_PER_MS / 2);
           box.vh = clamp(s * box.vh + (1 - s) * rawVh, -MAX_V_PER_MS / 2, MAX_V_PER_MS / 2);
         }
+
+        // Apply jitter deadzone
+        box.vx = deadzone(box.vx);
+        box.vy = deadzone(box.vy);
+        box.vw = deadzone(box.vw);
+        box.vh = deadzone(box.vh);
       }
 
-      // Update detection anchor
       box.dx = det.bbox.x;
       box.dy = det.bbox.y;
       box.dw = det.bbox.w;
@@ -170,11 +197,6 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
       if (usedT.has(ti)) continue;
       const t = prev[ti];
       if (now - t.lastDetTime < MAX_COAST_MS) {
-        // Apply velocity decay during coasting to avoid runaway
-        const coastMs = now - t.lastDetTime;
-        const decay = Math.exp(-coastMs / 400); // half-life ~275ms
-        t.vx *= decay;
-        t.vy *= decay;
         result.push(t);
       }
     }
@@ -202,7 +224,6 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
     const tick = (now: number) => {
       if (!running) return;
 
-      // Throttle to TARGET_FPS
       const elapsed = now - lastFrameRef.current;
       if (elapsed < FRAME_MS) {
         rafRef.current = requestAnimationFrame(tick);
@@ -210,7 +231,7 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
       }
       lastFrameRef.current = now;
 
-      // Process any pending detections
+      // Process pending detections
       const pending = pendingRef.current;
       if (pending !== null) {
         pendingRef.current = null;
@@ -248,22 +269,36 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
       if (visible) {
         const boxes = trackedRef.current;
         const alive: TrackedBox[] = [];
+        const pipelineLat = latencyRef.current;
 
         for (const box of boxes) {
           const sinceDet = now - box.lastDetTime;
           if (sinceDet >= MAX_COAST_MS) continue;
 
-          // ── Compute render position ────────────────────────────
-          // The detection was CAPTURED at approximately:
-          //   T_capture = T_receive - PIPELINE_LATENCY
-          // The detection position (dx,dy) is where the object was at T_capture.
-          // Time since capture = sinceDet + PIPELINE_LATENCY_MS.
-          // Extrapolate from detection anchor using velocity:
-          const totalElapsed = sinceDet + PIPELINE_LATENCY_MS;
-          let rx = box.dx + box.vx * totalElapsed;
-          let ry = box.dy + box.vy * totalElapsed;
-          let rw = box.dw + box.vw * totalElapsed;
-          let rh = box.dh + box.vh * totalElapsed;
+          // ── Render position = detection anchor + velocity × total elapsed ──
+          // Total elapsed accounts for:
+          //   sinceDet: time since we received detection
+          //   pipelineLat: time detection was already stale when received
+          const totalElapsed = sinceDet + pipelineLat;
+
+          // Velocity decay during coasting (exponential, half-life ~350ms)
+          // Only apply decay to coasting boxes (no new detection for a while)
+          let vxEff = box.vx;
+          let vyEff = box.vy;
+          let vwEff = box.vw;
+          let vhEff = box.vh;
+          if (sinceDet > 200) {
+            const coastDecay = Math.exp(-(sinceDet - 200) / 350);
+            vxEff *= coastDecay;
+            vyEff *= coastDecay;
+            vwEff *= coastDecay;
+            vhEff *= coastDecay;
+          }
+
+          let rx = box.dx + vxEff * totalElapsed;
+          let ry = box.dy + vyEff * totalElapsed;
+          let rw = box.dw + vwEff * totalElapsed;
+          let rh = box.dh + vhEff * totalElapsed;
 
           // Clamp to frame
           rw = Math.max(MIN_BOX_W, Math.min(1, rw));
@@ -271,7 +306,7 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
           rx = clamp(rx, 0, 1 - rw);
           ry = clamp(ry, 0, 1 - rh);
 
-          // ── Fade computation ──
+          // Fade
           let alpha = 1;
           if (sinceDet > FADE_START_MS) {
             alpha = 1 - (sinceDet - FADE_START_MS) / (MAX_COAST_MS - FADE_START_MS);

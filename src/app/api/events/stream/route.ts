@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 import { appEvents, CameraEvent } from '@/lib/services/event-emitter';
 import { checkPermission, RBACError } from '@/lib/rbac';
+// Side-effect: triggers auto-restore of camera monitoring on first SSE connection
+import '@/lib/services/camera-monitor';
 
 export const dynamic = 'force-dynamic';
 

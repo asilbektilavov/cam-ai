@@ -41,13 +41,31 @@ class Go2rtcManager {
   /**
    * Add a camera stream to go2rtc.
    * Stream name is the camera ID for easy lookup.
+   * For RTSP: passed directly (no transcoding, native H.264/H.265 → WebRTC).
+   * For HTTP MJPEG (IP Webcam, etc.): registered as direct MJPEG URL.
+   *   go2rtc proxies the MJPEG stream; browser uses MJPEG mode (no transcoding needed).
    */
-  async addStream(cameraId: string, rtspUrl: string): Promise<boolean> {
+  async addStream(cameraId: string, streamUrl: string): Promise<boolean> {
     try {
       if (!(await this.isAvailable())) return false;
 
+      let go2rtcSrc = streamUrl;
+      // Force TCP transport for RTSP streams (more reliable, avoids UDP issues)
+      if (streamUrl.toLowerCase().startsWith('rtsp://') && !streamUrl.includes('#')) {
+        go2rtcSrc = streamUrl + '#transport=tcp';
+      }
+      if (!streamUrl.toLowerCase().startsWith('rtsp://')) {
+        // Ensure we point to the MJPEG stream endpoint, not the base URL
+        let mjpegUrl = streamUrl.replace(/\/$/, '');
+        if (!/\/(video|mjpegfeed|videostream\.cgi|h264)/i.test(mjpegUrl)) {
+          mjpegUrl += '/video';
+        }
+        go2rtcSrc = mjpegUrl;
+        console.log(`[go2rtc] HTTP camera detected, registering MJPEG source: ${go2rtcSrc}`);
+      }
+
       const res = await fetch(
-        `${GO2RTC_API}/api/streams?name=${encodeURIComponent(cameraId)}&src=${encodeURIComponent(rtspUrl)}`,
+        `${GO2RTC_API}/api/streams?name=${encodeURIComponent(cameraId)}&src=${encodeURIComponent(go2rtcSrc)}`,
         { method: 'PUT', signal: AbortSignal.timeout(5000) }
       );
 
