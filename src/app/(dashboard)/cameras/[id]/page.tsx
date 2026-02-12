@@ -108,10 +108,19 @@ export default function CameraDetailPage() {
     const types = new Set<string>();
     if (selectedClasses.has('person')) types.add('person');
     if (selectedClasses.has('vehicle')) {
-      types.add('car'); types.add('bus'); types.add('truck'); types.add('motorcycle'); types.add('bicycle');
+      for (const t of ['car', 'bus', 'truck', 'motorcycle', 'bicycle', 'airplane', 'train', 'boat']) types.add(t);
     }
-    if (selectedClasses.has('animal')) { types.add('cat'); types.add('dog'); }
-    // fire/smoke: browser YOLO doesn't detect these (not in COCO), server-side only
+    if (selectedClasses.has('animal')) {
+      for (const t of ['cat', 'dog', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear']) types.add(t);
+    }
+    if (selectedClasses.has('other')) {
+      for (const t of [
+        'traffic_light', 'fire_hydrant', 'stop_sign', 'bench', 'backpack', 'umbrella',
+        'handbag', 'suitcase', 'bottle', 'cup', 'knife', 'bowl', 'chair', 'couch',
+        'potted_plant', 'dining_table', 'tv', 'laptop', 'mouse', 'keyboard',
+        'cell_phone', 'book', 'clock', 'vase', 'scissors',
+      ]) types.add(t);
+    }
     return types;
   }, [selectedClasses]);
 
@@ -159,8 +168,8 @@ export default function CameraDetailPage() {
   // Map detection type → filter category
   const typeToCategory = useCallback((type: string): string => {
     if (type === 'person') return 'person';
-    if (['car', 'bus', 'truck', 'motorcycle', 'bicycle'].includes(type)) return 'vehicle';
-    if (['cat', 'dog'].includes(type)) return 'animal';
+    if (['car', 'bus', 'truck', 'motorcycle', 'bicycle', 'airplane', 'train', 'boat'].includes(type)) return 'vehicle';
+    if (['cat', 'dog', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear'].includes(type)) return 'animal';
     if (type === 'fire' || type === 'smoke') return 'fire';
     return 'other';
   }, []);

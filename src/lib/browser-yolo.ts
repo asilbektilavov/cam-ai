@@ -7,16 +7,54 @@
 import type { Detection } from '@/components/detection-overlay';
 
 // COCO 80-class names → Russian labels + colors
+// Categories: person (#3B82F6), vehicle (#22C55E), animal (#8B5CF6), other (#6B7280)
 const COCO_CLASSES: Record<number, { type: string; label: string; color: string }> = {
-  0:  { type: 'person',     label: 'Человек',     color: '#3B82F6' },
-  1:  { type: 'bicycle',    label: 'Велосипед',   color: '#22C55E' },
-  2:  { type: 'car',        label: 'Автомобиль',  color: '#22C55E' },
-  3:  { type: 'motorcycle', label: 'Мотоцикл',    color: '#22C55E' },
-  5:  { type: 'bus',        label: 'Автобус',      color: '#22C55E' },
-  7:  { type: 'truck',      label: 'Грузовик',    color: '#22C55E' },
-  15: { type: 'cat',        label: 'Кошка',       color: '#8B5CF6' },
-  16: { type: 'dog',        label: 'Собака',      color: '#8B5CF6' },
-  // Fire/smoke are detected server-side only (not in COCO)
+  // Люди
+  0:  { type: 'person',       label: 'Человек',       color: '#3B82F6' },
+  // Транспорт
+  1:  { type: 'bicycle',      label: 'Велосипед',     color: '#22C55E' },
+  2:  { type: 'car',          label: 'Автомобиль',    color: '#22C55E' },
+  3:  { type: 'motorcycle',   label: 'Мотоцикл',      color: '#22C55E' },
+  4:  { type: 'airplane',     label: 'Самолёт',       color: '#22C55E' },
+  5:  { type: 'bus',          label: 'Автобус',        color: '#22C55E' },
+  6:  { type: 'train',        label: 'Поезд',         color: '#22C55E' },
+  7:  { type: 'truck',        label: 'Грузовик',      color: '#22C55E' },
+  8:  { type: 'boat',         label: 'Лодка',         color: '#22C55E' },
+  // Животные
+  14: { type: 'bird',         label: 'Птица',         color: '#8B5CF6' },
+  15: { type: 'cat',          label: 'Кошка',         color: '#8B5CF6' },
+  16: { type: 'dog',          label: 'Собака',        color: '#8B5CF6' },
+  17: { type: 'horse',        label: 'Лошадь',        color: '#8B5CF6' },
+  18: { type: 'sheep',        label: 'Овца',          color: '#8B5CF6' },
+  19: { type: 'cow',          label: 'Корова',        color: '#8B5CF6' },
+  20: { type: 'elephant',     label: 'Слон',          color: '#8B5CF6' },
+  21: { type: 'bear',         label: 'Медведь',       color: '#8B5CF6' },
+  // Прочее — предметы/объекты
+  9:  { type: 'traffic_light', label: 'Светофор',     color: '#6B7280' },
+  10: { type: 'fire_hydrant', label: 'Гидрант',       color: '#6B7280' },
+  11: { type: 'stop_sign',    label: 'Знак стоп',     color: '#6B7280' },
+  13: { type: 'bench',        label: 'Скамейка',      color: '#6B7280' },
+  24: { type: 'backpack',     label: 'Рюкзак',        color: '#6B7280' },
+  25: { type: 'umbrella',     label: 'Зонт',          color: '#6B7280' },
+  26: { type: 'handbag',      label: 'Сумка',         color: '#6B7280' },
+  28: { type: 'suitcase',     label: 'Чемодан',       color: '#6B7280' },
+  39: { type: 'bottle',       label: 'Бутылка',       color: '#6B7280' },
+  41: { type: 'cup',          label: 'Чашка',         color: '#6B7280' },
+  43: { type: 'knife',        label: 'Нож',           color: '#EF4444' },
+  45: { type: 'bowl',         label: 'Миска',         color: '#6B7280' },
+  56: { type: 'chair',        label: 'Стул',          color: '#6B7280' },
+  57: { type: 'couch',        label: 'Диван',         color: '#6B7280' },
+  58: { type: 'potted_plant', label: 'Растение',      color: '#6B7280' },
+  60: { type: 'dining_table', label: 'Стол',          color: '#6B7280' },
+  62: { type: 'tv',           label: 'Монитор',       color: '#6B7280' },
+  63: { type: 'laptop',       label: 'Ноутбук',       color: '#6B7280' },
+  64: { type: 'mouse',        label: 'Мышь',          color: '#6B7280' },
+  66: { type: 'keyboard',     label: 'Клавиатура',    color: '#6B7280' },
+  67: { type: 'cell_phone',   label: 'Телефон',       color: '#6B7280' },
+  73: { type: 'book',         label: 'Книга',         color: '#6B7280' },
+  74: { type: 'clock',        label: 'Часы',          color: '#6B7280' },
+  75: { type: 'vase',         label: 'Ваза',          color: '#6B7280' },
+  76: { type: 'scissors',     label: 'Ножницы',       color: '#6B7280' },
 };
 
 // All COCO class IDs we care about
