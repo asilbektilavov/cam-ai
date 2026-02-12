@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Detection } from '@/components/detection-overlay';
 import { browserYolo } from '@/lib/browser-yolo';
 
