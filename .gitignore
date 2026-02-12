@@ -57,5 +57,9 @@ prisma/dev.db-journal
 dev.db
 dev.db-journal
 
+# go2rtc binary & runtime config
+/bin/go2rtc
+go2rtc.yaml
+
 # claude
 .claude/

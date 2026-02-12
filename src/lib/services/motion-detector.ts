@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { execFile } from 'child_process';
+import { execFile, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
@@ -42,16 +42,10 @@ export async function compareFrames(
   return (totalDiff / (pixelCount * 255)) * 100;
 }
 
-/**
- * Detect if the stream URL is RTSP.
- */
 function isRtsp(url: string): boolean {
   return url.toLowerCase().startsWith('rtsp://');
 }
 
-/**
- * Detect if the URL is an HLS stream (.m3u8).
- */
 function isHls(url: string): boolean {
   try {
     const u = new URL(url);
@@ -61,10 +55,6 @@ function isHls(url: string): boolean {
   }
 }
 
-/**
- * Detect if the URL looks like IP Webcam (Android app).
- * IP Webcam uses http://IP:8080 and serves /shot.jpg
- */
 function isIpWebcam(url: string): boolean {
   try {
     const u = new URL(url);
@@ -74,11 +64,147 @@ function isIpWebcam(url: string): boolean {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Persistent RTSP Frame Grabber
+// One ffmpeg process per camera URL. Continuously decodes RTSP and keeps
+// the latest JPEG frame in memory. No per-frame process spawn overhead.
+// ---------------------------------------------------------------------------
+
+const JPEG_SOI = Buffer.from([0xff, 0xd8]); // Start Of Image marker
+const JPEG_EOI = Buffer.from([0xff, 0xd9]); // End Of Image marker
+
+interface RtspGrabber {
+  process: ChildProcess;
+  frame: Buffer | null;
+  updatedAt: number;
+  refCount: number;
+  url: string;
+}
+
+const grabbers = new Map<string, RtspGrabber>();
+
+function startGrabber(rtspUrl: string): RtspGrabber {
+  const existing = grabbers.get(rtspUrl);
+  if (existing && existing.process.exitCode === null) {
+    existing.refCount++;
+    return existing;
+  }
+
+  // Persistent ffmpeg: RTSP → continuous MJPEG output to stdout
+  // -fps_mode vfr: variable frame rate (output frames as they arrive)
+  // -q:v 5: JPEG quality (1=best, 31=worst)
+  // -r 10: limit to 10 fps for fresher frames with low latency
+  const proc = spawn('ffmpeg', [
+    '-rtsp_transport', 'tcp',
+    '-i', rtspUrl,
+    '-f', 'image2pipe',
+    '-vcodec', 'mjpeg',
+    '-q:v', '5',
+    '-r', '10',
+    '-',
+  ], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+
+  const grabber: RtspGrabber = {
+    process: proc,
+    frame: null,
+    updatedAt: 0,
+    refCount: 1,
+    url: rtspUrl,
+  };
+
+  // Parse MJPEG byte stream: find JPEG SOI/EOI markers to extract frames
+  let buf = Buffer.alloc(0);
+
+  proc.stdout!.on('data', (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk]);
+
+    // Extract all complete JPEG frames from the buffer
+    while (true) {
+      const soiIdx = buf.indexOf(JPEG_SOI);
+      if (soiIdx === -1) {
+        buf = Buffer.alloc(0);
+        break;
+      }
+
+      // Search for EOI after SOI
+      const eoiIdx = buf.indexOf(JPEG_EOI, soiIdx + 2);
+      if (eoiIdx === -1) {
+        // Incomplete frame — trim buffer to SOI and wait for more data
+        if (soiIdx > 0) buf = buf.subarray(soiIdx);
+        break;
+      }
+
+      // Complete JPEG: SOI..EOI (inclusive, EOI is 2 bytes)
+      const frame = Buffer.from(buf.subarray(soiIdx, eoiIdx + 2));
+      if (frame.length > 500) {
+        grabber.frame = frame;
+        grabber.updatedAt = Date.now();
+      }
+
+      // Advance past this frame
+      buf = buf.subarray(eoiIdx + 2);
+    }
+
+    // Prevent memory leak: if buffer grows too large, reset
+    if (buf.length > 5 * 1024 * 1024) {
+      buf = Buffer.alloc(0);
+    }
+  });
+
+  proc.on('exit', () => {
+    // Auto-cleanup on exit
+    if (grabbers.get(rtspUrl) === grabber) {
+      grabbers.delete(rtspUrl);
+    }
+  });
+
+  grabbers.set(rtspUrl, grabber);
+  return grabber;
+}
+
+export function stopGrabber(rtspUrl: string): void {
+  const grabber = grabbers.get(rtspUrl);
+  if (!grabber) return;
+
+  grabber.refCount--;
+  if (grabber.refCount <= 0) {
+    try { grabber.process.kill('SIGTERM'); } catch { /* ignore */ }
+    grabbers.delete(rtspUrl);
+  }
+}
+
 /**
- * Fetch a single frame from an RTSP camera using ffmpeg.
- * Returns JPEG buffer.
+ * Get a frame from the persistent RTSP grabber.
+ * Starts the grabber if not already running.
+ * Waits up to `timeoutMs` for the first frame.
  */
-async function fetchRtspSnapshot(rtspUrl: string): Promise<Buffer> {
+async function fetchRtspGrabberFrame(rtspUrl: string, timeoutMs = 5000): Promise<Buffer> {
+  const grabber = startGrabber(rtspUrl);
+
+  // If we already have a recent frame, return it immediately
+  if (grabber.frame && (Date.now() - grabber.updatedAt) < 2000) {
+    return grabber.frame;
+  }
+
+  // Wait for first frame
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (grabber.frame && grabber.updatedAt > Date.now() - 2000) {
+      return grabber.frame;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  throw new Error('RTSP grabber timeout — no frame received');
+}
+
+// ---------------------------------------------------------------------------
+// One-shot snapshot (used for test-connection and first frame when no grabber)
+// ---------------------------------------------------------------------------
+
+async function fetchRtspSnapshotOneshot(rtspUrl: string): Promise<Buffer> {
   const { stdout } = await execFileAsync('ffmpeg', [
     '-rtsp_transport', 'tcp',
     '-i', rtspUrl,
@@ -90,7 +216,7 @@ async function fetchRtspSnapshot(rtspUrl: string): Promise<Buffer> {
   ], {
     encoding: 'buffer',
     timeout: 10000,
-    maxBuffer: 10 * 1024 * 1024, // 10MB
+    maxBuffer: 10 * 1024 * 1024,
   });
 
   if (!stdout || stdout.length === 0) {
@@ -100,10 +226,6 @@ async function fetchRtspSnapshot(rtspUrl: string): Promise<Buffer> {
   return Buffer.from(stdout);
 }
 
-/**
- * Fetch a single frame from an HLS stream using ffmpeg (remote).
- * Slow (~2-5s) — only used as fallback.
- */
 async function fetchHlsSnapshot(hlsUrl: string): Promise<Buffer> {
   const start = Date.now();
   const { stdout } = await execFileAsync('ffmpeg', [
@@ -127,21 +249,15 @@ async function fetchHlsSnapshot(hlsUrl: string): Promise<Buffer> {
   return Buffer.from(stdout);
 }
 
-/**
- * Extract a frame from the latest local .ts segment on disk.
- * Much faster (~100-300ms) than spawning ffmpeg against a remote HLS URL
- * because the segment is already downloaded by StreamManager.
- */
 async function fetchLocalSegmentSnapshot(cameraId: string): Promise<Buffer> {
   const start = Date.now();
   const liveDir = path.join(STREAMS_DIR, cameraId);
 
-  // Find the newest .ts segment
   const entries = await fs.readdir(liveDir);
   const tsFiles = entries
     .filter((f) => f.endsWith('.ts'))
     .sort()
-    .reverse(); // newest first (seg_NNN.ts — higher number = newer)
+    .reverse();
 
   if (tsFiles.length === 0) {
     throw new Error('No local segments available');
@@ -170,11 +286,7 @@ async function fetchLocalSegmentSnapshot(cameraId: string): Promise<Buffer> {
   return Buffer.from(stdout);
 }
 
-/**
- * Fetch a single snapshot from an HTTP camera (IP Webcam or direct URL).
- */
 async function fetchHttpSnapshot(streamUrl: string): Promise<Buffer> {
-  // For IP Webcam style URLs, append /shot.jpg
   const url = isIpWebcam(streamUrl)
     ? streamUrl.replace(/\/$/, '') + '/shot.jpg'
     : streamUrl;
@@ -192,19 +304,23 @@ async function fetchHttpSnapshot(streamUrl: string): Promise<Buffer> {
 
 /**
  * Fetch a single snapshot from any camera.
- * Auto-detects protocol (RTSP vs HTTP/HLS).
- * For HLS cameras with active streaming, uses local segments (fast).
+ * For RTSP cameras with active monitoring, uses persistent grabber (instant).
+ * For one-off requests, spawns ffmpeg per frame.
  */
 export async function fetchSnapshot(streamUrl: string, cameraId?: string): Promise<Buffer> {
   if (isRtsp(streamUrl)) {
-    return fetchRtspSnapshot(streamUrl);
+    // If a persistent grabber is running, use it (instant)
+    const grabber = grabbers.get(streamUrl);
+    if (grabber && grabber.frame) {
+      return grabber.frame;
+    }
+    // Otherwise one-shot
+    return fetchRtspSnapshotOneshot(streamUrl);
   }
-  // For HLS streams, try local segments first (much faster)
   if (isHls(streamUrl) && cameraId) {
     try {
       return await fetchLocalSegmentSnapshot(cameraId);
     } catch {
-      // Fall back to remote HLS
       return fetchHlsSnapshot(streamUrl);
     }
   }
@@ -212,6 +328,27 @@ export async function fetchSnapshot(streamUrl: string, cameraId?: string): Promi
     return fetchHlsSnapshot(streamUrl);
   }
   return fetchHttpSnapshot(streamUrl);
+}
+
+/**
+ * Start a persistent RTSP frame grabber for monitoring.
+ * Call this when monitoring starts. Frames will be instantly available
+ * via fetchSnapshot() without spawning new ffmpeg processes.
+ */
+export function startRtspGrabber(streamUrl: string): void {
+  if (isRtsp(streamUrl)) {
+    startGrabber(streamUrl);
+  }
+}
+
+/**
+ * Stop the persistent RTSP frame grabber.
+ * Call when monitoring stops.
+ */
+export function stopRtspGrabber(streamUrl: string): void {
+  if (isRtsp(streamUrl)) {
+    stopGrabber(streamUrl);
+  }
 }
 
 /**
@@ -225,7 +362,9 @@ export async function testConnection(streamUrl: string): Promise<{
   const protocol = isRtsp(streamUrl) ? 'rtsp' : 'http';
 
   try {
-    const frame = await fetchSnapshot(streamUrl);
+    const frame = isRtsp(streamUrl)
+      ? await fetchRtspSnapshotOneshot(streamUrl)
+      : await fetchSnapshot(streamUrl);
     if (frame.length < 100) {
       return { success: false, error: 'Received invalid image data', protocol };
     }

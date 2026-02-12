@@ -18,6 +18,7 @@ import {
   Link,
   Search,
   ChevronRight,
+  Check,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api-client';
 import { CameraFeed } from '@/components/camera-feed';
+import { Go2rtcPlayer } from '@/components/go2rtc-player';
 import { useMotionTracker } from '@/hooks/use-motion-tracker';
 import { useSearchDescriptors } from '@/hooks/use-search-descriptors';
 import { FeatureConfigPanel } from '@/components/smart-features/feature-config-panel';
@@ -97,7 +99,17 @@ export default function CamerasPage() {
     protocol: string;
     suggestedUrl: string;
     brand?: string;
+    name: string;
+    manufacturer?: string;
+    model?: string;
+    onvifSupported: boolean;
+    alreadyAdded: boolean;
+    existingCameraId?: string;
   }>>([]);
+  const [scanCredentials, setScanCredentials] = useState({ username: 'admin', password: 'admin' });
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [addingCameraIp, setAddingCameraIp] = useState<string | null>(null);
+  const [testingCameraIp, setTestingCameraIp] = useState<string | null>(null);
 
   const router = useRouter();
   const { hasMotion } = useMotionTracker();
@@ -156,13 +168,22 @@ export default function CamerasPage() {
     setScanDialogOpen(true);
     setDiscoveredCameras([]);
     try {
+      const credParam = showCredentials
+        ? `?credentials=${encodeURIComponent(scanCredentials.username)}:${encodeURIComponent(scanCredentials.password)}`
+        : '';
       const data = await apiGet<Array<{
         ip: string;
         ports: number[];
         protocol: string;
         suggestedUrl: string;
         brand?: string;
-      }>>('/api/cameras/discover');
+        name: string;
+        manufacturer?: string;
+        model?: string;
+        onvifSupported: boolean;
+        alreadyAdded: boolean;
+        existingCameraId?: string;
+      }>>(`/api/cameras/discover${credParam}`);
       setDiscoveredCameras(data);
     } catch {
       toast.error('Не удалось просканировать сеть');
@@ -171,15 +192,61 @@ export default function CamerasPage() {
     }
   };
 
-  const handleSelectDiscovered = (cam: { ip: string; suggestedUrl: string; brand?: string }) => {
+  const handleSelectDiscovered = (cam: { ip: string; suggestedUrl: string; brand?: string; name?: string }) => {
     setNewCamera({
       ...newCamera,
-      name: cam.brand || 'Камера',
+      name: cam.name || cam.brand || 'Камера',
       streamUrl: cam.suggestedUrl,
       location: `IP: ${cam.ip}`,
     });
     setScanDialogOpen(false);
     setDialogOpen(true);
+  };
+
+  const handleQuickAdd = async (cam: { ip: string; suggestedUrl: string; name: string; brand?: string }) => {
+    if (!selectedBranchId) {
+      toast.error('Сначала выберите филиал');
+      return;
+    }
+    setAddingCameraIp(cam.ip);
+    try {
+      await apiPost('/api/cameras', {
+        name: cam.name || cam.brand || 'Камера',
+        location: `IP: ${cam.ip}`,
+        streamUrl: cam.suggestedUrl,
+        branchId: selectedBranchId,
+        resolution: '1920x1080',
+        fps: 30,
+      });
+      toast.success(`Камера "${cam.name}" добавлена`);
+      setDiscoveredCameras((prev) =>
+        prev.map((d) => (d.ip === cam.ip ? { ...d, alreadyAdded: true } : d))
+      );
+      fetchCameras();
+    } catch {
+      toast.error('Не удалось добавить камеру');
+    } finally {
+      setAddingCameraIp(null);
+    }
+  };
+
+  const handleTestDiscovered = async (cam: { ip: string; suggestedUrl: string }) => {
+    setTestingCameraIp(cam.ip);
+    try {
+      const result = await apiPost<{ success: boolean; error?: string }>(
+        '/api/cameras/test-connection',
+        { streamUrl: cam.suggestedUrl }
+      );
+      if (result.success) {
+        toast.success(`${cam.ip}: Подключение успешно`);
+      } else {
+        toast.error(`${cam.ip}: ${result.error}`);
+      }
+    } catch {
+      toast.error(`${cam.ip}: Ошибка проверки`);
+    } finally {
+      setTestingCameraIp(null);
+    }
   };
 
   const handleAdd = async () => {
@@ -434,38 +501,148 @@ export default function CamerasPage() {
 
       {/* Scan Results Dialog */}
       <Dialog open={scanDialogOpen} onOpenChange={setScanDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Поиск камер в сети</DialogTitle>
-            <DialogDescription>Сканирование локальной сети на наличие камер</DialogDescription>
+            <DialogDescription>
+              Сканирование всех подсетей и ONVIF. Найденные камеры можно добавить в один клик.
+            </DialogDescription>
           </DialogHeader>
-          <div className="mt-4 space-y-2 max-h-80 overflow-y-auto">
+
+          {/* ONVIF credentials */}
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              onClick={() => setShowCredentials(!showCredentials)}
+            >
+              <Settings className="h-3 w-3" />
+              {showCredentials ? 'Скрыть' : 'Указать'} логин/пароль ONVIF
+            </button>
+            {showCredentials && (
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Логин"
+                  value={scanCredentials.username}
+                  onChange={(e) => setScanCredentials({ ...scanCredentials, username: e.target.value })}
+                  className="h-8 text-sm"
+                />
+                <Input
+                  type="password"
+                  placeholder="Пароль"
+                  value={scanCredentials.password}
+                  onChange={(e) => setScanCredentials({ ...scanCredentials, password: e.target.value })}
+                  className="h-8 text-sm"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Rescan button */}
+          {!scanning && discoveredCameras.length > 0 && (
+            <Button variant="outline" size="sm" onClick={handleScanNetwork} className="w-fit gap-2">
+              <Search className="h-3 w-3" />
+              Повторить поиск
+            </Button>
+          )}
+
+          {/* Results */}
+          <div className="space-y-2 max-h-96 overflow-y-auto">
             {scanning ? (
               <div className="flex flex-col items-center py-8 gap-3">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">Сканирование сети...</p>
+                <p className="text-xs text-muted-foreground">Поиск по всем подсетям и ONVIF</p>
               </div>
             ) : discoveredCameras.length === 0 ? (
               <div className="flex flex-col items-center py-8 gap-2 text-center">
                 <Search className="h-8 w-8 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">Камеры не найдены в сети</p>
-                <p className="text-xs text-muted-foreground">Убедитесь, что камеры подключены к той же сети</p>
+                <p className="text-sm text-muted-foreground">Камеры не найдены</p>
+                <p className="text-xs text-muted-foreground">Убедитесь, что камеры подключены к сети</p>
               </div>
             ) : (
-              discoveredCameras.map((cam, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleSelectDiscovered(cam)}
-                  className="w-full flex items-center justify-between p-3 rounded-lg border hover:bg-accent transition-colors text-left"
-                >
-                  <div>
-                    <p className="font-medium text-sm">{cam.brand || 'Камера'}</p>
-                    <p className="text-xs text-muted-foreground">{cam.ip} — порты: {cam.ports.join(', ')}</p>
-                    <p className="text-xs text-muted-foreground truncate max-w-[300px]">{cam.suggestedUrl}</p>
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Найдено: {discoveredCameras.length} устройств
+                </p>
+                {discoveredCameras.map((cam) => (
+                  <div
+                    key={cam.ip}
+                    className={cn(
+                      'flex items-center justify-between p-3 rounded-lg border transition-colors',
+                      cam.alreadyAdded ? 'bg-muted/50 opacity-60' : 'hover:bg-accent'
+                    )}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 shrink-0">
+                        <Camera className="h-4 w-4 text-primary" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium text-sm truncate">{cam.name}</p>
+                          {cam.onvifSupported && (
+                            <Badge variant="secondary" className="text-[10px]">ONVIF</Badge>
+                          )}
+                          {cam.alreadyAdded && (
+                            <Badge variant="outline" className="text-[10px] gap-1">
+                              <Check className="h-2.5 w-2.5" />
+                              Добавлена
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {cam.ip} — порты: {cam.ports.join(', ')}
+                          {cam.manufacturer && ` — ${cam.manufacturer}`}
+                          {cam.model && ` ${cam.model}`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0 ml-2">
+                      {!cam.alreadyAdded && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            disabled={testingCameraIp === cam.ip}
+                            onClick={() => handleTestDiscovered(cam)}
+                            title="Тест подключения"
+                          >
+                            {testingCameraIp === cam.ip ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Link className="h-3 w-3" />
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            className="h-7 px-3 text-xs gap-1"
+                            disabled={addingCameraIp === cam.ip}
+                            onClick={() => handleQuickAdd(cam)}
+                          >
+                            {addingCameraIp === cam.ip ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Plus className="h-3 w-3" />
+                            )}
+                            Добавить
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => handleSelectDiscovered(cam)}
+                            title="Настроить и добавить"
+                          >
+                            <ChevronRight className="h-3 w-3" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                </button>
-              ))
+                ))}
+              </>
             )}
           </div>
         </DialogContent>
@@ -618,14 +795,20 @@ export default function CamerasPage() {
                 <div className="relative aspect-video bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
                   {camera.status === 'online' ? (
                     <>
-                      <CameraFeed
-                        cameraId={camera.id}
-                        snapshotTick={snapshotTick}
-                        className="absolute inset-0 w-full h-full"
-                        showFaceDetection={camera.isMonitoring}
-                        rotateImage={!camera.streamUrl.startsWith('rtsp://')}
-                        searchDescriptors={camera.isMonitoring ? searchDescriptors : undefined}
-                      />
+                      {camera.isMonitoring ? (
+                        <Go2rtcPlayer
+                          streamName={camera.id}
+                          className="absolute inset-0 w-full h-full z-[1]"
+                        />
+                      ) : (
+                        <CameraFeed
+                          cameraId={camera.id}
+                          snapshotTick={snapshotTick}
+                          className="absolute inset-0 w-full h-full"
+                          showFaceDetection={false}
+                          rotateImage={!camera.streamUrl.startsWith('rtsp://')}
+                        />
+                      )}
                       <Video className="h-10 w-10 text-gray-600" />
                     </>
                   ) : (

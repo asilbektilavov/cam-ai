@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
 import { checkPermission, RBACError } from '@/lib/rbac';
+import { disableCameraBuiltinAI } from '@/lib/services/camera-ai-disabler';
 
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
@@ -73,6 +74,9 @@ export async function POST(req: NextRequest) {
       organizationId: orgId,
     },
   });
+
+  // Отключить встроенную AI-детекцию камеры (best-effort, не блокирует ответ)
+  void disableCameraBuiltinAI(streamUrl);
 
   return NextResponse.json(camera, { status: 201 });
 }

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { compareFrames, fetchSnapshot } from './motion-detector';
+import { compareFrames, fetchSnapshot, startRtspGrabber, stopRtspGrabber } from './motion-detector';
 import { saveFrame } from './frame-storage';
 import { appEvents, CameraEvent } from './event-emitter';
 import { analyzeFrame } from './ai-analyzer';
@@ -8,12 +8,18 @@ import { smartFeaturesEngine } from './smart-features-engine';
 import { yoloDetector } from './yolo-detector';
 import { heatmapGenerator } from './heatmap-generator';
 import { peopleCounter } from './people-counter';
+import { go2rtcManager } from './go2rtc-manager';
+import { disableCameraBuiltinAI } from './camera-ai-disabler';
 
 interface MonitorState {
   cameraId: string;
   organizationId: string;
   branchId: string;
   streamUrl: string;
+  /** Substream URL used for YOLO/preview (lower resolution) */
+  activeStreamUrl: string;
+  cameraName: string;
+  cameraLocation: string;
   motionThreshold: number;
   captureInterval: number;
   pollInterval: ReturnType<typeof setInterval> | null;
@@ -26,8 +32,31 @@ interface MonitorState {
   pollCount: number;
 }
 
-const NO_MOTION_TIMEOUT_POLLS = 60; // ~30s at 500ms poll interval
-const POLL_INTERVAL_MS = 250; // 250ms = up to ~4fps YOLO detection
+const NO_MOTION_TIMEOUT_POLLS = 150; // ~30s at 200ms effective poll
+const POLL_INTERVAL_MS = 100; // 100ms = up to ~10fps YOLO detection
+
+/**
+ * Derive a substream URL from the main stream URL.
+ * Substreams are lower resolution (D1/CIF) — ideal for YOLO detection with less CPU/bandwidth.
+ * Supports: Hikvision, Dahua, generic /stream1→/stream2.
+ * Returns the original URL unchanged if no substream pattern is recognized.
+ */
+function deriveSubstreamUrl(streamUrl: string): string {
+  // Hikvision: /Streaming/Channels/101 → /Streaming/Channels/102
+  if (/\/Streaming\/Channels\/\d01/i.test(streamUrl)) {
+    return streamUrl.replace(/(\/Streaming\/Channels\/\d)01/i, '$102');
+  }
+  // Dahua: subtype=0 → subtype=1
+  if (/subtype=0/i.test(streamUrl)) {
+    return streamUrl.replace(/subtype=0/i, 'subtype=1');
+  }
+  // Generic: /stream1 → /stream2
+  if (/\/stream1$/i.test(streamUrl)) {
+    return streamUrl.replace(/\/stream1$/i, '/stream2');
+  }
+  // No recognized pattern — use main stream
+  return streamUrl;
+}
 
 class CameraMonitor {
   private monitors = new Map<string, MonitorState>();
@@ -44,17 +73,32 @@ class CameraMonitor {
     return this.monitors.has(cameraId);
   }
 
+  /**
+   * Get the latest cached frame from the monitoring pipeline.
+   * Returns null if monitoring is not active or no frame yet.
+   */
+  getLatestFrame(cameraId: string): Buffer | null {
+    const state = this.monitors.get(cameraId);
+    return state?.lastFrame ?? null;
+  }
+
   async startMonitoring(cameraId: string): Promise<void> {
     if (this.monitors.has(cameraId)) return;
 
     const camera = await prisma.camera.findUnique({ where: { id: cameraId } });
     if (!camera) throw new Error('Camera not found');
 
+    // For RTSP YOLO pipeline: prefer substream (lower resolution, less CPU/bandwidth)
+    const activeStreamUrl = deriveSubstreamUrl(camera.streamUrl);
+
     const state: MonitorState = {
       cameraId,
       organizationId: camera.organizationId,
       branchId: camera.branchId,
       streamUrl: camera.streamUrl,
+      activeStreamUrl,
+      cameraName: camera.name,
+      cameraLocation: camera.location,
       motionThreshold: camera.motionThreshold,
       captureInterval: camera.captureInterval,
       pollInterval: null,
@@ -67,6 +111,15 @@ class CameraMonitor {
     };
 
     this.monitors.set(cameraId, state);
+
+    // Start persistent RTSP grabber for YOLO (substream = lower bandwidth)
+    startRtspGrabber(state.activeStreamUrl);
+
+    // Register main stream in go2rtc for browser playback (higher quality)
+    void go2rtcManager.addStream(cameraId, camera.streamUrl);
+
+    // Отключить встроенную AI-детекцию камеры (fallback для камер добавленных до этой фичи)
+    void disableCameraBuiltinAI(camera.streamUrl);
 
     // Initialize smart features state for this camera
     smartFeaturesEngine.initCamera(cameraId);
@@ -101,6 +154,12 @@ class CameraMonitor {
 
     this.monitors.delete(cameraId);
 
+    // Stop persistent RTSP grabber
+    stopRtspGrabber(state.activeStreamUrl);
+
+    // Remove stream from go2rtc
+    void go2rtcManager.removeStream(cameraId);
+
     // Cleanup smart features state
     smartFeaturesEngine.cleanupCamera(cameraId);
 
@@ -119,12 +178,17 @@ class CameraMonitor {
     const t0 = Date.now();
     let currentFrame: Buffer;
     try {
-      currentFrame = await fetchSnapshot(state.streamUrl, cameraId);
+      currentFrame = await fetchSnapshot(state.activeStreamUrl, cameraId);
     } catch {
       // Camera unreachable — don't stop monitoring, just skip
       return;
     }
     const tSnap = Date.now();
+
+    // Fire YOLO immediately after snapshot (before compareFrames) to minimize latency
+    if (!state.yoloInProgress) {
+      void this.emitLiveDetections(state, currentFrame);
+    }
 
     if (!state.lastFrame) {
       state.lastFrame = currentFrame;
@@ -154,13 +218,6 @@ class CameraMonitor {
           await this.endSession(state);
         }
       }
-    }
-
-    // Real-time YOLO: run on every poll frame for instant bounding boxes
-    // Always-on detection: runs regardless of motion/session state
-    // yoloInProgress flag prevents overlapping calls (natural throttle)
-    if (!state.yoloInProgress) {
-      void this.emitLiveDetections(state, currentFrame);
     }
   }
 
@@ -216,31 +273,27 @@ class CameraMonitor {
       appEvents.emit('camera-event', event);
 
       // Evaluate smart features with YOLO detections (abandoned object, fall, tamper)
-      // Compute average brightness for tamper detection
+      // Compute brightness only every 10th frame to reduce CPU load
       let avgBrightness: number | undefined;
-      try {
-        const sharp = (await import('sharp')).default;
-        const stats = await sharp(frame).stats();
-        avgBrightness = stats.channels.reduce((sum, ch) => sum + ch.mean, 0) / stats.channels.length;
-      } catch { /* ignore brightness calc errors */ }
-
-      const camera = await prisma.camera.findUnique({
-        where: { id: state.cameraId },
-        select: { name: true, location: true },
-      });
-
-      if (camera) {
-        void smartFeaturesEngine.evaluate(
-          state.cameraId,
-          state.organizationId,
-          state.branchId,
-          camera.name,
-          camera.location,
-          { peopleCount: personCount, description: '' },
-          detections,
-          avgBrightness
-        );
+      if (state.pollCount % 10 === 0) {
+        try {
+          const sharp = (await import('sharp')).default;
+          const stats = await sharp(frame).stats();
+          avgBrightness = stats.channels.reduce((sum, ch) => sum + ch.mean, 0) / stats.channels.length;
+        } catch { /* ignore brightness calc errors */ }
       }
+
+      // Use cached camera name/location (no DB query per frame)
+      void smartFeaturesEngine.evaluate(
+        state.cameraId,
+        state.organizationId,
+        state.branchId,
+        state.cameraName,
+        state.cameraLocation,
+        { peopleCount: personCount, description: '' },
+        detections,
+        avgBrightness
+      );
 
       if (detections.length > 0) {
         console.log(
@@ -452,7 +505,7 @@ class CameraMonitor {
     if (!state.activeSessionId) return;
 
     const t0 = Date.now();
-    const frame = await fetchSnapshot(state.streamUrl, state.cameraId);
+    const frame = await fetchSnapshot(state.activeStreamUrl, state.cameraId);
     console.log(`[Monitor ${state.cameraId}] captureFrame: snap=${Date.now() - t0}ms`);
     const framePath = await saveFrame(
       state.organizationId,

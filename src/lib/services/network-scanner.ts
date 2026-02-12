@@ -7,6 +7,10 @@ export interface DiscoveredCamera {
   protocol: 'rtsp' | 'http' | 'unknown';
   suggestedUrl: string;
   brand?: string;
+  name?: string;
+  manufacturer?: string;
+  model?: string;
+  onvifSupported?: boolean;
 }
 
 const CAMERA_PORTS = [
@@ -22,19 +26,32 @@ const CAMERA_PORTS = [
 const SCAN_TIMEOUT = 500;
 const MAX_CONCURRENT = 50;
 
-function getLocalSubnet(): string | null {
+// Virtual/tunnel interface prefixes to skip
+const SKIP_PREFIXES = ['docker', 'veth', 'br-', 'utun', 'awdl', 'llw', 'ap', 'bridge', 'gif', 'stf', 'anpi'];
+
+function getAllSubnets(): string[] {
   const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    const iface = interfaces[name];
+  const seen = new Set<string>();
+  const subnets: string[] = [];
+
+  for (const [name, iface] of Object.entries(interfaces)) {
     if (!iface) continue;
+    if (SKIP_PREFIXES.some((p) => name.startsWith(p))) continue;
+
     for (const addr of iface) {
       if (addr.family === 'IPv4' && !addr.internal) {
         const parts = addr.address.split('.');
-        return parts.slice(0, 3).join('.');
+        const subnet = parts.slice(0, 3).join('.');
+        // Skip link-local 169.254.x.x (no DHCP = unlikely camera subnet)
+        if (subnet.startsWith('169.254')) continue;
+        if (!seen.has(subnet)) {
+          seen.add(subnet);
+          subnets.push(subnet);
+        }
       }
     }
   }
-  return null;
+  return subnets;
 }
 
 function getLocalAddresses(): Set<string> {
@@ -95,20 +112,31 @@ function buildSuggestedUrl(ip: string, ports: number[], brand?: string): string 
 }
 
 export async function discoverCameras(): Promise<DiscoveredCamera[]> {
-  const subnet = getLocalSubnet();
-  if (!subnet) {
+  const subnets = getAllSubnets();
+  if (subnets.length === 0) {
     throw new Error('Не удалось определить подсеть');
   }
 
   const localAddresses = getLocalAddresses();
   const discovered: DiscoveredCamera[] = [];
-  const ips = Array.from({ length: 254 }, (_, i) => `${subnet}.${i + 1}`);
+  const seenIps = new Set<string>();
 
-  for (let i = 0; i < ips.length; i += MAX_CONCURRENT) {
-    const batch = ips.slice(i, i + MAX_CONCURRENT);
+  // Build flat IP list from all subnets
+  const allIps: string[] = [];
+  for (const subnet of subnets) {
+    for (let i = 1; i <= 254; i++) {
+      const ip = `${subnet}.${i}`;
+      if (!localAddresses.has(ip) && !seenIps.has(ip)) {
+        seenIps.add(ip);
+        allIps.push(ip);
+      }
+    }
+  }
+
+  for (let i = 0; i < allIps.length; i += MAX_CONCURRENT) {
+    const batch = allIps.slice(i, i + MAX_CONCURRENT);
     const results = await Promise.all(
       batch.map(async (ip) => {
-        if (localAddresses.has(ip)) return { ip, openPorts: [] as number[] };
         const openPorts: number[] = [];
         await Promise.all(
           CAMERA_PORTS.map(async ({ port }) => {
@@ -134,6 +162,7 @@ export async function discoverCameras(): Promise<DiscoveredCamera[]> {
           protocol,
           suggestedUrl: buildSuggestedUrl(ip, openPorts, brand),
           brand,
+          name: brand || 'Камера',
         });
       }
     }

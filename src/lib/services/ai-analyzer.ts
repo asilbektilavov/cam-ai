@@ -223,21 +223,9 @@ export async function analyzeFrame(
 
     peopleCounter.recordCount(cameraId, yoloPeopleCount);
 
-    // Emit frame_analyzed with detections (for SSE -> frontend bounding boxes)
-    const frameEvent: CameraEvent = {
-      type: 'frame_analyzed',
-      cameraId,
-      organizationId,
-      branchId,
-      data: {
-        frameId,
-        peopleCount: yoloPeopleCount,
-        detections: yoloDetections,
-        sessionId,
-      },
-    };
-    appEvents.emit('camera-event', frameEvent);
-    console.log(`[AI] SSE emitted: ${yoloDetections.length} detections, total=${Date.now() - t0}ms`);
+    // NOTE: frame_analyzed SSE is emitted by camera-monitor.ts emitLiveDetections() only
+    // to avoid duplicate bounding-box events on the frontend.
+    console.log(`[AI] YOLO: ${yoloDetections.length} detections, total=${Date.now() - t0}ms`);
 
     // --- Determine if Gemini should run ---
     const mode = await getAnalysisMode(organizationId);

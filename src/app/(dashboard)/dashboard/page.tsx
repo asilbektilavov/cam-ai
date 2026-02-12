@@ -27,6 +27,7 @@ import { apiGet } from '@/lib/api-client';
 import { useEventStream } from '@/hooks/use-event-stream';
 import { useMotionTracker } from '@/hooks/use-motion-tracker';
 import { CameraFeed } from '@/components/camera-feed';
+import { Go2rtcPlayer } from '@/components/go2rtc-player';
 import type { DashboardStats } from '@/lib/types';
 
 interface ApiCamera {
@@ -319,12 +320,19 @@ export default function DashboardPage() {
                         )}
                       >
                         {camera.status === 'online' ? (
-                          <CameraFeed
-                            cameraId={camera.id}
-                            snapshotTick={snapshotTick}
-                            className="absolute inset-0 w-full h-full"
-                            showFaceDetection={camera.isMonitoring}
-                          />
+                          camera.isMonitoring ? (
+                            <Go2rtcPlayer
+                              streamName={camera.id}
+                              className="absolute inset-0 w-full h-full"
+                            />
+                          ) : (
+                            <CameraFeed
+                              cameraId={camera.id}
+                              snapshotTick={snapshotTick}
+                              className="absolute inset-0 w-full h-full"
+                              showFaceDetection={false}
+                            />
+                          )
                         ) : (
                           <div className="absolute inset-0 bg-gradient-to-br from-gray-800/50 to-gray-900/50 flex items-center justify-center">
                             <Camera className="h-8 w-8 text-gray-600" />

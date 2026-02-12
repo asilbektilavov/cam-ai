@@ -41,7 +41,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { DetectionVideoPlayer } from '@/components/detection-video-player';
+import { Go2rtcPlayer } from '@/components/go2rtc-player';
+import { DetectionOverlay, type Detection } from '@/components/detection-overlay';
+import { useEventStream } from '@/hooks/use-event-stream';
 import { PtzControls } from '@/components/ptz-controls';
 import { ExportDialog } from '@/components/export-dialog';
 import HeatmapOverlay from '@/components/heatmap-overlay';
@@ -90,6 +92,7 @@ export default function CameraDetailPage() {
     new Set(['person', 'vehicle', 'animal', 'fire', 'other'])
   );
   const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
+  const [liveDetections, setLiveDetections] = useState<Detection[]>([]);
   const [onvifForm, setOnvifForm] = useState({
     onvifHost: '',
     onvifPort: 80,
@@ -121,28 +124,14 @@ export default function CameraDetailPage() {
     fetchCamera();
   }, [fetchCamera]);
 
-  // Poll real-time detection counts from detection-service
-  useEffect(() => {
-    if (!camera?.streamUrl || selectedClasses.size === 0) {
-      setLiveCounts({ personCount: 0, totalCount: 0 });
-      return;
-    }
-    const detUrl = process.env.NEXT_PUBLIC_DETECTION_SERVICE_URL || 'http://localhost:8001';
-    const poll = async () => {
-      try {
-        const res = await fetch(
-          `${detUrl}/stream/counts?camera_url=${encodeURIComponent(camera.streamUrl)}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setLiveCounts(data);
-        }
-      } catch { /* ignore */ }
-    };
-    poll();
-    const interval = setInterval(poll, 1000);
-    return () => clearInterval(interval);
-  }, [camera?.streamUrl, selectedClasses.size]);
+  // Map detection type → filter category
+  const typeToCategory = useCallback((type: string): string => {
+    if (type === 'person') return 'person';
+    if (['car', 'bus', 'truck', 'motorcycle', 'bicycle'].includes(type)) return 'vehicle';
+    if (['cat', 'dog'].includes(type)) return 'animal';
+    if (type === 'fire' || type === 'smoke') return 'fire';
+    return 'other';
+  }, []);
 
   const handleStreamToggle = async () => {
     if (!camera) return;
@@ -194,13 +183,34 @@ export default function CameraDetailPage() {
     });
   };
 
-  const detectionClassesArray = useMemo(
-    () => selectedClasses.size === DETECTION_CATEGORIES.length
-      ? undefined // all selected = no filter
-      : Array.from(selectedClasses),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedClasses]
+  // SSE: receive live YOLO detections — store all, filter by selectedClasses for overlay + counts
+  useEventStream(
+    useCallback(
+      (event) => {
+        if (
+          event.type === 'frame_analyzed' &&
+          event.cameraId === cameraId &&
+          Array.isArray(event.data.detections)
+        ) {
+          const dets = event.data.detections as Detection[];
+          setLiveDetections(dets);
+        }
+      },
+      [cameraId]
+    )
   );
+
+  // Filter detections by selected categories
+  const filteredDetections = useMemo(() => {
+    if (selectedClasses.size === 0) return [];
+    return liveDetections.filter(d => d.confidence >= 0.7 && selectedClasses.has(typeToCategory(d.type)));
+  }, [liveDetections, selectedClasses, typeToCategory]);
+
+  // Update counts from filtered detections
+  useEffect(() => {
+    const personCount = filteredDetections.filter(d => d.type === 'person').length;
+    setLiveCounts({ personCount, totalCount: filteredDetections.length });
+  }, [filteredDetections]);
 
   if (loading) {
     return (
@@ -264,14 +274,16 @@ export default function CameraDetailPage() {
           {/* Video Player */}
           <div className="relative aspect-video rounded-lg overflow-hidden bg-gradient-to-br from-gray-800 to-gray-900">
             {camera.isStreaming || camera.isMonitoring ? (
-              <DetectionVideoPlayer
-                src={camera.isStreaming ? `/api/cameras/${cameraId}/stream` : ''}
-                cameraId={cameraId}
-                streamUrl={camera.streamUrl}
-                detectionClasses={detectionClassesArray}
-                live
-                className="absolute inset-0 w-full h-full"
-              />
+              <>
+                <Go2rtcPlayer
+                  streamName={cameraId}
+                  className="absolute inset-0 w-full h-full"
+                />
+                <DetectionOverlay
+                  detections={filteredDetections}
+                  visible={selectedClasses.size > 0}
+                />
+              </>
             ) : (
               <div className="flex flex-col items-center justify-center h-full gap-4">
                 <Monitor className="h-16 w-16 text-gray-600" />

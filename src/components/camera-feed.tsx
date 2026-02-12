@@ -209,12 +209,15 @@ export function CameraFeed({
 
       // Set canvas size to match container
       const container = canvas.parentElement;
-      if (container) {
+      if (container && container.clientWidth > 0 && container.clientHeight > 0) {
         canvas.width = container.clientWidth;
         canvas.height = container.clientHeight;
+      } else if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
       } else {
-        canvas.width = img.width;
-        canvas.height = img.height;
+        // Skip rendering if no valid dimensions
+        return;
       }
 
       // Draw image (optionally rotated for IP Webcam)
@@ -229,7 +232,7 @@ export function CameraFeed({
       }
 
       // Run face detection if available
-      if (showFaceDetection && faceApiReady) {
+      if (showFaceDetection && faceApiReady && canvas.width > 0 && canvas.height > 0) {
         const faceapi = await loadFaceApi();
 
         const detections = await faceapi
