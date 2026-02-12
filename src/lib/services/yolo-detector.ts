@@ -152,9 +152,6 @@ class YoloDetector {
       }
 
       const data: DetectResponse = await response.json();
-      if (data.detections.length > 0) {
-        console.log(`[YOLO] ${data.detections.length} detections in ${data.inferenceMs}ms`);
-      }
       return data.detections;
     } catch (error) {
       if ((error as Error).name === 'AbortError') {

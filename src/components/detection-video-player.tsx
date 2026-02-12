@@ -56,7 +56,6 @@ export function DetectionVideoPlayer({
   useEffect(() => {
     if (visible && live && !mjpegError) {
       setMjpegMode(true);
-      // Reset FPS counter — MJPEG badge replaces FPS display
       setDetFps(0);
       fpsCountRef.current = 0;
     } else {
@@ -76,11 +75,10 @@ export function DetectionVideoPlayer({
   }, []);
 
   // SSE subscription for live detections — skip processing in MJPEG mode
-  // (server-side MJPEG already draws bounding boxes; SSE events are redundant)
   useEventStream(
     useCallback(
       (event) => {
-        if (mjpegMode) return; // MJPEG mode: server draws boxes, skip SSE
+        if (mjpegMode) return;
         if (
           event.type === 'frame_analyzed' &&
           event.cameraId === cameraId &&

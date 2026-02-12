@@ -41,9 +41,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Go2rtcPlayer } from '@/components/go2rtc-player';
+import { Go2rtcInlinePlayer } from '@/components/go2rtc-inline-player';
 import { DetectionOverlay, type Detection } from '@/components/detection-overlay';
 import { useEventStream } from '@/hooks/use-event-stream';
+import { useBrowserDetection } from '@/hooks/use-browser-detection';
 import { PtzControls } from '@/components/ptz-controls';
 import { ExportDialog } from '@/components/export-dialog';
 import HeatmapOverlay from '@/components/heatmap-overlay';
@@ -95,6 +96,35 @@ export default function CameraDetailPage() {
   const [liveDetections, setLiveDetections] = useState<Detection[]>([]);
   const [measuredLatency, setMeasuredLatency] = useState<number | undefined>();
   const latencyEmaRef = useRef<number | null>(null);
+
+  // Browser-side detection via ONNX Runtime Web
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const handleVideoRef = useCallback((video: HTMLVideoElement | null) => {
+    videoRef.current = video;
+  }, []);
+
+  // Map selectedClasses categories → YOLO type strings for browser detection
+  const browserEnabledTypes = useMemo(() => {
+    const types = new Set<string>();
+    if (selectedClasses.has('person')) types.add('person');
+    if (selectedClasses.has('vehicle')) {
+      types.add('car'); types.add('bus'); types.add('truck'); types.add('motorcycle'); types.add('bicycle');
+    }
+    if (selectedClasses.has('animal')) { types.add('cat'); types.add('dog'); }
+    // fire/smoke: browser YOLO doesn't detect these (not in COCO), server-side only
+    return types;
+  }, [selectedClasses]);
+
+  const {
+    detections: browserDetections,
+    fps: browserFps,
+    backend: browserBackend,
+    loading: browserLoading,
+  } = useBrowserDetection(videoRef, {
+    enabled: selectedClasses.size > 0,
+    enabledClasses: browserEnabledTypes,
+    targetFps: 10,
+  });
   const [onvifForm, setOnvifForm] = useState({
     onvifHost: '',
     onvifPort: 80,
@@ -185,7 +215,7 @@ export default function CameraDetailPage() {
     });
   };
 
-  // SSE: receive live YOLO detections — store all, filter by selectedClasses for overlay + counts
+  // SSE: receive live YOLO detections (used as fallback when browser detection unavailable)
   useEventStream(
     useCallback(
       (event) => {
@@ -195,12 +225,14 @@ export default function CameraDetailPage() {
           Array.isArray(event.data.detections)
         ) {
           const dets = event.data.detections as Detection[];
+          const now = Date.now();
+
           setLiveDetections(dets);
 
           // Measure pipeline latency from server timestamp
           const capturedAt = event.data.capturedAt as number | undefined;
           if (capturedAt) {
-            const latency = Math.max(0, Date.now() - capturedAt);
+            const latency = Math.max(0, now - capturedAt);
             if (latencyEmaRef.current === null) {
               latencyEmaRef.current = latency;
             } else {
@@ -214,18 +246,23 @@ export default function CameraDetailPage() {
     )
   );
 
+  // Use browser detections when available, fall back to SSE server detections
+  const useBrowser = browserDetections.length > 0 || (!browserLoading && browserFps > 0);
+
   // Filter detections by selected categories
   const filteredDetections = useMemo(() => {
     if (selectedClasses.size === 0) return [];
-    // Filter by confidence (per-category) + category, then apply NMS to remove duplicate boxes
-    // People: 0.7 (strict — avoid ghost boxes), Vehicles: 0.45 (YOLO is binary for cars), Others: 0.55
+
+    // Browser detections are already filtered by enabledClasses in the hook
+    if (useBrowser) return browserDetections;
+
+    // Fallback: SSE server detections — filter by confidence + category + NMS
     const filtered = liveDetections.filter(d => {
       const cat = typeToCategory(d.type);
       if (!selectedClasses.has(cat)) return false;
       const minConf = cat === 'person' ? 0.7 : cat === 'vehicle' ? 0.45 : 0.55;
       return d.confidence >= minConf;
     });
-    // NMS: sort by confidence desc, remove boxes with IoU > 0.5 against higher-confidence box
     const kept: typeof filtered = [];
     for (const det of filtered.sort((a, b) => b.confidence - a.confidence)) {
       const dominated = kept.some(k => {
@@ -241,7 +278,7 @@ export default function CameraDetailPage() {
       if (!dominated) kept.push(det);
     }
     return kept;
-  }, [liveDetections, selectedClasses, typeToCategory]);
+  }, [liveDetections, browserDetections, useBrowser, selectedClasses, typeToCategory]);
 
   // Update counts from filtered detections
   useEffect(() => {
@@ -312,16 +349,36 @@ export default function CameraDetailPage() {
           <div className="relative aspect-video rounded-lg overflow-hidden bg-gradient-to-br from-gray-800 to-gray-900">
             {camera.isStreaming || camera.isMonitoring ? (
               <>
-                <Go2rtcPlayer
+                <Go2rtcInlinePlayer
                   streamName={cameraId}
                   className="absolute inset-0 w-full h-full"
                   protocol={camera.streamUrl.toLowerCase().startsWith('rtsp://') ? 'rtsp' : 'http'}
+                  onVideoRef={handleVideoRef}
                 />
                 <DetectionOverlay
                   detections={filteredDetections}
                   visible={selectedClasses.size > 0}
-                  pipelineLatencyMs={measuredLatency}
+                  pipelineLatencyMs={useBrowser ? 0 : measuredLatency}
                 />
+                {/* Browser AI badge */}
+                {selectedClasses.size > 0 && (
+                  <div className="absolute bottom-3 left-3 z-20">
+                    {browserLoading ? (
+                      <Badge variant="secondary" className="bg-black/60 text-yellow-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        AI загрузка...
+                      </Badge>
+                    ) : useBrowser ? (
+                      <Badge variant="secondary" className="bg-black/60 text-green-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-400" />
+                        </span>
+                        AI Browser {browserFps}fps {browserBackend === 'webgpu' ? '⚡' : ''}
+                      </Badge>
+                    ) : null}
+                  </div>
+                )}
               </>
             ) : (
               <div className="flex flex-col items-center justify-center h-full gap-4">

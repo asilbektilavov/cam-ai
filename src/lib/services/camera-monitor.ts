@@ -224,6 +224,7 @@ class CameraMonitor {
     // Fire YOLO immediately after snapshot (before compareFrames) to minimize latency
     // Pass actual frame capture time from grabber (not poll time) for accurate latency measurement
     const frameCapturedAt = getFrameTimestamp(state.activeStreamUrl) || Date.now();
+
     if (!state.yoloInProgress) {
       void this.emitLiveDetections(state, currentFrame, frameCapturedAt);
     }
@@ -268,9 +269,7 @@ class CameraMonitor {
     state.yoloInProgress = true;
     state.pollCount++;
     try {
-      const t0 = Date.now();
       const detections = await yoloDetector.detect(frame);
-      const elapsed = Date.now() - t0;
 
       const personDetections = detections.filter(d => d.type === 'person');
       const personCount = personDetections.length;
@@ -287,15 +286,12 @@ class CameraMonitor {
       // Feed people count into counter
       peopleCounter.recordCount(state.cameraId, personCount);
 
-      // Every 10th frame: run secondary detections (fire, plates, behavior)
-      const runSecondary = state.pollCount % 10 === 0;
-
-      // Fire/smoke detection (non-blocking, throttled)
-      if (runSecondary) {
-        void this.runFireDetection(state, frame);
-        void this.runPlateDetection(state, frame);
-        void this.runBehaviorAnalysis(state, frame);
-      }
+      // Stagger secondary detections to avoid blocking the YOLO service
+      // (fire, plates, behavior each run on different poll cycles)
+      const mod30 = state.pollCount % 30;
+      if (mod30 === 0) void this.runFireDetection(state, frame);
+      if (mod30 === 10) void this.runPlateDetection(state, frame);
+      if (mod30 === 20) void this.runBehaviorAnalysis(state, frame);
 
       const event: CameraEvent = {
         type: 'frame_analyzed',
@@ -334,9 +330,9 @@ class CameraMonitor {
         avgBrightness
       );
 
-      if (detections.length > 0) {
+      if (detections.length > 0 && state.pollCount % 50 === 0) {
         console.log(
-          `[Monitor ${state.cameraId}] YOLO: ${detections.length} det in ${elapsed}ms (${detections.map(d => `${d.label} ${Math.round(d.confidence * 100)}%`).join(', ')})`
+          `[Monitor ${state.cameraId}] YOLO: ${detections.length} det (${detections.map(d => d.label).join(', ')})`
         );
       }
     } catch {

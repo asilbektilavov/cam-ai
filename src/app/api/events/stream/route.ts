@@ -32,7 +32,11 @@ export async function GET(request: Request) {
         if (branchId && event.branchId !== branchId) return;
 
         try {
-          const data = JSON.stringify(event);
+          const enrichedEvent = {
+            ...event,
+            data: { ...event.data, _sseSentAt: Date.now() },
+          };
+          const data = JSON.stringify(enrichedEvent);
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
         } catch {
           // Stream closed
