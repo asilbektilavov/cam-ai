@@ -65,6 +65,7 @@ export async function PATCH(
     name, location, streamUrl, status, venueType, resolution, fps,
     motionThreshold, captureInterval, isMonitoring,
     onvifHost, onvifPort, onvifUser, onvifPass, hasPtz, retentionDays,
+    purpose,
   } = body;
 
   const camera = await prisma.camera.update({
@@ -75,6 +76,7 @@ export async function PATCH(
       ...(streamUrl !== undefined && { streamUrl }),
       ...(status !== undefined && { status }),
       ...(venueType !== undefined && { venueType }),
+      ...(purpose !== undefined && { purpose }),
       ...(resolution !== undefined && { resolution }),
       ...(fps !== undefined && { fps }),
       ...(motionThreshold !== undefined && { motionThreshold }),

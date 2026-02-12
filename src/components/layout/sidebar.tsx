@@ -33,6 +33,7 @@ import {
   Server,
   Key,
   HardHat,
+  UserCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,7 @@ const navItems = [
   { href: '/archive', label: 'Видеоархив', icon: Archive },
   { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
   { href: '/lpr', label: 'Номера авто', icon: Car },
+  { href: '/attendance', label: 'Посещаемость', icon: UserCheck },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
   { href: '/object-search', label: 'Поиск объектов', icon: SearchCode },
   { href: '/automation', label: 'Автоматизация', icon: Workflow },

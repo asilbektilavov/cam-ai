@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   const orgId = session.user.organizationId;
   const body = await req.json();
 
-  const { name, location, streamUrl, branchId, venueType, resolution, fps, motionThreshold, captureInterval } = body;
+  const { name, location, streamUrl, branchId, venueType, resolution, fps, motionThreshold, captureInterval, purpose } = body;
 
   if (!name || !location || !streamUrl || !branchId) {
     return badRequest('Name, location, streamUrl, and branchId are required');
@@ -67,6 +67,7 @@ export async function POST(req: NextRequest) {
       streamUrl,
       branchId,
       venueType: venueType || 'retail',
+      purpose: purpose || 'detection',
       resolution: resolution || '1920x1080',
       fps: fps || 30,
       motionThreshold: motionThreshold || 5.0,

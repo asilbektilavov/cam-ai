@@ -19,6 +19,9 @@ import {
   Search,
   ChevronRight,
   Check,
+  UserCheck,
+  LogIn,
+  LogOut as LogOutIcon,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -64,6 +67,7 @@ interface ApiCamera {
   streamUrl: string;
   status: string;
   venueType: string;
+  purpose: string;
   resolution: string;
   fps: number;
   isMonitoring: boolean;
@@ -72,6 +76,12 @@ interface ApiCamera {
   createdAt: string;
   updatedAt: string;
 }
+
+const PURPOSE_LABELS: Record<string, string> = {
+  detection: 'Обнаружение',
+  attendance_entry: 'Вход',
+  attendance_exit: 'Выход',
+};
 
 export default function CamerasPage() {
   const [cameras, setCameras] = useState<ApiCamera[]>([]);
@@ -82,7 +92,7 @@ export default function CamerasPage() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [togglingMonitor, setTogglingMonitor] = useState<string | null>(null);
   const [snapshotTick, setSnapshotTick] = useState(0);
-  const [editForm, setEditForm] = useState({ streamUrl: '', name: '', location: '' });
+  const [editForm, setEditForm] = useState({ streamUrl: '', name: '', location: '', purpose: 'detection' });
   const [saving, setSaving] = useState(false);
   const [newCamera, setNewCamera] = useState({
     name: '',
@@ -90,6 +100,7 @@ export default function CamerasPage() {
     streamUrl: '',
     resolution: '1920x1080',
     fps: 30,
+    purpose: 'detection',
   });
   const [scanning, setScanning] = useState(false);
   const [scanDialogOpen, setScanDialogOpen] = useState(false);
@@ -276,7 +287,7 @@ export default function CamerasPage() {
     try {
       await apiPost('/api/cameras', { ...newCamera, branchId: selectedBranchId });
       toast.success(`Камера "${newCamera.name}" добавлена`);
-      setNewCamera({ name: '', location: '', streamUrl: '', resolution: '1920x1080', fps: 30 });
+      setNewCamera({ name: '', location: '', streamUrl: '', resolution: '1920x1080', fps: 30, purpose: 'detection' });
       setDialogOpen(false);
       fetchCameras();
     } catch {
@@ -320,6 +331,7 @@ export default function CamerasPage() {
         name: editForm.name,
         location: editForm.location,
         streamUrl: editForm.streamUrl,
+        purpose: editForm.purpose,
       });
       toast.success('Настройки сохранены');
       setSettingsDialogOpen(false);
@@ -333,7 +345,7 @@ export default function CamerasPage() {
 
   const openSettings = (camera: ApiCamera) => {
     setSelectedCamera(camera.id);
-    setEditForm({ streamUrl: camera.streamUrl, name: camera.name, location: camera.location });
+    setEditForm({ streamUrl: camera.streamUrl, name: camera.name, location: camera.location, purpose: camera.purpose || 'detection' });
     setSettingsDialogOpen(true);
   };
 
@@ -404,7 +416,23 @@ export default function CamerasPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Тип камеры</Label>
+                <Label>Назначение</Label>
+                <Select
+                  value={newCamera.purpose}
+                  onValueChange={(v) => setNewCamera({ ...newCamera, purpose: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="detection">Обнаружение объектов (YOLO)</SelectItem>
+                    <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
+                    <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Протокол</Label>
                 <Select
                   value={newCamera.streamUrl.startsWith('rtsp://') ? 'rtsp' : 'http'}
                   onValueChange={(v) => {
@@ -746,6 +774,22 @@ export default function CamerasPage() {
                     placeholder="http://192.168.1.100:8080"
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label>Назначение</Label>
+                  <Select
+                    value={editForm.purpose}
+                    onValueChange={(v) => setEditForm({ ...editForm, purpose: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="detection">Обнаружение объектов (YOLO)</SelectItem>
+                      <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
+                      <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <p className="text-muted-foreground">Статус</p>
@@ -866,13 +910,22 @@ export default function CamerasPage() {
                     </>
                   )}
                   <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent h-16 z-10" />
-                  <div className="absolute bottom-2 left-2 z-10">
+                  <div className="absolute bottom-2 left-2 z-10 flex items-center gap-1">
                     <Badge
                       variant={camera.status === 'online' ? 'default' : 'destructive'}
                       className="text-[10px]"
                     >
                       {camera.status === 'online' ? 'LIVE' : 'ОФЛАЙН'}
                     </Badge>
+                    {camera.purpose && camera.purpose !== 'detection' && (
+                      <Badge variant="outline" className="text-[10px] bg-black/50 text-white border-white/30">
+                        {camera.purpose === 'attendance_entry' ? (
+                          <><LogIn className="h-3 w-3 mr-0.5" />Вход</>
+                        ) : (
+                          <><LogOutIcon className="h-3 w-3 mr-0.5" />Выход</>
+                        )}
+                      </Badge>
+                    )}
                   </div>
                 </div>
 

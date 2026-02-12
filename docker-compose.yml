@@ -40,6 +40,21 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  attendance:
+    build: ./attendance-service
+    container_name: camai-attendance
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - CAM_AI_API_URL=http://cam-ai:3000
+      - ATTENDANCE_API_KEY=${ATTENDANCE_API_KEY:-}
+      - POLL_INTERVAL=0.5
+      - MATCH_TOLERANCE=0.45
+      - COOLDOWN_SECONDS=300
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 volumes:
   pgdata:
   cam-ai-data:

@@ -35,7 +35,7 @@ export function Go2rtcInlinePlayer({
   const [streamReady, setStreamReady] = useState(false);
   const [go2rtcDown, setGo2rtcDown] = useState(false);
   const [scriptLoaded, setScriptLoaded] = useState(
-    typeof window !== 'undefined' && !!(window as Record<string, unknown>).__videoRtcReady
+    typeof window !== 'undefined' && !!(window as unknown as Record<string, unknown>).__videoRtcReady
   );
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRtcRef = useRef<VideoRtcElement | null>(null);
@@ -46,7 +46,7 @@ export function Go2rtcInlinePlayer({
 
   // Load video-rtc.js script once
   useEffect(() => {
-    if ((window as Record<string, unknown>).__videoRtcReady) {
+    if ((window as unknown as Record<string, unknown>).__videoRtcReady) {
       setScriptLoaded(true);
       return;
     }

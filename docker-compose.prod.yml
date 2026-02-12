@@ -70,6 +70,33 @@ services:
       start_period: 60s
       retries: 3
 
+  attendance:
+    build: ./attendance-service
+    container_name: camai-attendance
+    restart: unless-stopped
+    depends_on:
+      cam-ai:
+        condition: service_healthy
+    expose:
+      - "8002"
+    environment:
+      - CAM_AI_API_URL=http://cam-ai:3000
+      - ATTENDANCE_API_KEY=${ATTENDANCE_API_KEY:-}
+      - POLL_INTERVAL=0.5
+      - MATCH_TOLERANCE=0.45
+      - COOLDOWN_SECONDS=300
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
   nginx:
     image: nginx:alpine
     container_name: cam-ai-nginx

@@ -27,6 +27,7 @@ model Organization {
   licensePlates   LicensePlate[]
   auditLogs       AuditLog[]
   automationRules AutomationRule[]
+  employees       Employee[]
 }
 
 model Branch {
@@ -67,6 +68,7 @@ model Camera {
   branchId        String
   branch          Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
   venueType       String            @default("retail")
+  purpose         String            @default("detection") // detection | attendance_entry | attendance_exit
   resolution      String            @default("1920x1080")
   fps             Int               @default(30)
   isMonitoring    Boolean           @default(false)
@@ -398,6 +400,39 @@ model AuditLog {
 
   @@index([organizationId, createdAt])
   @@index([userId, createdAt])
+}
+
+// --- Attendance (Face ID) ---
+
+model Employee {
+  id              String             @id @default(cuid())
+  organizationId  String
+  organization    Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  position        String?
+  department      String?
+  photoPath       String?
+  faceDescriptor  String?            // JSON: 128-D face encoding from face_recognition
+  isActive        Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  attendanceRecords AttendanceRecord[]
+
+  @@unique([organizationId, name])
+}
+
+model AttendanceRecord {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  cameraId      String
+  direction     String    // check_in | check_out
+  confidence    Float
+  snapshotPath  String?
+  timestamp     DateTime  @default(now())
+
+  @@index([employeeId, timestamp])
+  @@index([cameraId, timestamp])
 }
 
 // --- Automation Rules ---

@@ -4,6 +4,41 @@ import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
 import { checkPermission, RBACError } from '@/lib/rbac';
 
+const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
+
+async function startAttendanceCamera(camera: { id: string; streamUrl: string; purpose: string }) {
+  const direction = camera.purpose === 'attendance_entry' ? 'entry' : 'exit';
+  const form = new URLSearchParams();
+  form.append('camera_id', camera.id);
+  form.append('stream_url', camera.streamUrl);
+  form.append('direction', direction);
+
+  const resp = await fetch(`${ATTENDANCE_SERVICE_URL}/cameras/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Attendance service error: ${err}`);
+  }
+}
+
+async function stopAttendanceCamera(cameraId: string) {
+  const form = new URLSearchParams();
+  form.append('camera_id', cameraId);
+
+  const resp = await fetch(`${ATTENDANCE_SERVICE_URL}/cameras/stop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Attendance service error: ${err}`);
+  }
+}
+
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -13,7 +48,7 @@ export async function POST(
 
   try {
     checkPermission(session, 'manage_cameras');
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (e instanceof RBACError) {
       return NextResponse.json({ error: e.message }, { status: e.status });
     }
@@ -28,7 +63,24 @@ export async function POST(
   });
   if (!camera) return notFound('Camera not found');
 
-  await cameraMonitor.startMonitoring(id);
+  if (camera.purpose.startsWith('attendance_')) {
+    // Attendance camera — send to attendance-service
+    try {
+      await startAttendanceCamera(camera);
+      await prisma.camera.update({
+        where: { id },
+        data: { isMonitoring: true, status: 'online' },
+      });
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : 'Attendance service unavailable' },
+        { status: 502 }
+      );
+    }
+  } else {
+    // Detection camera — use standard YOLO monitor
+    await cameraMonitor.startMonitoring(id);
+  }
 
   return NextResponse.json({ success: true, monitoring: true });
 }
@@ -42,7 +94,7 @@ export async function DELETE(
 
   try {
     checkPermission(session, 'manage_cameras');
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (e instanceof RBACError) {
       return NextResponse.json({ error: e.message }, { status: e.status });
     }
@@ -57,7 +109,19 @@ export async function DELETE(
   });
   if (!camera) return notFound('Camera not found');
 
-  await cameraMonitor.stopMonitoring(id);
+  if (camera.purpose.startsWith('attendance_')) {
+    try {
+      await stopAttendanceCamera(id);
+    } catch {
+      // Attendance service may be down, still update DB
+    }
+    await prisma.camera.update({
+      where: { id },
+      data: { isMonitoring: false, status: 'offline' },
+    });
+  } else {
+    await cameraMonitor.stopMonitoring(id);
+  }
 
   return NextResponse.json({ success: true, monitoring: false });
 }
