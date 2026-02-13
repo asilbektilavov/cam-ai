@@ -76,10 +76,27 @@ export async function POST(
   try {
     switch (type) {
       case 'telegram': {
-        if (!config.botToken) return badRequest('Bot Token обязателен');
-        const res = await fetch(`https://api.telegram.org/bot${config.botToken}/getMe`);
+        const botToken = config.botToken || process.env.TELEGRAM_BOT_TOKEN;
+        if (!botToken) return badRequest('Bot Token обязателен');
+        const res = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
         const data = await res.json();
         if (!data.ok) return badRequest('Неверный Bot Token');
+
+        // Send test message if chatId is available
+        const chatId = config.chatId;
+        if (chatId) {
+          const msgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '✅ Тестовое сообщение от CamAI\n\nУведомления работают корректно.',
+            }),
+          });
+          const msgData = await msgRes.json();
+          if (!msgData.ok) return badRequest('Бот валиден, но не удалось отправить сообщение. Убедитесь что вы отправили /start боту.');
+        }
+
         return NextResponse.json({ success: true, botName: data.result.username });
       }
       case 'webhook': {
