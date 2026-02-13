@@ -472,68 +472,31 @@ export default function IntegrationsPage() {
                   return (
                     <Card
                       key={integration.type}
-                      className={cn(
-                        'transition-all',
-                        integration.enabled && 'border-green-500/30 bg-green-500/5'
-                      )}
+                      className="transition-all relative overflow-hidden select-none"
                     >
-                      <CardContent className="p-5">
+                      <CardContent className="p-5 opacity-40">
                         <div className="flex items-start justify-between mb-4">
                           <div className="flex items-center gap-3">
-                            <div
-                              className={cn(
-                                'flex h-10 w-10 items-center justify-center rounded-lg',
-                                integration.enabled
-                                  ? 'bg-green-500/10 text-green-500'
-                                  : 'bg-muted text-muted-foreground'
-                              )}
-                            >
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                               <Icon className="h-5 w-5" />
                             </div>
                             <div>
-                              <h3 className="font-semibold flex items-center gap-2">
-                                {integration.name}
-                                {integration.enabled && (
-                                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                                )}
-                              </h3>
+                              <h3 className="font-semibold">{integration.name}</h3>
                               <Badge variant="secondary" className="text-[10px] mt-0.5">
                                 {categoryLabels[integration.category]}
                               </Badge>
                             </div>
                           </div>
-                          <Switch
-                            checked={integration.enabled}
-                            onCheckedChange={() =>
-                              handleToggle(integration.type, integration.name, integration.enabled)
-                            }
-                          />
                         </div>
-                        <p className="text-sm text-muted-foreground mb-4">
+                        <p className="text-sm text-muted-foreground">
                           {integration.description}
                         </p>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5 flex-1"
-                            disabled={!integration.enabled}
-                            onClick={() => openConfig(integration.type)}
-                          >
-                            <Settings className="h-3.5 w-3.5" />
-                            Настроить
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={() => toast.info(`Документация ${integration.name} откроется в новом окне`)}
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            Docs
-                          </Button>
-                        </div>
                       </CardContent>
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <span className="text-sm font-semibold text-muted-foreground bg-background/80 px-3 py-1.5 rounded-md border">
+                          В разработке
+                        </span>
+                      </div>
                     </Card>
                   );
                 })}
@@ -577,15 +540,15 @@ export default function IntegrationsPage() {
       </Dialog>
 
       {/* API Documentation Preview */}
-      <Card>
-        <CardHeader>
+      <Card className="relative overflow-hidden select-none">
+        <CardHeader className="blur-sm opacity-50">
           <CardTitle className="flex items-center gap-2">
             <Code className="h-5 w-5" />
             REST API
           </CardTitle>
           <CardDescription>Примеры использования API для интеграции</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="blur-sm opacity-50">
           <div className="rounded-lg bg-muted/50 p-4 font-mono text-sm">
             <div className="text-muted-foreground mb-2"># Получить список камер</div>
             <div className="text-green-500">GET</div>{' '}
@@ -598,6 +561,11 @@ export default function IntegrationsPage() {
             <span>/api/analytics/export?format=csv&period=week</span>
           </div>
         </CardContent>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-sm font-semibold text-muted-foreground bg-background/80 px-3 py-1.5 rounded-md border">
+            В разработке
+          </span>
+        </div>
       </Card>
     </div>
   );
