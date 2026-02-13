@@ -34,7 +34,7 @@ CAM_AI_API_URL = os.getenv("CAM_AI_API_URL", "http://localhost:3000")
 API_KEY = os.getenv("ATTENDANCE_API_KEY", "")
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "0.5"))  # seconds between frames
 MATCH_TOLERANCE = float(os.getenv("MATCH_TOLERANCE", "0.45"))  # lower = stricter
-COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "300"))  # 5 min between same person events
+COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "5"))  # 5 sec between same person events
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 logging.basicConfig(
