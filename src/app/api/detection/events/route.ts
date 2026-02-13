@@ -9,11 +9,27 @@ import { saveFrame } from '@/lib/services/frame-storage';
 // Process-level cache for latest detections per camera.
 // Survives Turbopack HMR (unlike module-level variables).
 const CACHE_KEY = '__camai_detectionCache__';
-const proc = process as unknown as Record<string, Map<string, { detections: unknown[]; ts: number }> | undefined>;
+const STATS_KEY = '__camai_detectionStats__';
+const proc = process as unknown as Record<string, unknown>;
 if (!proc[CACHE_KEY]) {
-  proc[CACHE_KEY] = new Map();
+  proc[CACHE_KEY] = new Map<string, { detections: unknown[]; ts: number }>();
 }
-const detectionCache = proc[CACHE_KEY]!;
+const detectionCache = proc[CACHE_KEY] as Map<string, { detections: unknown[]; ts: number }>;
+
+// Aggregated stats per camera for periodic Event creation (analytics)
+interface DetectionStats {
+  lastFlush: number;
+  totalFrames: number;
+  totalPeople: number;
+  maxPeople: number;
+  objectTypes: Record<string, number>; // type -> count
+}
+if (!proc[STATS_KEY]) {
+  proc[STATS_KEY] = new Map<string, DetectionStats>();
+}
+const detectionStats = proc[STATS_KEY] as Map<string, DetectionStats>;
+
+const FLUSH_INTERVAL_MS = 60_000; // flush stats to DB every 60 seconds
 
 // GET /api/detection/events?cameraId=xxx — browser polls for latest detection data
 export async function GET(req: NextRequest) {
@@ -94,6 +110,56 @@ export async function POST(req: NextRequest) {
 
   if (logProc[logKey] % 10 === 0) {
     console.log(`[DetectionEvents] peopleCounter.recordCount(${cameraId}, ${personCount}) — stored=${peopleCounter.getCurrentCount(cameraId)}, readings=${peopleCounter.getReadingsCount(cameraId)}`);
+  }
+
+  // Aggregate stats for periodic flush to Event table (analytics)
+  let stats = detectionStats.get(cameraId);
+  if (!stats) {
+    stats = { lastFlush: Date.now(), totalFrames: 0, totalPeople: 0, maxPeople: 0, objectTypes: {} };
+    detectionStats.set(cameraId, stats);
+  }
+  stats.totalFrames++;
+  stats.totalPeople += personCount;
+  stats.maxPeople = Math.max(stats.maxPeople, personCount);
+  for (const d of detections) {
+    stats.objectTypes[d.type] = (stats.objectTypes[d.type] || 0) + 1;
+  }
+
+  // Flush aggregated stats to Event table every FLUSH_INTERVAL_MS
+  if (camera && Date.now() - stats.lastFlush >= FLUSH_INTERVAL_MS && stats.totalFrames > 0) {
+    const avgPeople = Math.round(stats.totalPeople / stats.totalFrames);
+    const topObjects = Object.entries(stats.objectTypes)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([type, count]) => `${type}: ${count}`)
+      .join(', ');
+
+    // Only create event if there were actual detections
+    if (detections.length > 0 || personCount > 0) {
+      await prisma.event.create({
+        data: {
+          cameraId,
+          organizationId: orgId,
+          branchId: branchId || undefined,
+          type: 'people_count',
+          severity: 'info',
+          description: `За последнюю минуту: ${stats.totalFrames} кадров, среднее ${avgPeople} чел., макс ${stats.maxPeople} чел. Объекты: ${topObjects || 'нет'}`,
+          metadata: JSON.stringify({
+            totalFrames: stats.totalFrames,
+            avgPeople,
+            maxPeople: stats.maxPeople,
+            objectTypes: stats.objectTypes,
+          }),
+        },
+      });
+    }
+
+    // Reset stats
+    stats.lastFlush = Date.now();
+    stats.totalFrames = 0;
+    stats.totalPeople = 0;
+    stats.maxPeople = 0;
+    stats.objectTypes = {};
   }
 
   // Capacity alert: save frame when personCount exceeds maxPeopleCapacity

@@ -43,5 +43,24 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  // Also create Event for analytics
+  const camera = await prisma.camera.findUnique({
+    where: { id: cameraId },
+    select: { organizationId: true, branchId: true },
+  });
+  if (camera) {
+    await prisma.event.create({
+      data: {
+        cameraId,
+        organizationId: camera.organizationId,
+        branchId: camera.branchId || undefined,
+        type: 'face_detected',
+        severity: 'info',
+        description: `${direction === 'check_in' ? 'Вход' : 'Выход'}: ${employee.name} (${Math.round((confidence ?? 0) * 100)}%)`,
+        metadata: JSON.stringify({ employeeId, direction, confidence }),
+      },
+    });
+  }
+
   return NextResponse.json({ success: true, recordId: record.id });
 }
