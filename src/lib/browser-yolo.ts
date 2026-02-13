@@ -97,6 +97,8 @@ class BrowserYolo {
   private _backend: 'webgpu' | 'wasm' | null = null;
   private canvas: OffscreenCanvas | null = null;
   private ctx: OffscreenCanvasRenderingContext2D | null = null;
+  // Pre-allocated buffer reused across detect() calls (~4.9MB, allocated once)
+  private float32Buf: Float32Array | null = null;
 
   get backend(): string | null {
     return this._backend;
@@ -186,9 +188,13 @@ class BrowserYolo {
     const pixels = imageData.data;
 
     // Convert RGBA → CHW float32 normalized [0, 1]
-    const inputSize = 3 * INPUT_SIZE * INPUT_SIZE;
-    const float32Data = new Float32Array(inputSize);
+    // Reuse pre-allocated buffer to avoid ~4.9MB allocation per frame
     const area = INPUT_SIZE * INPUT_SIZE;
+    const inputSize = 3 * area;
+    if (!this.float32Buf || this.float32Buf.length !== inputSize) {
+      this.float32Buf = new Float32Array(inputSize);
+    }
+    const float32Data = this.float32Buf;
 
     for (let i = 0; i < area; i++) {
       const ri = i * 4;
@@ -290,6 +296,7 @@ class BrowserYolo {
     this._backend = null;
     this.canvas = null;
     this.ctx = null;
+    this.float32Buf = null;
   }
 }
 

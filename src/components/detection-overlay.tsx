@@ -38,6 +38,11 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
   useEffect(() => {
     let running = true;
     let rafId = 0;
+    // Cached canvas dimensions — only updated on resize (every 1s check)
+    let cachedW = 0;
+    let cachedH = 0;
+    let lastSizeCheck = 0;
+    const SIZE_CHECK_INTERVAL = 1000;
 
     const draw = () => {
       if (!running) return;
@@ -49,17 +54,26 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
         return;
       }
 
-      const rect = container.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) {
+      // Check container size at most once per second (avoids layout thrashing)
+      const now = performance.now();
+      if (now - lastSizeCheck > SIZE_CHECK_INTERVAL || cachedW === 0) {
+        const rect = container.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && (rect.width !== cachedW || rect.height !== cachedH)) {
+          cachedW = rect.width;
+          cachedH = rect.height;
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = cachedW * dpr;
+          canvas.height = cachedH * dpr;
+          canvas.style.width = `${cachedW}px`;
+          canvas.style.height = `${cachedH}px`;
+        }
+        lastSizeCheck = now;
+      }
+
+      if (cachedW === 0) {
         rafId = requestAnimationFrame(draw);
         return;
       }
-
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -67,13 +81,15 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
         return;
       }
 
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, rect.width, rect.height);
+      // setTransform resets to identity*dpr in one call (no accumulation)
+      const dpr = window.devicePixelRatio || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cachedW, cachedH);
 
       const dets = detectionsRef.current;
       if (visible && dets.length > 0) {
         for (const det of dets) {
-          drawBox(ctx, det, rect.width, rect.height);
+          drawBox(ctx, det, cachedW, cachedH);
         }
       }
 

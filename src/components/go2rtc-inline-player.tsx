@@ -118,8 +118,15 @@ export function Go2rtcInlinePlayer({
     if (!streamReady || !scriptLoaded || !containerRef.current) return;
 
     const container = containerRef.current;
-    const mode = protocol === 'http' ? 'mjpeg' : 'webrtc,mse,mp4,mjpeg';
-    const wsUrl = `${GO2RTC_URL}/api/ws?src=${encodeURIComponent(streamName)}&mode=${mode}`;
+    const initialMode = protocol === 'http' ? 'mjpeg' : 'webrtc,mse,mp4,mjpeg';
+
+    // Track the working mode — once MJPEG (or any mode) works, skip the fallback chain on reconnect
+    let workingMode = initialMode;
+    let hadFrames = false;
+    let lastFrameTime = 0;
+
+    const buildWsUrl = (m: string) =>
+      `${GO2RTC_URL}/api/ws?src=${encodeURIComponent(streamName)}&mode=${m}`;
 
     // Clear any leftover elements
     container.innerHTML = '';
@@ -136,10 +143,10 @@ export function Go2rtcInlinePlayer({
     videoRtcRef.current = el;
 
     // Set mode AFTER appendChild (overrides constructor default after upgrade)
-    el.mode = mode;
+    el.mode = initialMode;
 
     // Set src (triggers WebSocket connection)
-    el.src = wsUrl;
+    el.src = buildWsUrl(initialMode);
 
     // Poll for video element creation and expose it
     let pollCount = 0;
@@ -157,18 +164,61 @@ export function Go2rtcInlinePlayer({
       }
     }, 100);
 
-    // Health check: if ws dies and doesn't reconnect, re-set src
+    // Detect working mode: once poster changes or video has data, lock mode
+    const modeDetect = setInterval(() => {
+      if (hadFrames) return;
+      const v = el.video;
+      if (!v) return;
+      const hasVideo = v.readyState >= 2 && v.videoWidth > 0;
+      const hasPoster = !!(v.poster && v.poster.startsWith('data:image'));
+      if (hasVideo || hasPoster) {
+        hadFrames = true;
+        lastFrameTime = Date.now();
+        // Lock to current mode (e.g. 'mjpeg') — skip fallback chain on reconnect
+        const currentMode = el.mode || initialMode;
+        if (currentMode !== initialMode) {
+          workingMode = currentMode;
+        } else if (hasPoster && !hasVideo) {
+          // poster-only = mjpeg
+          workingMode = 'mjpeg';
+        }
+      }
+    }, 500);
+
+    // Track frame liveness (poster changes)
+    let lastPoster = '';
+    const livenessCheck = setInterval(() => {
+      const v = el.video;
+      if (!v) return;
+      if (v.poster && v.poster !== lastPoster) {
+        lastPoster = v.poster;
+        lastFrameTime = Date.now();
+      } else if (v.readyState >= 2 && !v.paused) {
+        lastFrameTime = Date.now();
+      }
+    }, 200);
+
+    // Health check: fast reconnection on dead connection
+    const HEALTH_INTERVAL = 2000;
+    const STALE_THRESHOLD = 4000; // no frames for 4s = stale
+
     const healthInterval = setInterval(() => {
       if (!el.isConnected) return;
-      // wsState 3 = CLOSED, and no wsURL means it never connected
-      if (el.wsState === 3 && !el.wsURL) {
-        el.mode = mode;
-        el.src = wsUrl;
+
+      const wsDead = el.wsState === 3;
+      const stale = hadFrames && lastFrameTime > 0 && (Date.now() - lastFrameTime > STALE_THRESHOLD);
+
+      if (wsDead || stale) {
+        // Reconnect with the known working mode (skip failed fallback chain)
+        el.mode = workingMode;
+        el.src = buildWsUrl(workingMode);
       }
-    }, 5000);
+    }, HEALTH_INTERVAL);
 
     return () => {
       clearInterval(pollInterval);
+      clearInterval(modeDetect);
+      clearInterval(livenessCheck);
       clearInterval(healthInterval);
       onVideoRefRef.current?.(null);
       if (videoRtcRef.current && videoRtcRef.current.isConnected) {

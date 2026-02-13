@@ -19,7 +19,6 @@ import {
   MapPin,
   Users,
   Shield,
-  Target,
   Car,
   PawPrint,
   Box,
@@ -97,11 +96,8 @@ export default function CameraDetailPage() {
     new Set(['backpack', 'handbag', 'suitcase', 'knife', 'cell_phone', 'bottle'])
   );
   const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
-  const [liveDetections, setLiveDetections] = useState<Detection[]>([]);
   const [fireDetections, setFireDetections] = useState<Detection[]>([]);
   const [faceDetections, setFaceDetections] = useState<Detection[]>([]);
-  const [measuredLatency, setMeasuredLatency] = useState<number | undefined>();
-  const latencyEmaRef = useRef<number | null>(null);
 
   // Browser-side detection via ONNX Runtime Web
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -127,6 +123,8 @@ export default function CameraDetailPage() {
 
   const isAttendance = camera?.purpose?.startsWith('attendance_') ?? false;
 
+  // Browser ONNX detection: purely visual, independent from server detection-service
+  // Runs at low FPS to avoid lagging the video stream
   const {
     detections: browserDetections,
     fps: browserFps,
@@ -135,7 +133,7 @@ export default function CameraDetailPage() {
   } = useBrowserDetection(videoRef, {
     enabled: !isAttendance && selectedClasses.size > 0,
     enabledClasses: browserEnabledTypes,
-    targetFps: 10,
+    targetFps: 3,
   });
 
   // Browser-side face detection for attendance cameras (instant visual feedback)
@@ -176,15 +174,6 @@ export default function CameraDetailPage() {
   useEffect(() => {
     fetchCamera();
   }, [fetchCamera]);
-
-  // Map detection type → filter category
-  const typeToCategory = useCallback((type: string): string => {
-    if (type === 'person') return 'person';
-    if (['car', 'bus', 'truck', 'motorcycle', 'bicycle', 'airplane', 'train', 'boat'].includes(type)) return 'vehicle';
-    if (['cat', 'dog', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear'].includes(type)) return 'animal';
-    if (type === 'fire' || type === 'smoke') return 'fire';
-    return 'other';
-  }, []);
 
   const handleStreamToggle = async () => {
     if (!camera) return;
@@ -264,30 +253,11 @@ export default function CameraDetailPage() {
     });
   };
 
-  // SSE: receive live YOLO detections + fire/smoke events
+  // SSE: receive fire/smoke events from server
   useEventStream(
     useCallback(
       (event) => {
         if (event.cameraId !== cameraId) return;
-
-        if (event.type === 'frame_analyzed' && Array.isArray(event.data.detections)) {
-          const dets = event.data.detections as Detection[];
-          const now = Date.now();
-
-          setLiveDetections(dets);
-
-          // Measure pipeline latency from server timestamp
-          const capturedAt = event.data.capturedAt as number | undefined;
-          if (capturedAt) {
-            const latency = Math.max(0, now - capturedAt);
-            if (latencyEmaRef.current === null) {
-              latencyEmaRef.current = latency;
-            } else {
-              latencyEmaRef.current = 0.85 * latencyEmaRef.current + 0.15 * latency;
-            }
-            setMeasuredLatency(Math.round(latencyEmaRef.current));
-          }
-        }
 
         // Fire/smoke from server-side HSV detection
         if (event.type === 'fire_detected' || event.type === 'smoke_detected') {
@@ -332,34 +302,6 @@ export default function CameraDetailPage() {
 
     poll(); // initial fetch
     const interval = setInterval(poll, 500); // poll every 500ms
-
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
-  }, [isAttendance, camera?.isMonitoring, cameraId]);
-
-  // Poll detection events from autonomous detection-service (detection cameras)
-  // Reliable polling fallback — works even when SSE is broken by Turbopack HMR
-  useEffect(() => {
-    if (isAttendance || !camera?.isMonitoring) return;
-
-    let active = true;
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/detection/events?cameraId=${cameraId}`);
-        if (!active) return;
-        const data = await res.json();
-        if (Array.isArray(data.detections) && data.detections.length > 0) {
-          setLiveDetections(data.detections as Detection[]);
-        }
-      } catch {
-        // Network error — ignore, will retry
-      }
-    };
-
-    poll();
-    const interval = setInterval(poll, 500);
 
     return () => {
       active = false;
@@ -423,43 +365,13 @@ export default function CameraDetailPage() {
     return result;
   }, [isAttendance, faceDetections, browserFaces]);
 
-  // Use browser detections when available, fall back to SSE server detections
-  const useBrowser = browserDetections.length > 0 || (!browserLoading && browserFps > 0);
-
-  // Filter detections by selected categories
+  // Browser detections + fire/smoke from server SSE
   const filteredDetections = useMemo(() => {
     if (selectedClasses.size === 0) return [];
-
-    // Fire/smoke detections from server (always merged, regardless of browser/SSE mode)
     const fireDets = selectedClasses.has('fire') ? fireDetections : [];
-
     // Browser detections are already filtered by enabledClasses in the hook
-    if (useBrowser) return [...browserDetections, ...fireDets];
-
-    // Fallback: SSE server detections — filter by confidence + category + NMS
-    const filtered = liveDetections.filter(d => {
-      const cat = typeToCategory(d.type);
-      if (!selectedClasses.has(cat)) return false;
-      if (cat === 'other' && !selectedOtherTypes.has(d.type)) return false;
-      const minConf = cat === 'person' ? 0.7 : cat === 'vehicle' ? 0.45 : 0.55;
-      return d.confidence >= minConf;
-    });
-    const kept: typeof filtered = [];
-    for (const det of filtered.sort((a, b) => b.confidence - a.confidence)) {
-      const dominated = kept.some(k => {
-        if (k.type !== det.type) return false;
-        const x1 = Math.max(k.bbox.x, det.bbox.x);
-        const y1 = Math.max(k.bbox.y, det.bbox.y);
-        const x2 = Math.min(k.bbox.x + k.bbox.w, det.bbox.x + det.bbox.w);
-        const y2 = Math.min(k.bbox.y + k.bbox.h, det.bbox.y + det.bbox.h);
-        const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-        const union = k.bbox.w * k.bbox.h + det.bbox.w * det.bbox.h - inter;
-        return union > 0 && inter / union > 0.45;
-      });
-      if (!dominated) kept.push(det);
-    }
-    return [...kept, ...fireDets];
-  }, [liveDetections, browserDetections, fireDetections, useBrowser, selectedClasses, selectedOtherTypes, typeToCategory]);
+    return [...browserDetections, ...fireDets];
+  }, [browserDetections, fireDetections, selectedClasses]);
 
   // Update counts from filtered detections
   useEffect(() => {
@@ -539,9 +451,8 @@ export default function CameraDetailPage() {
                 <DetectionOverlay
                   detections={isAttendance ? mergedFaceDetections : filteredDetections}
                   visible={isAttendance || selectedClasses.size > 0}
-                  pipelineLatencyMs={isAttendance ? undefined : (useBrowser ? 0 : measuredLatency)}
                 />
-                {/* Browser AI badge — only for detection cameras */}
+                {/* AI detection badge — for detection cameras */}
                 {!isAttendance && selectedClasses.size > 0 && (
                   <div className="absolute bottom-3 left-3 z-20">
                     {browserLoading ? (
@@ -549,13 +460,13 @@ export default function CameraDetailPage() {
                         <Loader2 className="h-3 w-3 animate-spin" />
                         AI загрузка...
                       </Badge>
-                    ) : useBrowser ? (
+                    ) : browserFps > 0 ? (
                       <Badge variant="secondary" className="bg-black/60 text-green-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
                         <span className="relative flex h-1.5 w-1.5">
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
                           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-400" />
                         </span>
-                        AI Browser {browserFps}fps {browserBackend === 'webgpu' ? '⚡' : ''}
+                        AI {browserFps}fps {browserBackend === 'webgpu' ? '⚡' : ''}
                       </Badge>
                     ) : null}
                   </div>
