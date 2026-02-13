@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
 
   const objectType = searchParams.get('objectType') || '';
   const cameraId = searchParams.get('cameraId') || '';
+  const triggerType = searchParams.get('triggerType') || '';
   const from = searchParams.get('from') || '';
   const to = searchParams.get('to') || '';
   const limit = Math.min(parseInt(searchParams.get('limit') || '50', 10), 200);
@@ -29,6 +30,10 @@ export async function GET(req: NextRequest) {
 
     if (cameraId) {
       where.session.camera.id = cameraId;
+    }
+
+    if (triggerType) {
+      where.session.triggerType = triggerType;
     }
 
     if (from || to) {
@@ -105,10 +110,12 @@ export async function GET(req: NextRequest) {
         description: frame.description,
         peopleCount: frame.peopleCount,
         objects,
-        detections: detections.map((d) => ({
+        detections: detections.map((d: Record<string, unknown>) => ({
           type: d.type,
           label: d.label,
           confidence: d.confidence,
+          ...(d.bbox ? { bbox: d.bbox } : {}),
+          ...(d.color ? { color: d.color } : {}),
         })),
         camera: {
           id: frame.session.camera.id,

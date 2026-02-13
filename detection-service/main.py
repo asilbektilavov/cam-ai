@@ -51,27 +51,67 @@ CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.40"))
 # YOLO COCO class mapping to our detection types
 CLASS_TYPE_MAP: dict[int, tuple[str, str, str]] = {
     # classId -> (type, label_ru, color)
+    # Люди
     0: ("person", "Человек", "#3B82F6"),
-    1: ("bicycle", "Велосипед", "#84CC16"),
+    # Транспорт
+    1: ("bicycle", "Велосипед", "#22C55E"),
     2: ("car", "Автомобиль", "#22C55E"),
-    3: ("motorcycle", "Мотоцикл", "#84CC16"),
+    3: ("motorcycle", "Мотоцикл", "#22C55E"),
+    4: ("airplane", "Самолёт", "#22C55E"),
     5: ("bus", "Автобус", "#22C55E"),
+    6: ("train", "Поезд", "#22C55E"),
     7: ("truck", "Грузовик", "#22C55E"),
+    8: ("boat", "Лодка", "#22C55E"),
+    # Животные
+    14: ("bird", "Птица", "#8B5CF6"),
     15: ("cat", "Кошка", "#8B5CF6"),
     16: ("dog", "Собака", "#8B5CF6"),
+    17: ("horse", "Лошадь", "#8B5CF6"),
+    18: ("sheep", "Овца", "#8B5CF6"),
+    19: ("cow", "Корова", "#8B5CF6"),
+    20: ("elephant", "Слон", "#8B5CF6"),
+    21: ("bear", "Медведь", "#8B5CF6"),
+    # Прочее — предметы/объекты
+    9: ("traffic_light", "Светофор", "#6B7280"),
+    10: ("fire_hydrant", "Гидрант", "#6B7280"),
+    11: ("stop_sign", "Знак стоп", "#6B7280"),
+    13: ("bench", "Скамейка", "#6B7280"),
+    24: ("backpack", "Рюкзак", "#6B7280"),
+    25: ("umbrella", "Зонт", "#6B7280"),
+    26: ("handbag", "Сумка", "#6B7280"),
+    28: ("suitcase", "Чемодан", "#6B7280"),
+    39: ("bottle", "Бутылка", "#6B7280"),
+    41: ("cup", "Чашка", "#6B7280"),
+    43: ("knife", "Нож", "#EF4444"),
+    45: ("bowl", "Миска", "#6B7280"),
+    56: ("chair", "Стул", "#6B7280"),
+    57: ("couch", "Диван", "#6B7280"),
+    58: ("potted_plant", "Растение", "#6B7280"),
+    60: ("dining_table", "Стол", "#6B7280"),
+    62: ("tv", "Монитор", "#6B7280"),
+    63: ("laptop", "Ноутбук", "#6B7280"),
+    64: ("mouse", "Мышь", "#6B7280"),
+    66: ("keyboard", "Клавиатура", "#6B7280"),
+    67: ("cell_phone", "Телефон", "#6B7280"),
+    73: ("book", "Книга", "#6B7280"),
+    74: ("clock", "Часы", "#6B7280"),
+    75: ("vase", "Ваза", "#6B7280"),
+    76: ("scissors", "Ножницы", "#6B7280"),
 }
 
 # Broader categories
-VEHICLE_CLASSES = {2, 3, 5, 7}
+VEHICLE_CLASSES = {1, 2, 3, 4, 5, 6, 7, 8}
 PERSON_CLASSES = {0}
-ANIMAL_CLASSES = {15, 16}
+ANIMAL_CLASSES = {14, 15, 16, 17, 18, 19, 20, 21}
 BIKE_CLASSES = {1, 3}
 
 # Detection filter categories (name → set of YOLO class IDs)
+OTHER_CLASSES = {9, 10, 11, 13, 24, 25, 26, 28, 39, 41, 43, 45, 56, 57, 58, 60, 62, 63, 64, 66, 67, 73, 74, 75, 76}
 FILTER_CATEGORIES: dict[str, set[int]] = {
-    "person": {0},
-    "vehicle": {1, 2, 3, 5, 7},
-    "animal": {15, 16},
+    "person": PERSON_CLASSES,
+    "vehicle": VEHICLE_CLASSES,
+    "animal": ANIMAL_CLASSES,
+    "other": OTHER_CLASSES,
     "fire": {-3},  # sentinel: HSV-based fire/smoke detection (not a YOLO class)
 }
 

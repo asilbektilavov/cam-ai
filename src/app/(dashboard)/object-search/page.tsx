@@ -11,6 +11,8 @@ import {
   Package,
   Image,
   Users,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,8 +27,25 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import { apiGet } from '@/lib/api-client';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+
+interface DetectionBbox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface ObjectDetection {
+  type: string;
+  label: string;
+  confidence: number;
+  bbox?: DetectionBbox;
+  color?: string;
+}
 
 interface ObjectResult {
   id: string;
@@ -35,7 +54,7 @@ interface ObjectResult {
   description: string | null;
   peopleCount: number | null;
   objects: string[];
-  detections: Array<{ type: string; label: string; confidence: number }>;
+  detections: ObjectDetection[];
   camera: { id: string; name: string; location: string };
   sessionId: string;
 }
@@ -86,11 +105,63 @@ function formatDate(date: string) {
   });
 }
 
+function FrameWithOverlay({ result, showBoxes }: { result: ObjectResult; showBoxes: boolean }) {
+  const hasBboxes = result.detections.some((d) => d.bbox);
+
+  return (
+    <div className="relative aspect-video bg-muted overflow-hidden">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`/api/frames/${result.framePath}`}
+        alt={result.description || 'Кадр'}
+        className="w-full h-full object-cover"
+        loading="lazy"
+      />
+      {showBoxes && hasBboxes && (
+        <div className="absolute inset-0">
+          {result.detections
+            .filter((d) => d.bbox)
+            .map((det, i) => (
+              <div
+                key={i}
+                className="absolute border-2 rounded-sm"
+                style={{
+                  left: `${(det.bbox!.x) * 100}%`,
+                  top: `${(det.bbox!.y) * 100}%`,
+                  width: `${(det.bbox!.w) * 100}%`,
+                  height: `${(det.bbox!.h) * 100}%`,
+                  borderColor: det.color || '#3B82F6',
+                }}
+              >
+                <span
+                  className="absolute -top-5 left-0 text-[10px] px-1 py-0.5 rounded-sm text-white whitespace-nowrap"
+                  style={{ backgroundColor: det.color || '#3B82F6' }}
+                >
+                  {det.label} {Math.round(det.confidence * 100)}%
+                </span>
+              </div>
+            ))}
+        </div>
+      )}
+      {/* People count badge */}
+      {result.peopleCount != null && result.peopleCount > 0 && (
+        <div className="absolute top-2 right-2">
+          <Badge className="bg-red-500/90 text-white border-0 text-xs">
+            <Users className="h-3 w-3 mr-1" />
+            {result.peopleCount} чел.
+          </Badge>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ObjectSearchTab() {
   const [results, setResults] = useState<ObjectResult[]>([]);
   const [total, setTotal] = useState(0);
   const [availableTypes, setAvailableTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showBoxes, setShowBoxes] = useState(true);
 
   const [objectType, setObjectType] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -101,6 +172,7 @@ function ObjectSearchTab() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
+      params.set('triggerType', 'capacity_alert');
       if (objectType && objectType !== 'all') params.set('objectType', objectType);
       if (dateFrom) params.set('from', dateFrom);
       if (dateTo) params.set('to', dateTo);
@@ -195,21 +267,22 @@ function ObjectSearchTab() {
         <>
           <div className="flex items-center justify-between">
             <Badge variant="secondary">Найдено: {total}</Badge>
+            <div className="flex items-center gap-2">
+              {showBoxes ? (
+                <Eye className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <EyeOff className="h-4 w-4 text-muted-foreground" />
+              )}
+              <Label className="text-xs text-muted-foreground">Рамки</Label>
+              <Switch checked={showBoxes} onCheckedChange={setShowBoxes} />
+            </div>
           </div>
 
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {results.map((result) => (
               <Card key={result.id} className="overflow-hidden">
                 {result.framePath && (
-                  <div className="relative aspect-video bg-muted">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/api/frames/${result.framePath}`}
-                      alt={result.description || 'Кадр'}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  </div>
+                  <FrameWithOverlay result={result} showBoxes={showBoxes} />
                 )}
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between mb-2">
