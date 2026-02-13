@@ -15,7 +15,7 @@ export function WorkstationConfig({ config, onChange }: WorkstationConfigProps) 
   return (
     <div className="space-y-3">
       <div className="space-y-2">
-        <Label>Минимальное кол-во сотрудников</Label>
+        <Label>Минимальное кол-во людей</Label>
         <Input
           type="number"
           min={1}
@@ -45,7 +45,7 @@ export function WorkstationConfig({ config, onChange }: WorkstationConfigProps) 
           }}
         />
         <p className="text-xs text-muted-foreground">
-          Если на рабочем месте нет сотрудников дольше указанного времени — отправится уведомление
+          Если на рабочем месте нет людей дольше указанного времени — отправится уведомление
         </p>
       </div>
     </div>

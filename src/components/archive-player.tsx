@@ -144,7 +144,7 @@ export function ArchivePlayer({ cameraId, cameraName }: ArchivePlayerProps) {
 
   const archiveUrl =
     selectedHour !== null
-      ? `/api/cameras/${cameraId}/archive?date=${selectedDate}&hour=${selectedHour}`
+      ? `/api/cameras/${cameraId}/archive?date=${selectedDate}&hour=${selectedHour}&format=playlist`
       : null;
 
   const handleHourClick = (hour: number) => {

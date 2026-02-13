@@ -134,7 +134,7 @@ export default function AttendancePage() {
       const data = await apiGet<Employee[]>('/api/attendance/employees');
       setEmployees(data);
     } catch {
-      toast.error('Не удалось загрузить сотрудников');
+      toast.error('Не удалось загрузить список людей');
     }
   }, []);
 
@@ -158,7 +158,7 @@ export default function AttendancePage() {
 
   const handleAddEmployee = async () => {
     if (!newName.trim()) {
-      toast.error('Введите имя сотрудника');
+      toast.error('Введите имя');
       return;
     }
     if (!extractedData) {
@@ -174,7 +174,7 @@ export default function AttendancePage() {
         photoBase64: extractedData.photoBase64,
         faceDescriptor: extractedData.descriptor,
       });
-      toast.success(`Сотрудник "${newName}" добавлен`);
+      toast.success(`"${newName}" добавлен`);
       setAddDialogOpen(false);
       setNewName('');
       setNewPosition('');
@@ -189,10 +189,10 @@ export default function AttendancePage() {
   };
 
   const handleDeleteEmployee = async (id: string, name: string) => {
-    if (!confirm(`Удалить сотрудника "${name}"?`)) return;
+    if (!confirm(`Удалить "${name}"?`)) return;
     try {
       await apiDelete(`/api/attendance/${id}`);
-      toast.success('Сотрудник удалён');
+      toast.success('Удалено');
       fetchEmployees();
     } catch {
       toast.error('Ошибка удаления');
@@ -271,7 +271,7 @@ export default function AttendancePage() {
           </Button>
           <Button size="sm" onClick={() => setAddDialogOpen(true)}>
             <Plus className="h-4 w-4 mr-1" />
-            Добавить сотрудника
+            Добавить человека
           </Button>
         </div>
       </div>
@@ -286,7 +286,7 @@ export default function AttendancePage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{employees.length}</p>
-                <p className="text-xs text-muted-foreground">Сотрудников</p>
+                <p className="text-xs text-muted-foreground">Людей</p>
               </div>
             </div>
           </CardContent>
@@ -356,7 +356,7 @@ export default function AttendancePage() {
           onClick={() => setTab('employees')}
         >
           <Users className="h-4 w-4 inline mr-1" />
-          Сотрудники ({employees.length})
+          Люди ({employees.length})
         </button>
         <button
           className={cn(
@@ -465,14 +465,14 @@ export default function AttendancePage() {
             <Card>
               <CardContent className="py-12 text-center text-muted-foreground">
                 <UserX className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p>Нет сотрудников</p>
+                <p>Список пуст</p>
                 <Button
                   className="mt-4"
                   size="sm"
                   onClick={() => setAddDialogOpen(true)}
                 >
                   <Plus className="h-4 w-4 mr-1" />
-                  Добавить первого сотрудника
+                  Добавить первого человека
                 </Button>
               </CardContent>
             </Card>
@@ -651,7 +651,7 @@ export default function AttendancePage() {
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Добавить сотрудника</DialogTitle>
+            <DialogTitle>Добавить человека</DialogTitle>
             <DialogDescription>
               Загрузите фото лица для автоматического распознавания
             </DialogDescription>

@@ -493,7 +493,7 @@ export default function DiagnosticsPage() {
           <CardContent>
             <div className="space-y-3">
               <div className="flex items-center gap-4 text-sm text-muted-foreground mb-3">
-                <span><Users className="h-4 w-4 inline mr-1" />Загружено сотрудников: <strong className="text-foreground">{data.services.attendance.employeesLoaded}</strong></span>
+                <span><Users className="h-4 w-4 inline mr-1" />Загружено людей: <strong className="text-foreground">{data.services.attendance.employeesLoaded}</strong></span>
               </div>
               {data.services.attendance.cameras.map((cam) => (
                 <div key={cam.id} className="flex items-center justify-between rounded-lg border p-3">

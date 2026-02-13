@@ -182,7 +182,7 @@ export const venueConfigs: VenueConfig[] = [
       {
         id: 'attendance',
         name: 'Учёт посещаемости',
-        description: 'Автоматический учёт времени прихода и ухода сотрудников',
+        description: 'Автоматический учёт времени прихода и ухода людей',
         icon: 'UserCheck',
         enabled: true,
         category: 'tracking',
