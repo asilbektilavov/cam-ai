@@ -4,6 +4,10 @@ import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { checkPermission, RBACError } from '@/lib/rbac';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
 import { streamManager } from '@/lib/services/stream-manager';
+import { go2rtcManager } from '@/lib/services/go2rtc-manager';
+
+const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
+const DETECTION_SERVICE_URL = process.env.DETECTION_SERVICE_URL || 'http://localhost:8001';
 
 export async function GET(
   _req: NextRequest,
@@ -68,6 +72,10 @@ export async function PATCH(
     purpose, maxPeopleCapacity,
   } = body;
 
+  // Detect purpose change while camera is monitoring — need to switch services
+  const purposeChanged = purpose !== undefined && purpose !== existing.purpose;
+  const isCurrentlyMonitoring = existing.isMonitoring;
+
   const camera = await prisma.camera.update({
     where: { id },
     data: {
@@ -91,6 +99,60 @@ export async function PATCH(
       ...(maxPeopleCapacity !== undefined && { maxPeopleCapacity }),
     },
   });
+
+  // If purpose changed and camera was monitoring, restart on the correct service
+  if (purposeChanged && isCurrentlyMonitoring) {
+    const stopService = async (serviceUrl: string, cameraId: string) => {
+      const form = new URLSearchParams();
+      form.append('camera_id', cameraId);
+      await fetch(`${serviceUrl}/cameras/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      }).catch(() => {});
+    };
+
+    const startService = async (
+      serviceUrl: string,
+      cam: { id: string; streamUrl: string; purpose: string },
+    ) => {
+      const form = new URLSearchParams();
+      form.append('camera_id', cam.id);
+      form.append('stream_url', cam.streamUrl);
+      if (cam.purpose.startsWith('attendance_')) {
+        form.append('direction', cam.purpose === 'attendance_entry' ? 'entry' : 'exit');
+      }
+      await fetch(`${serviceUrl}/cameras/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+    };
+
+    try {
+      // Stop old service
+      const wasAttendance = existing.purpose.startsWith('attendance_');
+      if (wasAttendance) {
+        await stopService(ATTENDANCE_SERVICE_URL, id);
+      } else {
+        await stopService(DETECTION_SERVICE_URL, id);
+        await cameraMonitor.stopMonitoring(id).catch(() => {});
+      }
+
+      // Start new service
+      const isNowAttendance = camera.purpose.startsWith('attendance_');
+      if (isNowAttendance) {
+        void go2rtcManager.addStream(id, camera.streamUrl);
+        await startService(ATTENDANCE_SERVICE_URL, camera);
+      } else {
+        void go2rtcManager.addStream(id, camera.streamUrl);
+        await startService(DETECTION_SERVICE_URL, camera).catch(() => {});
+        await cameraMonitor.startMonitoring(id).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[CameraUpdate] Failed to switch services on purpose change:', e);
+    }
+  }
 
   return NextResponse.json(camera);
 }
