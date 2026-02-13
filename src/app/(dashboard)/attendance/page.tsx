@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   UserCheck,
   Plus,
@@ -219,13 +219,26 @@ export default function AttendancePage() {
   };
 
   // ---------- Stats ----------
+  // Records are sorted by timestamp DESC. Find each employee's latest record.
 
-  const todayCheckIns = records.filter((r) => r.direction === 'check_in');
-  const todayCheckOuts = records.filter((r) => r.direction === 'check_out');
-  const uniquePresent = new Set(todayCheckIns.map((r) => r.employeeId));
-  const uniqueLeft = new Set(todayCheckOuts.map((r) => r.employeeId));
-  const currentlyInside = [...uniquePresent].filter(
-    (id) => !uniqueLeft.has(id)
+  const latestByEmployee = useMemo(() => {
+    const map = new Map<string, AttendanceRecord>();
+    for (const r of records) {
+      if (!map.has(r.employeeId)) {
+        map.set(r.employeeId, r); // first = most recent (DESC order)
+      }
+    }
+    return map;
+  }, [records]);
+
+  const uniquePresent = new Set(
+    records.filter((r) => r.direction === 'check_in').map((r) => r.employeeId)
+  );
+  const currentlyInside = [...latestByEmployee.values()].filter(
+    (r) => r.direction === 'check_in'
+  ).length;
+  const currentlyLeft = [...latestByEmployee.values()].filter(
+    (r) => r.direction === 'check_out'
   ).length;
 
   // ---------- Render ----------
@@ -298,7 +311,7 @@ export default function AttendancePage() {
                 <LogOut className="h-5 w-5 text-orange-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{uniqueLeft.size}</p>
+                <p className="text-2xl font-bold">{currentlyLeft}</p>
                 <p className="text-xs text-muted-foreground">Ушли</p>
               </div>
             </div>
@@ -472,7 +485,7 @@ export default function AttendancePage() {
                     <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center shrink-0 overflow-hidden">
                       {emp.photoPath ? (
                         <img
-                          src={`/${emp.photoPath}`}
+                          src={`/api/attendance/${emp.id}/photo`}
                           alt={emp.name}
                           className="h-full w-full object-cover"
                         />
