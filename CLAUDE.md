@@ -61,9 +61,64 @@ src/
 - **Bank**: Suspicious behavior, ATM monitoring, queue analysis
 - **Parking**: License plate recognition, space occupancy, traffic flow
 
+## Services
+
+### Next.js App (port 3000)
+Main web app — dashboard, camera management, analytics, attendance UI.
+
+### go2rtc (port 1984/8554/8555)
+Low-latency video streaming: RTSP → WebRTC in browser (<500ms). Binary in `bin/go2rtc`.
+
+### detection-service (port 8001)
+Python FastAPI + YOLOv8n. Server-side object detection at ~1fps.
+
+### attendance-service (port 8002)
+Python FastAPI + face_recognition (dlib CNN). Autonomous face recognition:
+- Runs independently — records attendance even when browser is closed
+- Watches cameras via RTSP/HTTP, detects faces at ~1.3fps
+- Matches against known employees (synced from Next.js API)
+- Records check-in/check-out to DB via POST `/api/attendance/event` (5min cooldown per person)
+- Pushes face overlay data to POST `/api/attendance/face-events` (browser reads via polling)
+
+**Employee sync**: attendance-service loads employees on startup. Auto-sync triggers when employees are created/updated/deleted via the web UI (POST/PATCH/DELETE on employee routes call `/employees/sync`).
+
+**Start**: `cd attendance-service && python main.py` (or uvicorn)
+
+## Attendance / Face Recognition Architecture
+
+### Detection Pipeline
+1. **Browser ONNX UltraFace** (~24fps): Fast face bbox tracking in browser
+2. **Server dlib CNN** (~1.3fps): Face identity (name + confidence) via attendance-service
+3. **Merge logic** (camera page `useMemo`): Browser bbox (fast position) + Server identity (name/color) matched by center distance (threshold 0.25)
+
+### Data Flow (overlay)
+```
+attendance-service → POST /api/attendance/face-events → process-level cache
+browser polls GET /api/attendance/face-events?cameraId=... every 500ms → merge with browser faces → DetectionOverlay canvas
+```
+Polling only runs when camera page is open (useEffect cleanup stops it).
+
+### Data Flow (attendance records)
+```
+attendance-service → _report_event() → POST /api/attendance/event → Prisma AttendanceRecord
+```
+Works autonomously without browser. 5-minute cooldown per (employee, camera).
+
+### Key Files
+- `attendance-service/main.py` — FrameGrabber, CameraWatcher, face matching
+- `src/app/api/attendance/face-events/route.ts` — process-level cache + polling GET endpoint
+- `src/app/api/attendance/event/route.ts` — attendance record creation
+- `src/app/api/attendance/employees/route.ts` — employee CRUD + auto-sync to attendance-service
+- `src/hooks/use-browser-face-detection.ts` — browser ONNX UltraFace detection
+- `src/components/detection-overlay.tsx` — canvas overlay (rAF loop, detectionsRef)
+
+### Singleton Pattern (Turbopack HMR)
+Use `process` as singleton container, NOT `globalThis`. Turbopack creates separate module contexts during HMR, breaking `globalThis` singletons. See `src/lib/services/event-emitter.ts` and face-events route.
+
 ## Development Notes
 - All UI components are from shadcn/ui (in `src/components/ui/`)
 - Use `cn()` from `@/lib/utils` for conditional class names
 - Auth state is managed via Zustand store (`@/lib/store`)
 - The app uses route groups: `(auth)` for public auth pages, `(dashboard)` for protected pages
 - Russian language is used for UI text (target audience)
+- **Singletons**: Always use `process[KEY]` pattern for module-level singletons that need to survive Turbopack HMR
