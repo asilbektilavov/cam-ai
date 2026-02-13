@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  BarChart3,
   TrendingUp,
   TrendingDown,
   Users,
@@ -152,7 +151,7 @@ export default function AnalyticsPage() {
     return change >= 0 ? `+${change}%` : `${change}%`;
   };
 
-  const maxHourlyCount = data ? Math.max(...data.hourlyData.map((h) => h.count), 1) : 1;
+  const maxHourlyCount = data ? Math.max(...data.hourlyData.map((h) => h.count), 1) + 1 : 2;
 
   // Filter events by selected types
   const filteredEvents = data?.recentEvents.filter((e) => {
@@ -345,52 +344,107 @@ export default function AnalyticsPage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <BarChart3 className="h-5 w-5" />
+                    <Activity className="h-5 w-5" />
                     Активность по часам
                   </CardTitle>
                   <CardDescription>Количество событий по часам за {periodLabels[period].toLowerCase()}</CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="px-0 pb-0">
                   {data.hourlyData.every((h) => h.count === 0) ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
-                      <BarChart3 className="h-12 w-12 text-muted-foreground mb-4" />
+                      <Activity className="h-12 w-12 text-muted-foreground mb-4" />
                       <p className="text-muted-foreground">Нет данных за выбранный период</p>
                       <p className="text-sm text-muted-foreground mt-1">
                         Начните мониторинг камер для сбора статистики
                       </p>
                     </div>
                   ) : (
-                    <div className="flex items-end gap-1.5 h-48">
-                      {data.hourlyData.map((item) => {
-                        const percentage = (item.count / maxHourlyCount) * 100;
-                        return (
-                          <div key={item.hour} className="flex-1 flex flex-col items-center gap-1">
-                            {item.count > 0 && (
-                              <span className="text-[10px] text-muted-foreground">{item.count}</span>
-                            )}
-                            <div
-                              className={cn(
-                                'w-full rounded-t-sm transition-all',
-                                percentage > 80
-                                  ? 'bg-red-500'
-                                  : percentage > 60
-                                  ? 'bg-orange-500'
-                                  : percentage > 40
-                                  ? 'bg-yellow-500'
-                                  : percentage > 0
-                                  ? 'bg-blue-500'
-                                  : 'bg-muted'
-                              )}
-                              style={{ height: `${Math.max(percentage, 2)}%` }}
-                            />
-                            <span className="text-[10px] text-muted-foreground">{item.hour}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    (() => {
+                      const W = 960, H = 300, PL = 46, PR = 8, PT = 12, PB = 36;
+                      const chartW = W - PL - PR, chartH = H - PT - PB;
+                      const baseline = PT + chartH; // y=0 line
+                      const pts = data.hourlyData.map((item, i) => ({
+                        x: PL + (i / Math.max(data.hourlyData.length - 1, 1)) * chartW,
+                        y: baseline - (item.count / maxHourlyCount) * chartH,
+                        ...item,
+                      }));
+                      // Catmull-Rom → cubic bezier, clamped so curve never dips below baseline
+                      const catmull = (p: typeof pts) => {
+                        if (p.length < 2) return `M${p[0].x},${p[0].y}`;
+                        let d = `M${p[0].x},${p[0].y}`;
+                        for (let i = 0; i < p.length - 1; i++) {
+                          const p0 = p[Math.max(i - 1, 0)];
+                          const p1 = p[i];
+                          const p2 = p[i + 1];
+                          const p3 = p[Math.min(i + 2, p.length - 1)];
+                          const cp1x = p1.x + (p2.x - p0.x) / 6;
+                          const cp1y = Math.min(p1.y + (p2.y - p0.y) / 6, baseline);
+                          const cp2x = p2.x - (p3.x - p1.x) / 6;
+                          const cp2y = Math.min(p2.y - (p3.y - p1.y) / 6, baseline);
+                          d += ` C${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
+                        }
+                        return d;
+                      };
+                      const curvePath = catmull(pts);
+                      const areaPath = `${curvePath} L${pts[pts.length - 1].x},${baseline} L${pts[0].x},${baseline} Z`;
+                      // Integer grid steps to avoid duplicate labels
+                      const yTicks: number[] = [];
+                      const tickStep = maxHourlyCount <= 5 ? 1 : maxHourlyCount <= 20 ? Math.ceil(maxHourlyCount / 5) : Math.ceil(maxHourlyCount / 6);
+                      for (let v = 0; v <= maxHourlyCount; v += tickStep) yTicks.push(v);
+                      const labelStep = pts.length > 16 ? 2 : 1;
+                      return (
+                        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none" style={{ height: 420 }}>
+                          {/* Y axis label */}
+                          <text x={10} y={PT + chartH / 2} textAnchor="middle" className="fill-muted-foreground" fontSize={10} transform={`rotate(-90, 10, ${PT + chartH / 2})`}>
+                            Кол-во событий
+                          </text>
+                          {/* X axis label */}
+                          <text x={PL + chartW / 2} y={H - 2} textAnchor="middle" className="fill-muted-foreground" fontSize={10}>
+                            Час
+                          </text>
+                          {/* Grid lines + Y values */}
+                          {yTicks.map((v) => {
+                            const y = baseline - (v / maxHourlyCount) * chartH;
+                            return (
+                              <g key={v}>
+                                <line x1={PL} y1={y} x2={PL + chartW} y2={y} stroke="currentColor" strokeOpacity={0.08} strokeDasharray="4 4" />
+                                <text x={PL - 8} y={y + 4} textAnchor="end" className="fill-muted-foreground" fontSize={11}>
+                                  {v}
+                                </text>
+                              </g>
+                            );
+                          })}
+                          {/* Axis lines */}
+                          <line x1={PL} y1={PT} x2={PL} y2={baseline} stroke="currentColor" strokeOpacity={0.15} />
+                          <line x1={PL} y1={baseline} x2={PL + chartW} y2={baseline} stroke="currentColor" strokeOpacity={0.15} />
+                          <defs>
+                            <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0.25} />
+                              <stop offset="100%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0} />
+                            </linearGradient>
+                            <clipPath id="chartClip">
+                              <rect x={PL} y={PT} width={chartW} height={chartH} />
+                            </clipPath>
+                          </defs>
+                          <g clipPath="url(#chartClip)">
+                            <path d={areaPath} fill="url(#areaGrad)" />
+                            <path d={curvePath} fill="none" stroke="hsl(217, 91%, 60%)" strokeWidth={2} strokeLinecap="round" />
+                          </g>
+                          {/* X labels */}
+                          {pts.map((p, i) => (
+                            i % labelStep === 0 ? (
+                              <text key={p.hour} x={p.x} y={baseline + 16} textAnchor="middle" className="fill-muted-foreground" fontSize={10}>
+                                {p.hour}
+                              </text>
+                            ) : null
+                          ))}
+                        </svg>
+                      );
+                    })()
                   )}
                 </CardContent>
               </Card>
+              <div className="h-40" />
             </TabsContent>
 
             {/* Events Tab - Event type breakdown */}
