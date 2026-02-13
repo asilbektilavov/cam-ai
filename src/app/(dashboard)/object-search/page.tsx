@@ -200,6 +200,17 @@ function ObjectSearchTab() {
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {results.map((result) => (
               <Card key={result.id} className="overflow-hidden">
+                {result.framePath && (
+                  <div className="relative aspect-video bg-muted">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/api/frames/${result.framePath}`}
+                      alt={result.description || 'Кадр'}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  </div>
+                )}
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2">

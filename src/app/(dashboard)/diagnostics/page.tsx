@@ -276,7 +276,7 @@ export default function DiagnosticsPage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Database className="h-4 w-4" />
-              PostgreSQL
+              База данных
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -294,7 +294,7 @@ export default function DiagnosticsPage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Eye className="h-4 w-4" />
-              YOLO Детекция
+              Детекция объектов
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -312,7 +312,7 @@ export default function DiagnosticsPage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Zap className="h-4 w-4" />
-              Gemini AI
+              AI-аналитика
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -325,7 +325,7 @@ export default function DiagnosticsPage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Video className="h-4 w-4" />
-              go2rtc
+              Видеостриминг
             </CardTitle>
           </CardHeader>
           <CardContent>

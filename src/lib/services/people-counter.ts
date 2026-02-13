@@ -79,8 +79,6 @@ class PeopleCounter {
    */
   getHourlyStats(cameraId: string, date: string): HourlyStat[] {
     const buffer = this.readings.get(cameraId) || [];
-    const targetDate = new Date(date + 'T00:00:00');
-    const targetDateStr = targetDate.toISOString().slice(0, 10);
 
     // Initialize 24-hour buckets
     const buckets: { counts: number[] }[] = Array.from({ length: 24 }, () => ({
@@ -88,9 +86,11 @@ class PeopleCounter {
     }));
 
     for (const reading of buffer) {
-      const readingDate = reading.timestamp.toISOString().slice(0, 10);
-      if (readingDate === targetDateStr) {
-        const hour = reading.timestamp.getHours();
+      // Use local date (not UTC) for comparison to avoid timezone shift issues
+      const rd = reading.timestamp;
+      const readingDate = `${rd.getFullYear()}-${String(rd.getMonth() + 1).padStart(2, '0')}-${String(rd.getDate()).padStart(2, '0')}`;
+      if (readingDate === date) {
+        const hour = rd.getHours();
         buckets[hour].counts.push(reading.count);
       }
     }
@@ -122,12 +122,14 @@ class PeopleCounter {
     for (let i = days - 1; i >= 0; i--) {
       const date = new Date(now);
       date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().slice(0, 10);
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-      // Find all readings for this day
-      const dayReadings = buffer.filter(
-        (r) => r.timestamp.toISOString().slice(0, 10) === dateStr
-      );
+      // Find all readings for this day (using local date, not UTC)
+      const dayReadings = buffer.filter((r) => {
+        const rd = r.timestamp;
+        const rDate = `${rd.getFullYear()}-${String(rd.getMonth() + 1).padStart(2, '0')}-${String(rd.getDate()).padStart(2, '0')}`;
+        return rDate === dateStr;
+      });
 
       if (dayReadings.length === 0) {
         stats.push({ date: dateStr, totalIn: 0, totalOut: 0, maxCount: 0 });
@@ -183,12 +185,12 @@ class PeopleCounter {
   }
 }
 
-const globalForPeopleCounter = globalThis as unknown as {
-  peopleCounter: PeopleCounter | undefined;
-};
+// Use process-level storage (survives Turbopack HMR better than globalThis)
+const PROCESS_KEY = '__camai_peopleCounter__';
+const proc = process as unknown as Record<string, PeopleCounter | undefined>;
 
-export const peopleCounter =
-  globalForPeopleCounter.peopleCounter ?? PeopleCounter.getInstance();
+if (!proc[PROCESS_KEY]) {
+  proc[PROCESS_KEY] = PeopleCounter.getInstance();
+}
 
-if (process.env.NODE_ENV !== 'production')
-  globalForPeopleCounter.peopleCounter = peopleCounter;
+export const peopleCounter: PeopleCounter = proc[PROCESS_KEY]!;

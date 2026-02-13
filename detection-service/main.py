@@ -2,20 +2,37 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 import time
 import math
 import asyncio
+import logging
 import threading
 import functools
 from collections import defaultdict
 from typing import Optional
 
-from fastapi import FastAPI, File, UploadFile, Form, Query
+from fastapi import FastAPI, File, UploadFile, Form, Query, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import cv2
 import httpx
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+CAM_AI_API_URL = os.getenv("CAM_AI_API_URL", "http://localhost:3000")
+DETECTION_POLL_INTERVAL = float(os.getenv("DETECTION_POLL_INTERVAL", "0.3"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+)
+log = logging.getLogger("detection")
 
 app = FastAPI(title="CamAI YOLO Detection Service")
 
@@ -587,7 +604,391 @@ def estimate_crowd_density(
     }
 
 
+# ─── Autonomous Camera Watchers ────────────────────────────────────
+
+# Camera watchers: cameraId -> DetectionWatcher thread
+_watchers: dict[str, "DetectionWatcher"] = {}
+_watchers_lock = threading.Lock()
+
+
+class FrameGrabber(threading.Thread):
+    """Background thread that continuously reads from RTSP/HTTP and keeps only the latest frame."""
+
+    def __init__(self, stream_url: str, camera_id: str):
+        super().__init__(daemon=True)
+        self.stream_url = stream_url
+        self.camera_id = camera_id
+        self._stop_event = threading.Event()
+        self._frame: Optional[np.ndarray] = None
+        self._frame_lock = threading.Lock()
+        self._connected = False
+        self._is_ipwebcam = (
+            stream_url.startswith("http://") and
+            not stream_url.endswith(("/video", "/stream", ".mjpg", ".mjpeg"))
+        )
+
+    def stop(self):
+        self._stop_event.set()
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop_event.is_set()
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    def get_latest_frame(self) -> Optional[np.ndarray]:
+        with self._frame_lock:
+            frame = self._frame
+            self._frame = None
+            return frame
+
+    def _grab_ipwebcam(self):
+        base = self.stream_url.rstrip("/")
+        shot_url = f"{base}/shot.jpg"
+        retry_count = 0
+        max_retries = 10
+        log.info("Grabber %s: using IP Webcam mode (%s)", self.camera_id, shot_url)
+
+        while not self.stopped:
+            try:
+                resp = httpx.get(shot_url, timeout=5)
+                if resp.status_code != 200:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        log.error("Grabber %s: max retries reached", self.camera_id)
+                        break
+                    time.sleep(5)
+                    continue
+
+                nparr = np.frombuffer(resp.content, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if frame is None:
+                    retry_count += 1
+                    time.sleep(1)
+                    continue
+
+                retry_count = 0
+                if not self._connected:
+                    self._connected = True
+                    log.info("Grabber %s: connected (%dx%d)", self.camera_id, frame.shape[1], frame.shape[0])
+
+                with self._frame_lock:
+                    self._frame = frame
+
+                time.sleep(0.3)
+            except Exception as e:
+                retry_count += 1
+                self._connected = False
+                if retry_count >= max_retries:
+                    log.error("Grabber %s: max retries (%s)", self.camera_id, e)
+                    break
+                time.sleep(5)
+
+        self._connected = False
+        log.info("Grabber stopped for camera %s", self.camera_id)
+
+    def run(self):
+        if self._is_ipwebcam:
+            self._grab_ipwebcam()
+            return
+
+        cap = None
+        retry_count = 0
+        max_retries = 10
+
+        while not self.stopped:
+            if cap is None or not cap.isOpened():
+                if retry_count >= max_retries:
+                    log.error("Grabber %s: max retries reached, stopping", self.camera_id)
+                    break
+                cap = cv2.VideoCapture(self.stream_url, cv2.CAP_FFMPEG)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                if self.stream_url.startswith("rtsp://"):
+                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                        "rtsp_transport;tcp|analyzeduration;2000000|fflags;nobuffer"
+                    )
+                if not cap.isOpened():
+                    retry_count += 1
+                    self._connected = False
+                    log.warning("Grabber %s: cannot open, retry %d/%d",
+                                self.camera_id, retry_count, max_retries)
+                    time.sleep(5)
+                    continue
+                retry_count = 0
+                self._connected = True
+                log.info("Grabber %s: connected to %s", self.camera_id, self.stream_url)
+
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                log.warning("Grabber %s: frame read failed, reconnecting...", self.camera_id)
+                cap.release()
+                cap = None
+                self._connected = False
+                time.sleep(2)
+                continue
+
+            with self._frame_lock:
+                self._frame = frame
+
+        if cap is not None:
+            cap.release()
+        self._connected = False
+        log.info("Grabber stopped for camera %s", self.camera_id)
+
+
+def _frame_to_b64_jpeg(frame: np.ndarray, max_side: int = 640) -> str:
+    """Encode a frame to a small base64 JPEG for snapshot storage."""
+    import base64
+    h, w = frame.shape[:2]
+    scale = min(max_side / max(h, w), 1.0)
+    if scale < 1.0:
+        frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    return base64.b64encode(buf.tobytes()).decode()
+
+
+class DetectionWatcher(threading.Thread):
+    """Autonomously reads frames from a camera and runs YOLO + secondary detections."""
+
+    def __init__(self, camera_id: str, stream_url: str):
+        super().__init__(daemon=True)
+        self.camera_id = camera_id
+        self.stream_url = stream_url
+        self._stop_event = threading.Event()
+        self.fps = 0.0
+        self.last_frame_time = 0.0
+        self.total_detections = 0
+        self.frames_processed = 0
+
+    def stop(self):
+        self._stop_event.set()
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop_event.is_set()
+
+    def _post_detections(self, payload: dict):
+        """POST detection results to CamAI API (non-blocking)."""
+        def _push():
+            try:
+                httpx.post(
+                    f"{CAM_AI_API_URL}/api/detection/events",
+                    json=payload,
+                    headers={"x-detection-sync": "true"},
+                    timeout=5,
+                )
+            except Exception as e:
+                log.debug("Failed to push detections: %s", e)
+        threading.Thread(target=_push, daemon=True).start()
+
+    def run(self):
+        log.info("Starting DetectionWatcher for camera %s (%s)", self.camera_id, self.stream_url)
+
+        grabber = FrameGrabber(self.stream_url, self.camera_id)
+        grabber.start()
+
+        model = get_model()
+        frame_count = 0
+        fps_counter = 0
+        fps_timer = time.monotonic()
+
+        while not self.stopped:
+            frame = grabber.get_latest_frame()
+            if frame is None:
+                if grabber.stopped:
+                    log.error("Camera %s: grabber died, stopping watcher", self.camera_id)
+                    break
+                time.sleep(0.05)
+                continue
+
+            t0 = time.monotonic()
+            h, w = frame.shape[:2]
+
+            # Resize large frames for performance
+            max_w = 1280
+            if w > max_w:
+                scale = max_w / w
+                frame = cv2.resize(frame, (max_w, int(h * scale)))
+                h, w = frame.shape[:2]
+
+            # ── YOLO detection ──
+            results = model(frame, conf=CONFIDENCE, verbose=False)
+            detections = []
+            person_boxes = []
+            vehicle_boxes = []
+
+            for result in results:
+                for box in result.boxes:
+                    cls_id = int(box.cls[0])
+                    cls_name = model.names.get(cls_id, "unknown")
+                    classified = classify_detection(cls_id, cls_name)
+                    if classified is None:
+                        continue
+                    det_type, label, color = classified
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    conf_val = float(box.conf[0])
+                    bbox = {
+                        "x": round(x1 / w, 4),
+                        "y": round(y1 / h, 4),
+                        "w": round((x2 - x1) / w, 4),
+                        "h": round((y2 - y1) / h, 4),
+                    }
+                    detections.append({
+                        "type": det_type,
+                        "label": label,
+                        "confidence": round(conf_val, 2),
+                        "bbox": bbox,
+                        "classId": cls_id,
+                        "color": color,
+                    })
+                    if cls_id == 0:
+                        person_boxes.append(bbox)
+                    if cls_id in VEHICLE_CLASSES:
+                        vehicle_boxes.append(bbox)
+
+            # ── Staggered secondary detections ──
+            mod30 = frame_count % 30
+            fire_result = None
+            plates_result = None
+            behavior_result = None
+
+            if mod30 == 0:
+                try:
+                    fire_result = detect_fire_smoke(frame)
+                    if fire_result["fireDetected"]:
+                        for region in fire_result["fireRegions"]:
+                            detections.append({
+                                "type": "fire",
+                                "label": "Огонь",
+                                "confidence": round(fire_result["fireConfidence"], 2),
+                                "bbox": region["bbox"],
+                                "classId": -3,
+                                "color": "#EF4444",
+                            })
+                    if fire_result["smokeDetected"]:
+                        for region in fire_result["smokeRegions"]:
+                            detections.append({
+                                "type": "smoke",
+                                "label": "Дым",
+                                "confidence": round(fire_result["smokeConfidence"], 2),
+                                "bbox": region["bbox"],
+                                "classId": -3,
+                                "color": "#F59E0B",
+                            })
+                except Exception:
+                    pass
+
+            if mod30 == 10 and vehicle_boxes:
+                try:
+                    plates_list = detect_plates(frame, vehicle_boxes)
+                    if plates_list:
+                        plates_result = plates_list
+                except Exception:
+                    pass
+
+            if mod30 == 20 and person_boxes:
+                try:
+                    behaviors = analyze_behavior(frame, self.camera_id, person_boxes)
+                    if behaviors:
+                        behavior_result = behaviors
+                except Exception:
+                    pass
+
+            self.total_detections += len(detections)
+            self.frames_processed += 1
+            frame_count += 1
+
+            # POST results
+            person_count = len(person_boxes)
+            payload: dict = {
+                "cameraId": self.camera_id,
+                "detections": detections,
+                "personCount": person_count,
+                "capturedAt": int(time.time() * 1000),
+            }
+            if plates_result:
+                payload["plates"] = plates_result
+            if behavior_result:
+                payload["behaviors"] = behavior_result
+
+            # Include snapshot every 10 frames when people detected (for capacity alerts)
+            if person_count > 0 and frame_count % 10 == 0:
+                try:
+                    payload["snapshot"] = _frame_to_b64_jpeg(frame)
+                except Exception:
+                    pass
+
+            self._post_detections(payload)
+
+            # FPS tracking
+            fps_counter += 1
+            now = time.monotonic()
+            if now - fps_timer >= 1.0:
+                self.fps = fps_counter / (now - fps_timer)
+                fps_counter = 0
+                fps_timer = now
+
+            self.last_frame_time = time.time()
+
+            # Throttle
+            elapsed = time.monotonic() - t0
+            sleep_needed = DETECTION_POLL_INTERVAL - elapsed
+            if sleep_needed > 0:
+                time.sleep(sleep_needed)
+
+            if frame_count % 100 == 0:
+                log.info("Camera %s: %d frames, %.1f fps, %d detections total",
+                         self.camera_id, frame_count, self.fps, self.total_detections)
+
+        grabber.stop()
+        grabber.join(timeout=3)
+        log.info("DetectionWatcher stopped for camera %s", self.camera_id)
+
+
 # ─── API Endpoints ─────────────────────────────────────────────────
+
+@app.post("/cameras/start")
+async def start_camera(camera_id: str = Form(...), stream_url: str = Form(...)):
+    """Start autonomous detection for a camera."""
+    with _watchers_lock:
+        if camera_id in _watchers and _watchers[camera_id].is_alive():
+            return {"status": "already_running", "camera_id": camera_id}
+
+        watcher = DetectionWatcher(camera_id, stream_url)
+        watcher.start()
+        _watchers[camera_id] = watcher
+
+    return {"status": "started", "camera_id": camera_id}
+
+
+@app.post("/cameras/stop")
+async def stop_camera(camera_id: str = Form(...)):
+    """Stop autonomous detection for a camera."""
+    with _watchers_lock:
+        watcher = _watchers.pop(camera_id, None)
+
+    if watcher is None:
+        raise HTTPException(status_code=404, detail="Camera watcher not found")
+
+    watcher.stop()
+    watcher.join(timeout=5)
+    return {"status": "stopped", "camera_id": camera_id}
+
+
+@app.get("/cameras")
+async def list_cameras():
+    """List active detection camera watchers."""
+    with _watchers_lock:
+        cams = {cid: {
+            "alive": w.is_alive(),
+            "fps": round(w.fps, 1),
+            "frames_processed": w.frames_processed,
+            "total_detections": w.total_detections,
+        } for cid, w in _watchers.items()}
+    return {"cameras": cams}
+
 
 @app.post("/detect")
 async def detect(image: UploadFile = File(...)):
@@ -1201,16 +1602,67 @@ app.include_router(ext_router)
 
 @app.get("/health")
 async def health():
+    with _watchers_lock:
+        cams = {cid: {
+            "alive": w.is_alive(),
+            "fps": round(w.fps, 1),
+            "frames_processed": w.frames_processed,
+            "total_detections": w.total_detections,
+        } for cid, w in _watchers.items()}
+
     return {
         "status": "ok",
         "model": "yolov8n",
+        "active_cameras": len(cams),
+        "cameras": cams,
         "features": [
             "detect", "detect-fire", "detect-plates", "analyze-behavior",
             "detect-ppe", "detect-shelf-fullness", "extract-features",
             "match-persons", "dewarp", "analyze-audio",
             "stream/mjpeg", "stream/counts",
+            "cameras/start", "cameras/stop",
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Startup: auto-recover active detection cameras from CamAI API
+# ---------------------------------------------------------------------------
+
+@app.on_event("startup")
+async def _startup():
+    log.info("Detection service starting...")
+    log.info("  CAM_AI_API_URL = %s", CAM_AI_API_URL)
+    log.info("  DETECTION_POLL_INTERVAL = %s", DETECTION_POLL_INTERVAL)
+
+    def _recover_cameras():
+        time.sleep(3)  # wait for API to be ready
+        try:
+            resp = httpx.get(
+                f"{CAM_AI_API_URL}/api/detection/cameras",
+                headers={"x-detection-sync": "true"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                log.warning("Camera recovery failed: HTTP %s", resp.status_code)
+                return
+            cameras = resp.json()
+            for cam in cameras:
+                cam_id = cam["id"]
+                stream_url = cam["streamUrl"]
+                with _watchers_lock:
+                    if cam_id in _watchers and _watchers[cam_id].is_alive():
+                        continue
+                    watcher = DetectionWatcher(cam_id, stream_url)
+                    watcher.start()
+                    _watchers[cam_id] = watcher
+                log.info("Recovered camera: %s (%s)", cam.get("name", "?"), cam_id)
+            if cameras:
+                log.info("Camera recovery: restored %d cameras", len(cameras))
+        except Exception as e:
+            log.warning("Camera recovery failed: %s", e)
+
+    threading.Thread(target=_recover_cameras, daemon=True).start()
 
 
 if __name__ == "__main__":

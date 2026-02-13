@@ -6,37 +6,43 @@ import { go2rtcManager } from '@/lib/services/go2rtc-manager';
 import { checkPermission, RBACError } from '@/lib/rbac';
 
 const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
+const DETECTION_SERVICE_URL = process.env.DETECTION_SERVICE_URL || 'http://localhost:8001';
 
-async function startAttendanceCamera(camera: { id: string; streamUrl: string; purpose: string }) {
-  const direction = camera.purpose === 'attendance_entry' ? 'entry' : 'exit';
+async function startExternalCamera(
+  serviceUrl: string,
+  camera: { id: string; streamUrl: string; purpose: string },
+) {
   const form = new URLSearchParams();
   form.append('camera_id', camera.id);
   form.append('stream_url', camera.streamUrl);
-  form.append('direction', direction);
+  // Attendance cameras need direction
+  if (camera.purpose.startsWith('attendance_')) {
+    form.append('direction', camera.purpose === 'attendance_entry' ? 'entry' : 'exit');
+  }
 
-  const resp = await fetch(`${ATTENDANCE_SERVICE_URL}/cameras/start`, {
+  const resp = await fetch(`${serviceUrl}/cameras/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
   });
   if (!resp.ok) {
     const err = await resp.text();
-    throw new Error(`Attendance service error: ${err}`);
+    throw new Error(`Service error: ${err}`);
   }
 }
 
-async function stopAttendanceCamera(cameraId: string) {
+async function stopExternalCamera(serviceUrl: string, cameraId: string) {
   const form = new URLSearchParams();
   form.append('camera_id', cameraId);
 
-  const resp = await fetch(`${ATTENDANCE_SERVICE_URL}/cameras/stop`, {
+  const resp = await fetch(`${serviceUrl}/cameras/stop`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
   });
   if (!resp.ok) {
     const err = await resp.text();
-    throw new Error(`Attendance service error: ${err}`);
+    throw new Error(`Service error: ${err}`);
   }
 }
 
@@ -68,7 +74,7 @@ export async function POST(
     // Attendance camera — register go2rtc stream for browser + send to attendance-service
     try {
       void go2rtcManager.addStream(id, camera.streamUrl);
-      await startAttendanceCamera(camera);
+      await startExternalCamera(ATTENDANCE_SERVICE_URL, camera);
       await prisma.camera.update({
         where: { id },
         data: { isMonitoring: true, status: 'online' },
@@ -80,8 +86,17 @@ export async function POST(
       );
     }
   } else {
-    // Detection camera — use standard YOLO monitor
-    await cameraMonitor.startMonitoring(id);
+    // Detection camera — send to autonomous detection-service + register go2rtc + start CameraMonitor for motion/Gemini
+    try {
+      void go2rtcManager.addStream(id, camera.streamUrl);
+      await startExternalCamera(DETECTION_SERVICE_URL, camera);
+      // Still start CameraMonitor for motion detection + Gemini AI sessions
+      await cameraMonitor.startMonitoring(id);
+    } catch (e) {
+      // Detection service may be unavailable, still start CameraMonitor
+      console.warn(`[Monitor] Detection service unavailable, falling back to CameraMonitor only:`, e instanceof Error ? e.message : e);
+      await cameraMonitor.startMonitoring(id);
+    }
   }
 
   return NextResponse.json({ success: true, monitoring: true });
@@ -113,7 +128,7 @@ export async function DELETE(
 
   if (camera.purpose.startsWith('attendance_')) {
     try {
-      await stopAttendanceCamera(id);
+      await stopExternalCamera(ATTENDANCE_SERVICE_URL, id);
     } catch {
       // Attendance service may be down, still update DB
     }
@@ -123,6 +138,13 @@ export async function DELETE(
       data: { isMonitoring: false, status: 'offline' },
     });
   } else {
+    // Stop detection-service watcher
+    try {
+      await stopExternalCamera(DETECTION_SERVICE_URL, id);
+    } catch {
+      // Detection service may be down
+    }
+    // Stop CameraMonitor (motion/Gemini)
     await cameraMonitor.stopMonitoring(id);
   }
 

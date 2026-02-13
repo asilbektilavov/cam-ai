@@ -1,11 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Users, TrendingUp, TrendingDown, Minus, Loader2, BarChart3 } from 'lucide-react';
+import { Users, TrendingUp, TrendingDown, Minus, Loader2, BarChart3, Settings2, Save } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { apiGet } from '@/lib/api-client';
+import { apiGet, apiPatch } from '@/lib/api-client';
+import { toast } from 'sonner';
 
 interface CurrentCountData {
   cameraId: string;
@@ -43,6 +46,9 @@ export default function PeopleCounterWidget({
   const [prevCount, setPrevCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editingCapacity, setEditingCapacity] = useState(false);
+  const [capacityInput, setCapacityInput] = useState<string>(maxCapacity?.toString() || '');
+  const [savingCapacity, setSavingCapacity] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -70,6 +76,24 @@ export default function PeopleCounterWidget({
     const interval = setInterval(fetchData, refreshInterval);
     return () => clearInterval(interval);
   }, [fetchData, refreshInterval]);
+
+  const saveCapacity = useCallback(async () => {
+    const value = capacityInput.trim() === '' ? null : parseInt(capacityInput, 10);
+    if (value !== null && (isNaN(value) || value < 1)) {
+      toast.error('Укажите число больше 0');
+      return;
+    }
+    setSavingCapacity(true);
+    try {
+      await apiPatch(`/api/cameras/${cameraId}`, { maxPeopleCapacity: value });
+      toast.success(value ? `Лимит установлен: ${value} чел.` : 'Лимит снят');
+      setEditingCapacity(false);
+    } catch {
+      toast.error('Ошибка сохранения');
+    } finally {
+      setSavingCapacity(false);
+    }
+  }, [cameraId, capacityInput]);
 
   // Trend: compare current count with previous reading
   const trend =
@@ -140,42 +164,76 @@ export default function PeopleCounterWidget({
             <p className="text-sm text-muted-foreground mt-1">человек сейчас</p>
           </div>
 
-          {/* Capacity indicator */}
-          {maxCapacity && capacityPercent !== null && (
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-muted-foreground">Вместимость</span>
-                <span
-                  className={cn(
-                    'text-xs font-medium',
-                    capacityPercent >= 90
-                      ? 'text-red-500'
-                      : capacityPercent >= 70
-                        ? 'text-yellow-500'
-                        : 'text-green-500'
-                  )}
-                >
-                  {capacityPercent}%
-                </span>
-              </div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                <div
-                  className={cn(
-                    'h-full rounded-full transition-all duration-500',
-                    capacityPercent >= 90
-                      ? 'bg-red-500'
-                      : capacityPercent >= 70
-                        ? 'bg-yellow-500'
-                        : 'bg-green-500'
-                  )}
-                  style={{ width: `${Math.min(capacityPercent, 100)}%` }}
+          {/* Capacity indicator + settings */}
+          <div className="flex-1">
+            {maxCapacity && capacityPercent !== null ? (
+              <>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-muted-foreground">Лимит</span>
+                  <div className="flex items-center gap-1">
+                    <span
+                      className={cn(
+                        'text-xs font-medium',
+                        capacityPercent >= 100
+                          ? 'text-red-500'
+                          : capacityPercent >= 80
+                            ? 'text-yellow-500'
+                            : 'text-green-500'
+                      )}
+                    >
+                      {capacityPercent}%
+                    </span>
+                    <button
+                      onClick={() => { setEditingCapacity(!editingCapacity); setCapacityInput(maxCapacity?.toString() || ''); }}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <Settings2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={cn(
+                      'h-full rounded-full transition-all duration-500',
+                      capacityPercent >= 100
+                        ? 'bg-red-500'
+                        : capacityPercent >= 80
+                          ? 'bg-yellow-500'
+                          : 'bg-green-500'
+                    )}
+                    style={{ width: `${Math.min(capacityPercent, 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-1 text-right">
+                  макс. {maxCapacity}
+                </p>
+              </>
+            ) : (
+              <button
+                onClick={() => { setEditingCapacity(!editingCapacity); setCapacityInput(''); }}
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              >
+                <Settings2 className="h-3 w-3" />
+                Установить лимит
+              </button>
+            )}
+
+            {editingCapacity && (
+              <div className="flex items-center gap-2 mt-2">
+                <Input
+                  type="number"
+                  min={1}
+                  placeholder="Макс. людей"
+                  value={capacityInput}
+                  onChange={(e) => setCapacityInput(e.target.value)}
+                  className="h-7 text-xs w-24"
                 />
+                <Button size="sm" variant="outline" className="h-7 px-2" onClick={saveCapacity} disabled={savingCapacity}>
+                  <Save className="h-3 w-3" />
+                </Button>
               </div>
-              <p className="text-xs text-muted-foreground mt-1 text-right">
-                макс. {maxCapacity}
-              </p>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Hourly bar chart */}

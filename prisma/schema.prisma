@@ -83,6 +83,7 @@ model Camera {
   onvifUser       String?
   onvifPass       String?
   hasPtz          Boolean           @default(false)
+  maxPeopleCapacity Int?            // Alert threshold: save frame when personCount >= this value
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   sessions        AnalysisSession[]

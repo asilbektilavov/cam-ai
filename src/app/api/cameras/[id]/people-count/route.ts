@@ -37,11 +37,13 @@ export async function GET(
   switch (mode) {
     case 'current': {
       const count = peopleCounter.getCurrentCount(id);
+      const readings = peopleCounter.getReadingsCount(id);
+      console.log(`[PeopleCount] GET current: camera=${id}, count=${count}, readings=${readings}`);
       return NextResponse.json({
         cameraId: id,
         cameraName: camera.name,
         currentCount: count,
-        totalReadings: peopleCounter.getReadingsCount(id),
+        totalReadings: readings,
       });
     }
 

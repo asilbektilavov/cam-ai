@@ -25,7 +25,6 @@ import {
   Box,
   Flame,
   Filter,
-  DoorOpen,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -50,7 +49,6 @@ import { PtzControls } from '@/components/ptz-controls';
 import { ExportDialog } from '@/components/export-dialog';
 import HeatmapOverlay from '@/components/heatmap-overlay';
 import PeopleCounterWidget from '@/components/people-counter-widget';
-import OccupancyWidget from '@/components/occupancy-widget';
 import { apiGet, apiPost, apiPatch } from '@/lib/api-client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -75,6 +73,7 @@ interface CameraDetail {
   onvifUser: string | null;
   onvifPass: string | null;
   hasPtz: boolean;
+  maxPeopleCapacity: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -333,6 +332,34 @@ export default function CameraDetailPage() {
 
     poll(); // initial fetch
     const interval = setInterval(poll, 500); // poll every 500ms
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isAttendance, camera?.isMonitoring, cameraId]);
+
+  // Poll detection events from autonomous detection-service (detection cameras)
+  // Reliable polling fallback — works even when SSE is broken by Turbopack HMR
+  useEffect(() => {
+    if (isAttendance || !camera?.isMonitoring) return;
+
+    let active = true;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/detection/events?cameraId=${cameraId}`);
+        if (!active) return;
+        const data = await res.json();
+        if (Array.isArray(data.detections) && data.detections.length > 0) {
+          setLiveDetections(data.detections as Detection[]);
+        }
+      } catch {
+        // Network error — ignore, will retry
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 500);
 
     return () => {
       active = false;
@@ -753,10 +780,6 @@ export default function CameraDetailPage() {
                   <Users className="h-4 w-4 mr-1.5" />
                   Подсчёт людей
                 </TabsTrigger>
-                <TabsTrigger value="occupancy">
-                  <DoorOpen className="h-4 w-4 mr-1.5" />
-                  Заполняемость
-                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="heatmap">
@@ -777,15 +800,10 @@ export default function CameraDetailPage() {
                 <PeopleCounterWidget
                   cameraId={cameraId}
                   cameraName={camera.name}
+                  maxCapacity={camera.maxPeopleCapacity ?? undefined}
                 />
               </TabsContent>
 
-              <TabsContent value="occupancy">
-                <OccupancyWidget
-                  cameraId={cameraId}
-                  cameraName={camera.name}
-                />
-              </TabsContent>
             </Tabs>
           )}
         </div>
