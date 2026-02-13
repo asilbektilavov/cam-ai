@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { useTheme } from 'next-themes';
-import { Bell, Moon, Sun, Search, Menu, Building2 } from 'lucide-react';
+import { Bell, Moon, Sun, Search, Menu, Building2, AlertTriangle, Users, Flame, Eye, Car, UserCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -40,6 +40,50 @@ export function Header() {
   const { branches, isLoading: branchesLoading } = useBranches();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [notifications, setNotifications] = useState<Array<{
+    id: string;
+    type: string;
+    severity: string;
+    description: string;
+    timestamp: string;
+    camera?: { name: string; location: string | null };
+  }>>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [lastSeenAt, setLastSeenAt] = useState<string | null>(null);
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await fetch('/api/events?limit=10');
+      if (!res.ok) return;
+      const data = await res.json();
+      const events = data.events || [];
+      setNotifications(events);
+
+      const stored = localStorage.getItem('camai-notif-seen');
+      const seenAt = stored || new Date(0).toISOString();
+      setLastSeenAt(seenAt);
+      const count = events.filter((e: { timestamp: string }) => new Date(e.timestamp) > new Date(seenAt)).length;
+      setUnreadCount(count);
+    } catch {}
+  }, []);
+
+  const handleNotificationsOpen = (open: boolean) => {
+    if (open) {
+      fetchNotifications();
+    }
+    if (!open && notifications.length > 0) {
+      const now = new Date().toISOString();
+      localStorage.setItem('camai-notif-seen', now);
+      setLastSeenAt(now);
+      setUnreadCount(0);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
 
   const user = session?.user;
 
@@ -117,19 +161,63 @@ export function Header() {
           </Button>
 
           {/* Notifications */}
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={handleNotificationsOpen}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="relative">
                 <Bell className="h-5 w-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-80">
-              <div className="px-3 py-2 border-b border-border">
+            <DropdownMenuContent align="end" className="w-96">
+              <div className="px-3 py-2 border-b border-border flex items-center justify-between">
                 <p className="text-sm font-semibold">Уведомления</p>
+                {unreadCount > 0 && (
+                  <span className="text-xs text-muted-foreground">{unreadCount} новых</span>
+                )}
               </div>
-              <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-                Нет новых уведомлений
-              </div>
+              {notifications.length === 0 ? (
+                <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+                  Нет уведомлений
+                </div>
+              ) : (
+                <div className="max-h-80 overflow-y-auto">
+                  {notifications.map((n) => {
+                    const isNew = lastSeenAt ? new Date(n.timestamp) > new Date(lastSeenAt) : false;
+                    const icon = n.type === 'crowd' || n.type === 'people_count' ? Users
+                      : n.type === 'fire_detected' || n.type === 'smoke_detected' ? Flame
+                      : n.type === 'face_detected' ? UserCheck
+                      : n.type === 'plate_detected' ? Car
+                      : n.severity === 'warning' || n.severity === 'critical' ? AlertTriangle
+                      : Eye;
+                    const Icon = icon;
+                    const severityColor = n.severity === 'critical' ? 'text-red-500'
+                      : n.severity === 'warning' ? 'text-orange-500'
+                      : 'text-muted-foreground';
+                    const time = new Date(n.timestamp);
+                    const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
+                    return (
+                      <DropdownMenuItem
+                        key={n.id}
+                        className={cn('flex items-start gap-3 px-3 py-2.5 cursor-pointer', isNew && 'bg-primary/5')}
+                        onClick={() => router.push('/analytics')}
+                      >
+                        <Icon className={cn('h-4 w-4 mt-0.5 shrink-0', severityColor)} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm truncate">{n.description}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {n.camera?.name ? `${n.camera.name} · ` : ''}{timeStr}
+                          </p>
+                        </div>
+                        {isNew && <span className="h-2 w-2 rounded-full bg-blue-500 mt-1.5 shrink-0" />}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </div>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="justify-center text-sm text-primary cursor-pointer"
