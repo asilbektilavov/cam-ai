@@ -103,6 +103,7 @@ export default function CameraDetailPage() {
   const [faceDetections, setFaceDetections] = useState<Detection[]>([]);
   const [measuredLatency, setMeasuredLatency] = useState<number | undefined>();
   const latencyEmaRef = useRef<number | null>(null);
+  const faceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Browser-side detection via ONNX Runtime Web
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -291,8 +292,14 @@ export default function CameraDetailPage() {
         }
 
         // Face detections from attendance-service
+        // Keep last non-empty detections alive for 3s to avoid flickering
         if (event.type === 'face_detected' && Array.isArray(event.data.detections)) {
-          setFaceDetections(event.data.detections as Detection[]);
+          const dets = event.data.detections as Detection[];
+          if (dets.length > 0) {
+            setFaceDetections(dets);
+            if (faceTimeoutRef.current) clearTimeout(faceTimeoutRef.current);
+            faceTimeoutRef.current = setTimeout(() => setFaceDetections([]), 3000);
+          }
         }
 
         // Fire/smoke from server-side HSV detection
@@ -320,57 +327,67 @@ export default function CameraDetailPage() {
   // Merge attendance detections:
   // Browser faces (fast, accurate position) = PRIMARY for bbox
   // Server SSE faces (slow, ~1fps, has identity) = enriches with name/color
+  // Uses center-distance matching (robust to bbox size differences between models)
   const mergedFaceDetections = useMemo(() => {
     if (!isAttendance) return faceDetections;
-
-    // No browser data — fall back to server detections
     if (browserFaces.length === 0) return faceDetections;
 
+    // No server data yet — just show browser faces
+    if (faceDetections.length === 0) return browserFaces;
+
+    console.log('[Merge] MATCHING:', browserFaces.length, 'browser,', faceDetections.length, 'server, server[0]:', faceDetections[0]?.label, faceDetections[0]?.color);
+
+    const MATCH_DIST = 0.25; // max center distance (normalized) to match
     const result: Detection[] = [];
     const usedServerIndices = new Set<number>();
 
     for (const bf of browserFaces) {
-      // Find best overlapping server face by IoU
+      const bfCx = bf.bbox.x + bf.bbox.w / 2;
+      const bfCy = bf.bbox.y + bf.bbox.h / 2;
+
+      // Find closest server face by center distance
       let bestServer: Detection | null = null;
       let bestIdx = -1;
-      let bestOverlap = 0.25; // min threshold to match
+      let bestDist = MATCH_DIST;
 
       for (let i = 0; i < faceDetections.length; i++) {
+        if (usedServerIndices.has(i)) continue;
         const sf = faceDetections[i];
-        const x1 = Math.max(sf.bbox.x, bf.bbox.x);
-        const y1 = Math.max(sf.bbox.y, bf.bbox.y);
-        const x2 = Math.min(sf.bbox.x + sf.bbox.w, bf.bbox.x + bf.bbox.w);
-        const y2 = Math.min(sf.bbox.y + sf.bbox.h, bf.bbox.y + bf.bbox.h);
-        const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-        const bfArea = bf.bbox.w * bf.bbox.h;
-        const overlap = bfArea > 0 ? inter / bfArea : 0;
-        if (overlap > bestOverlap) {
-          bestOverlap = overlap;
+        const sfCx = sf.bbox.x + sf.bbox.w / 2;
+        const sfCy = sf.bbox.y + sf.bbox.h / 2;
+        const dist = Math.sqrt((bfCx - sfCx) ** 2 + (bfCy - sfCy) ** 2);
+        if (dist < bestDist) {
+          bestDist = dist;
           bestServer = sf;
           bestIdx = i;
         }
       }
 
+      const sfCx = faceDetections[0] ? faceDetections[0].bbox.x + faceDetections[0].bbox.w / 2 : 0;
+      const sfCy = faceDetections[0] ? faceDetections[0].bbox.y + faceDetections[0].bbox.h / 2 : 0;
+      const actualDist = Math.sqrt((bfCx - sfCx) ** 2 + (bfCy - sfCy) ** 2);
+      console.log('[Merge] dist:', actualDist.toFixed(3), 'threshold:', MATCH_DIST, 'matched:', !!bestServer,
+        'bfC:', bfCx.toFixed(2), bfCy.toFixed(2), 'sfC:', sfCx.toFixed(2), sfCy.toFixed(2));
+
       if (bestServer) {
-        // Browser position (fast) + server identity (name, color)
         usedServerIndices.add(bestIdx);
         result.push({
           ...bestServer,
           bbox: bf.bbox, // use browser bbox — it tracks faster
         });
       } else {
-        // No server match — show as blue browser face
-        result.push(bf);
+        // No server match — use closest server identity if only one face
+        if (faceDetections.length === 1 && browserFaces.length === 1) {
+          result.push({ ...faceDetections[0], bbox: bf.bbox });
+        } else {
+          result.push(bf);
+        }
       }
     }
 
-    // Add unmatched server faces (server might see faces browser missed)
-    for (let i = 0; i < faceDetections.length; i++) {
-      if (!usedServerIndices.has(i)) {
-        result.push(faceDetections[i]);
-      }
+    if (result.length > 0 && result[0].label !== 'Лицо') {
+      console.log('[Merge] RESULT:', result[0].label, result[0].color, result[0].confidence);
     }
-
     return result;
   }, [isAttendance, faceDetections, browserFaces]);
 

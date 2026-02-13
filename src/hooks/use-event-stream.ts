@@ -21,41 +21,70 @@ export function useEventStream(onEvent: EventHandler) {
   const branchIdRef = useRef(selectedBranchId);
   branchIdRef.current = selectedBranchId;
 
-  const connect = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-
-    const branchParam = branchIdRef.current ? `?branchId=${branchIdRef.current}` : '';
-    const es = new EventSource(`/api/events/stream${branchParam}`);
-    eventSourceRef.current = es;
-
-    es.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data) as CameraEvent;
-        onEventRef.current(event);
-      } catch {
-        // Ignore parse errors (keepalive, etc.)
-      }
-    };
-
-    es.onerror = () => {
-      es.close();
-      eventSourceRef.current = null;
-      // Reconnect after 3 seconds
-      setTimeout(connect, 3000);
-    };
-  }, []);
-
   useEffect(() => {
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      if (cancelled) return;
+
+      // Close any existing connection
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+
+      const branchParam = branchIdRef.current ? `?branchId=${branchIdRef.current}` : '';
+      console.log('[useEventStream] connecting to', `/api/events/stream${branchParam}`);
+      const es = new EventSource(`/api/events/stream${branchParam}`);
+      eventSourceRef.current = es;
+
+      es.onopen = () => {
+        console.log('[useEventStream] connected, readyState:', es.readyState);
+      };
+
+      es.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data) as CameraEvent;
+          if (event.type === 'face_detected') {
+            console.log('[useEventStream] face_detected received:', event.data);
+          }
+          onEventRef.current(event);
+        } catch {
+          // Ignore parse errors (keepalive, etc.)
+        }
+      };
+
+      es.onerror = () => {
+        console.log('[useEventStream] error, readyState:', es.readyState);
+        es.close();
+        eventSourceRef.current = null;
+        if (!cancelled) {
+          reconnectTimer = setTimeout(connect, 3000);
+        }
+      };
+    };
+
     connect();
 
+    // Watchdog: check every 5s if connection is alive, reconnect if dead
+    const watchdog = setInterval(() => {
+      if (cancelled) return;
+      const es = eventSourceRef.current;
+      if (!es || es.readyState === EventSource.CLOSED) {
+        // Connection lost without onerror firing (Turbopack HMR, etc.)
+        connect();
+      }
+    }, 5000);
+
     return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearInterval(watchdog);
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
     };
-  }, [connect, selectedBranchId]);
+  }, [selectedBranchId]);
 }

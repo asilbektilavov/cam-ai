@@ -1,31 +1,23 @@
 import { EventEmitter } from 'events';
 
 // Singleton event emitter for cross-service communication and SSE
+// Uses `process` as the container — guaranteed single object per Node.js process,
+// survives Turbopack HMR module reloads (unlike globalThis which can be scoped per chunk).
 class AppEventEmitter extends EventEmitter {
-  private static instance: AppEventEmitter;
-
-  private constructor() {
+  constructor() {
     super();
     this.setMaxListeners(100);
   }
-
-  static getInstance(): AppEventEmitter {
-    if (!AppEventEmitter.instance) {
-      AppEventEmitter.instance = new AppEventEmitter();
-    }
-    return AppEventEmitter.instance;
-  }
 }
 
-const globalForAppEvents = globalThis as unknown as {
-  appEvents: AppEventEmitter | undefined;
-};
+const PROCESS_KEY = '__camai_appEvents__';
+const proc = process as unknown as Record<string, AppEventEmitter | undefined>;
 
-export const appEvents =
-  globalForAppEvents.appEvents ?? AppEventEmitter.getInstance();
+if (!proc[PROCESS_KEY]) {
+  proc[PROCESS_KEY] = new AppEventEmitter();
+}
 
-if (process.env.NODE_ENV !== 'production')
-  globalForAppEvents.appEvents = appEvents;
+export const appEvents: AppEventEmitter = proc[PROCESS_KEY]!;
 
 // Event types
 export interface CameraEvent {

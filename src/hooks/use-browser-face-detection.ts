@@ -81,16 +81,13 @@ export function useBrowserFaceDetection(
   }, [enabled]);
 
   // Detection loop — runs as fast as model allows, no FPS cap
-  // Supports WebRTC (video data) and MJPEG (poster data URL) modes
+  // Supports WebRTC (video data) and MJPEG (poster/blob) modes
   useEffect(() => {
-    console.log(`[BrowserFaceLoop] effect run enabled=${enabled} loading=${loading} error=${error}`);
     if (!enabled || loading || error) return;
 
     let running = true;
     let detecting = false;
     let lastPoster = '';
-
-    let debugCount = 0;
 
     const loop = () => {
       if (!running) return;
@@ -102,17 +99,16 @@ export function useBrowserFaceDetection(
 
       const video = videoRef.current;
       if (!video) {
-        if (debugCount++ < 3) console.log('[BrowserFaceLoop] videoRef is null');
         requestAnimationFrame(loop);
         return;
       }
 
       const hasVideoData = video.readyState >= 2 && video.videoWidth > 0;
-      const hasPoster = !!(video.poster && video.poster.startsWith('data:image'));
-      const posterChanged = hasPoster && video.poster !== lastPoster;
+      const poster = video.poster || '';
+      const hasPoster = poster.startsWith('data:image') || poster.startsWith('blob:');
+      const posterChanged = hasPoster && poster !== lastPoster;
 
       if (!hasVideoData && !posterChanged) {
-        if (debugCount++ < 3) console.log('[BrowserFaceLoop] skip', { hasVideoData, hasPoster, posterChanged, posterLen: video.poster?.length });
         requestAnimationFrame(loop);
         return;
       }
@@ -121,14 +117,16 @@ export function useBrowserFaceDetection(
 
       const runDetection = async () => {
         try {
-          let dets: typeof detections = [];
+          let dets: Detection[] = [];
           if (hasVideoData) {
             dets = await browserFaceDetector.detect(video);
           } else if (posterChanged) {
-            lastPoster = video.poster;
-            const img = await loadImage(video.poster);
-            if (img) {
-              dets = await browserFaceDetector.detect(img);
+            lastPoster = poster;
+            if (poster.startsWith('data:image')) {
+              const img = await loadImage(poster);
+              if (img) {
+                dets = await browserFaceDetector.detect(img);
+              }
             }
           }
           if (running) {
@@ -136,7 +134,7 @@ export function useBrowserFaceDetection(
             fpsCountRef.current++;
           }
         } catch {
-          // ignore
+          // Ignore transient detection errors
         }
         detecting = false;
         if (running) requestAnimationFrame(loop);
