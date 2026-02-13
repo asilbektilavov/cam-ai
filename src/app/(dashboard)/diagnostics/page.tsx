@@ -19,6 +19,13 @@ import {
   MemoryStick,
   Zap,
   Eye,
+  Video,
+  Users,
+  Radio,
+  ScanFace,
+  Brain,
+  Send,
+  Layers,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +42,20 @@ interface DiagnosticsData {
     database: { status: string; latencyMs: number };
     yolo: { status: string; latencyMs: number; url: string };
     gemini: { status: string };
+    go2rtc: { status: string; activeStreams: number };
+    attendance: {
+      status: string;
+      latencyMs: number;
+      employeesLoaded: number;
+      cameras: Array<{
+        id: string;
+        direction: string;
+        alive: boolean;
+        fps: number;
+        facesDetected: number;
+        matchesFound: number;
+      }>;
+    };
   };
   system: {
     cpuModel: string;
@@ -53,11 +74,17 @@ interface DiagnosticsData {
     total: number;
     online: number;
     monitoring: number;
+    byPurpose: {
+      detection: number;
+      attendanceEntry: number;
+      attendanceExit: number;
+    };
   };
   events: {
     last24h: number;
     lastHour: number;
     criticalLast24h: number;
+    byType: Array<{ type: string; count: number }>;
   };
   sessions: {
     active: number;
@@ -243,13 +270,13 @@ export default function DiagnosticsPage() {
       </Card>
 
       {/* Services */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
         {/* Database */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Database className="h-4 w-4" />
-              База данных (PostgreSQL)
+              PostgreSQL
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -292,7 +319,204 @@ export default function DiagnosticsPage() {
             <StatusBadge status={data.services.gemini.status} />
           </CardContent>
         </Card>
+
+        {/* go2rtc */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Video className="h-4 w-4" />
+              go2rtc
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <StatusBadge status={data.services.go2rtc.status} />
+              <span className="text-sm text-muted-foreground">
+                {data.services.go2rtc.activeStreams} потоков
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Attendance */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <ScanFace className="h-4 w-4" />
+              Распознавание
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <StatusBadge status={data.services.attendance.status} />
+              <span className="text-sm text-muted-foreground">
+                {data.services.attendance.status === 'ok' ? `${data.services.attendance.latencyMs}мс` : 'Недоступен'}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Service Load — single segmented bar */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Layers className="h-4 w-4" />
+            Нагрузка по функциям
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {(() => {
+            const segments = [
+              { key: 'streaming', label: 'Видеостриминг', color: 'bg-blue-500', value: data.services.go2rtc.activeStreams },
+              { key: 'detection', label: 'Детекция объектов', color: 'bg-violet-500', value: data.cameras.monitoring },
+              { key: 'faces', label: 'Распознавание лиц', color: 'bg-emerald-500', value: data.services.attendance.cameras.filter((c) => c.alive).length },
+              { key: 'ai', label: 'AI-аналитика', color: 'bg-amber-500', value: data.sessions.active },
+              { key: 'notifications', label: 'Уведомления', color: 'bg-pink-500', value: data.notifications.sentLast24h },
+            ];
+            const total = segments.reduce((s, seg) => s + seg.value, 0);
+
+            return (
+              <>
+                {/* Segmented bar */}
+                <div className="h-5 rounded-full bg-muted overflow-hidden flex">
+                  {total > 0 ? (
+                    segments
+                      .filter((s) => s.value > 0)
+                      .map((s, i, arr) => (
+                        <div
+                          key={s.key}
+                          className={`h-full ${s.color} transition-all duration-500 ${i === 0 ? 'rounded-l-full' : ''} ${i === arr.length - 1 ? 'rounded-r-full' : ''}`}
+                          style={{ width: `${(s.value / total) * 100}%` }}
+                          title={`${s.label}: ${s.value}`}
+                        />
+                      ))
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center text-xs text-muted-foreground">
+                      Нет активных функций
+                    </div>
+                  )}
+                </div>
+
+                {/* Legend */}
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  {segments.map((s) => (
+                    <div key={s.key} className="flex items-center gap-2 text-sm">
+                      <div className={`h-3 w-3 rounded-full ${s.color} ${s.value === 0 ? 'opacity-30' : ''}`} />
+                      <span className={s.value === 0 ? 'text-muted-foreground' : ''}>
+                        {s.label}
+                      </span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {s.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
+        </CardContent>
+      </Card>
+
+      {/* Event Type Distribution */}
+      {data.events.byType.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Radio className="h-4 w-4" />
+              Распределение событий за 24ч
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(() => {
+              const maxCount = Math.max(...data.events.byType.map((e) => e.count), 1);
+              const typeLabels: Record<string, string> = {
+                person_detected: 'Обнаружение людей',
+                motion_detected: 'Движение',
+                face_detected: 'Распознавание лиц',
+                fire_detected: 'Обнаружение огня',
+                anomaly: 'Аномалия',
+                line_crossing: 'Пересечение линии',
+                loitering: 'Задержка в зоне',
+                abandoned_object: 'Оставленный предмет',
+                fall_detected: 'Падение',
+                tamper_detected: 'Саботаж камеры',
+                crowd: 'Скопление людей',
+                vehicle: 'Транспорт',
+              };
+              const typeColors: Record<string, string> = {
+                person_detected: 'bg-blue-500',
+                motion_detected: 'bg-slate-400',
+                face_detected: 'bg-emerald-500',
+                fire_detected: 'bg-red-500',
+                anomaly: 'bg-orange-500',
+                line_crossing: 'bg-yellow-500',
+                loitering: 'bg-purple-500',
+                abandoned_object: 'bg-amber-600',
+                fall_detected: 'bg-rose-500',
+                tamper_detected: 'bg-red-700',
+                crowd: 'bg-indigo-500',
+                vehicle: 'bg-teal-500',
+              };
+              const sorted = [...data.events.byType].sort((a, b) => b.count - a.count);
+              return sorted.map((evt) => (
+                <div key={evt.type} className="space-y-1">
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className={`h-2.5 w-2.5 rounded-full ${typeColors[evt.type] || 'bg-gray-400'}`} />
+                      <span>{typeLabels[evt.type] || evt.type}</span>
+                    </div>
+                    <span className="font-medium tabular-nums">{evt.count}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${typeColors[evt.type] || 'bg-gray-400'}`}
+                      style={{ width: `${(evt.count / maxCount) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ));
+            })()}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Attendance Service Details */}
+      {data.services.attendance.status === 'ok' && data.services.attendance.cameras.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ScanFace className="h-4 w-4" />
+              Детализация распознавания лиц
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="flex items-center gap-4 text-sm text-muted-foreground mb-3">
+                <span><Users className="h-4 w-4 inline mr-1" />Загружено сотрудников: <strong className="text-foreground">{data.services.attendance.employeesLoaded}</strong></span>
+              </div>
+              {data.services.attendance.cameras.map((cam) => (
+                <div key={cam.id} className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="flex items-center gap-3">
+                    <div className={`h-2.5 w-2.5 rounded-full ${cam.alive ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <div>
+                      <p className="text-sm font-medium">
+                        {cam.direction === 'entry' ? 'Вход' : cam.direction === 'exit' ? 'Выход' : cam.direction}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate max-w-[200px]">{cam.id}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <span>{cam.fps} FPS</span>
+                    <span>{cam.facesDetected} лиц</span>
+                    <span className="text-emerald-500">{cam.matchesFound} совпадений</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* System Resources */}
       <div className="grid gap-4 md:grid-cols-2">
