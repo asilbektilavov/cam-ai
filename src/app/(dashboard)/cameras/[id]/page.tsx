@@ -89,12 +89,22 @@ export default function CameraDetailPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [selectedClasses, setSelectedClasses] = useState<Set<string>>(
-    new Set(['person', 'vehicle', 'animal', 'fire', 'other'])
-  );
-  const [selectedOtherTypes, setSelectedOtherTypes] = useState<Set<string>>(
-    new Set(['backpack', 'handbag', 'suitcase', 'knife', 'cell_phone', 'bottle'])
-  );
+  const [selectedClasses, setSelectedClasses] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set(['person']);
+    try {
+      const saved = localStorage.getItem(`cam-filter-classes-${cameraId}`);
+      if (saved) return new Set(JSON.parse(saved) as string[]);
+    } catch {}
+    return new Set(['person']);
+  });
+  const [selectedOtherTypes, setSelectedOtherTypes] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set(['backpack', 'handbag', 'suitcase', 'knife', 'cell_phone', 'bottle']);
+    try {
+      const saved = localStorage.getItem(`cam-filter-other-${cameraId}`);
+      if (saved) return new Set(JSON.parse(saved) as string[]);
+    } catch {}
+    return new Set(['backpack', 'handbag', 'suitcase', 'knife', 'cell_phone', 'bottle']);
+  });
   const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
   const [fireDetections, setFireDetections] = useState<Detection[]>([]);
   const [faceDetections, setFaceDetections] = useState<Detection[]>([]);
@@ -240,6 +250,19 @@ export default function CameraDetailPage() {
     { type: 'stop_sign',     label: 'Знак стоп' },
     { type: 'bowl',          label: 'Миска' },
   ];
+
+  // Persist filter config to localStorage per camera
+  useEffect(() => {
+    try {
+      localStorage.setItem(`cam-filter-classes-${cameraId}`, JSON.stringify([...selectedClasses]));
+    } catch {}
+  }, [selectedClasses, cameraId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`cam-filter-other-${cameraId}`, JSON.stringify([...selectedOtherTypes]));
+    } catch {}
+  }, [selectedOtherTypes, cameraId]);
 
   const toggleClass = (cls: string) => {
     setSelectedClasses((prev) => {
