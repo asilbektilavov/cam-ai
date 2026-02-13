@@ -55,6 +55,7 @@ interface TelegramStatus {
   botUsername: string | null;
   connected: boolean;
   chatId: string | null;
+  orgId: string;
   branches: Array<{ id: string; name: string; notifyEnabled: boolean }>;
 }
 
@@ -366,37 +367,50 @@ export default function IntegrationsPage() {
               <span className="text-sm text-muted-foreground">Загрузка...</span>
             </div>
           ) : !tgStatus?.configured ? (
-            // State 1: Not configured
-            <div className="text-sm text-muted-foreground">
-              <p>Telegram бот не настроен.</p>
-              <p className="mt-1">Попросите техника указать <code className="bg-muted px-1.5 py-0.5 rounded text-xs">--telegram</code> при установке.</p>
+            // State 1: Not configured — show default bot with deep link
+            <div className="space-y-3">
+              <div className="text-sm space-y-2">
+                <p className="font-medium">Подключите Telegram за 2 шага:</p>
+                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                  <li>Нажмите «Открыть бота» — он откроется в Telegram</li>
+                  <li>Нажмите <strong>Start</strong> в боте, затем вернитесь и нажмите «Подключить»</li>
+                </ol>
+              </div>
+              <div className="flex gap-2">
+                <Button asChild variant="outline" className="gap-2">
+                  <a href={`https://t.me/cam_ai_assist_bot?start=${tgStatus?.orgId || ''}`} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    Открыть бота
+                  </a>
+                </Button>
+                <Button onClick={handleTgConnect} disabled={tgConnecting} className="gap-2">
+                  {tgConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+                  Подключить
+                </Button>
+              </div>
             </div>
           ) : !tgStatus.connected ? (
             // State 2: Configured but not connected
             <div className="space-y-3">
               <div className="text-sm space-y-2">
-                <p className="font-medium">Подключите Telegram за 3 шага:</p>
+                <p className="font-medium">Подключите Telegram за 2 шага:</p>
                 <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                  <li>
-                    Откройте бота{' '}
-                    <a
-                      href={`https://t.me/${tgStatus.botUsername}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-500 hover:underline font-medium"
-                    >
-                      @{tgStatus.botUsername}
-                    </a>
-                    {' '}в Telegram
-                  </li>
-                  <li>Нажмите <strong>/start</strong></li>
-                  <li>Вернитесь сюда и нажмите кнопку ниже</li>
+                  <li>Нажмите «Открыть бота» — он откроется в Telegram</li>
+                  <li>Нажмите <strong>Start</strong> в боте, затем вернитесь и нажмите «Подключить»</li>
                 </ol>
               </div>
-              <Button onClick={handleTgConnect} disabled={tgConnecting} className="gap-2">
-                {tgConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
-                Подключить
-              </Button>
+              <div className="flex gap-2">
+                <Button asChild variant="outline" className="gap-2">
+                  <a href={`https://t.me/${tgStatus.botUsername}?start=${tgStatus.orgId}`} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    Открыть бота
+                  </a>
+                </Button>
+                <Button onClick={handleTgConnect} disabled={tgConnecting} className="gap-2">
+                  {tgConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+                  Подключить
+                </Button>
+              </div>
             </div>
           ) : (
             // State 3: Connected

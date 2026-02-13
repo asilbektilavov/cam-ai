@@ -30,10 +30,10 @@ export async function POST() {
   const botToken = getBotToken(config);
 
   if (!botToken) {
-    return badRequest('Telegram бот не настроен. Попросите техника указать --telegram при установке.');
+    return badRequest('Telegram бот не настроен.');
   }
 
-  // Poll getUpdates to find /start messages
+  // Poll getUpdates to find /start messages with this org's deep link
   try {
     const res = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates?limit=100&timeout=0`);
     const data = await res.json();
@@ -42,7 +42,6 @@ export async function POST() {
       return badRequest('Неверный Bot Token');
     }
 
-    // Find the most recent /start message
     const updates = data.result as Array<{
       update_id: number;
       message?: {
@@ -52,9 +51,17 @@ export async function POST() {
       };
     }>;
 
-    const startMessages = updates
-      .filter((u) => u.message?.text === '/start')
+    // Match deep link: /start ORG_ID (Telegram sends payload after /start)
+    const orgStartMessages = updates
+      .filter((u) => u.message?.text === `/start ${orgId}`)
       .sort((a, b) => (b.message?.date || 0) - (a.message?.date || 0));
+
+    // Fallback: if no deep link match, try plain /start (for backward compat)
+    const startMessages = orgStartMessages.length > 0
+      ? orgStartMessages
+      : updates
+          .filter((u) => u.message?.text === '/start')
+          .sort((a, b) => (b.message?.date || 0) - (a.message?.date || 0));
 
     if (startMessages.length === 0) {
       return badRequest('Не найдено сообщение /start. Откройте бота в Telegram и отправьте /start.');

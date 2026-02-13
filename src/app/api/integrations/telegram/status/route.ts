@@ -35,6 +35,7 @@ export async function GET() {
       botUsername: null,
       connected: false,
       chatId: null,
+      orgId,
       branches: [],
     });
   }
@@ -73,6 +74,7 @@ export async function GET() {
     botUsername,
     connected: !!config.chatId,
     chatId: config.chatId || null,
+    orgId,
     branches: branchesWithNotify,
   });
 }
