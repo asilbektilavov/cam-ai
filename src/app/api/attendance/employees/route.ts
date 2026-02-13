@@ -5,6 +5,33 @@ import { checkPermission, RBACError } from '@/lib/rbac';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
+const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
+
+/** Sync all active employees to the attendance-service (fire-and-forget). */
+async function syncEmployeesToAttendanceService() {
+  try {
+    const employees = await prisma.employee.findMany({
+      where: { isActive: true, photoPath: { not: null } },
+      select: { id: true, name: true, photoPath: true },
+    });
+
+    const apiBase = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    const payload = employees.map((e) => ({
+      id: e.id,
+      name: e.name,
+      photoUrl: `${apiBase}/api/attendance/${e.id}/photo`,
+    }));
+
+    await fetch(`${ATTENDANCE_SERVICE_URL}/employees/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // Non-critical — attendance-service may be offline
+  }
+}
+
 // GET /api/attendance/employees — list employees (also used by attendance-service sync)
 export async function GET(req: NextRequest) {
   // Support service-to-service sync: x-attendance-sync header or x-api-key
@@ -96,6 +123,9 @@ export async function POST(req: NextRequest) {
       _count: { select: { attendanceRecords: true } },
     },
   });
+
+  // Auto-sync to attendance-service so new employee is recognized immediately
+  syncEmployeesToAttendanceService();
 
   return NextResponse.json(employee);
 }

@@ -3,6 +3,31 @@ import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { checkPermission, RBACError } from '@/lib/rbac';
 
+const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
+
+/** Sync all active employees to the attendance-service (fire-and-forget). */
+async function syncEmployeesToAttendanceService() {
+  try {
+    const employees = await prisma.employee.findMany({
+      where: { isActive: true, photoPath: { not: null } },
+      select: { id: true, name: true, photoPath: true },
+    });
+    const apiBase = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    const payload = employees.map((e) => ({
+      id: e.id,
+      name: e.name,
+      photoUrl: `${apiBase}/api/attendance/${e.id}/photo`,
+    }));
+    await fetch(`${ATTENDANCE_SERVICE_URL}/employees/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // Non-critical — attendance-service may be offline
+  }
+}
+
 // GET /api/attendance/[id] — get employee detail with recent attendance
 export async function GET(
   _req: NextRequest,
@@ -79,6 +104,11 @@ export async function PATCH(
     },
   });
 
+  // Sync if name or active status changed
+  if (name !== undefined || isActive !== undefined) {
+    syncEmployeesToAttendanceService();
+  }
+
   return NextResponse.json(employee);
 }
 
@@ -106,5 +136,9 @@ export async function DELETE(
   }
 
   await prisma.employee.delete({ where: { id } });
+
+  // Sync to attendance-service so deleted employee is no longer recognized
+  syncEmployeesToAttendanceService();
+
   return NextResponse.json({ success: true });
 }
