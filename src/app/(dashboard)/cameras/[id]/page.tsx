@@ -103,7 +103,6 @@ export default function CameraDetailPage() {
   const [faceDetections, setFaceDetections] = useState<Detection[]>([]);
   const [measuredLatency, setMeasuredLatency] = useState<number | undefined>();
   const latencyEmaRef = useRef<number | null>(null);
-  const faceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Browser-side detection via ONNX Runtime Web
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -291,17 +290,6 @@ export default function CameraDetailPage() {
           }
         }
 
-        // Face detections from attendance-service
-        // Keep last non-empty detections alive for 3s to avoid flickering
-        if (event.type === 'face_detected' && Array.isArray(event.data.detections)) {
-          const dets = event.data.detections as Detection[];
-          if (dets.length > 0) {
-            setFaceDetections(dets);
-            if (faceTimeoutRef.current) clearTimeout(faceTimeoutRef.current);
-            faceTimeoutRef.current = setTimeout(() => setFaceDetections([]), 3000);
-          }
-        }
-
         // Fire/smoke from server-side HSV detection
         if (event.type === 'fire_detected' || event.type === 'smoke_detected') {
           const regions = event.data.regions as Array<{ bbox: { x: number; y: number; w: number; h: number } }> | undefined;
@@ -324,6 +312,34 @@ export default function CameraDetailPage() {
     )
   );
 
+  // Poll face recognition data from server (reliable, works regardless of SSE state)
+  // Only active when the page is open for an attendance camera
+  useEffect(() => {
+    if (!isAttendance || !camera?.isMonitoring) return;
+
+    let active = true;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/attendance/face-events?cameraId=${cameraId}`);
+        if (!active) return;
+        const data = await res.json();
+        if (Array.isArray(data.detections) && data.detections.length > 0) {
+          setFaceDetections(data.detections as Detection[]);
+        }
+      } catch {
+        // Network error — ignore, will retry
+      }
+    };
+
+    poll(); // initial fetch
+    const interval = setInterval(poll, 500); // poll every 500ms
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isAttendance, camera?.isMonitoring, cameraId]);
+
   // Merge attendance detections:
   // Browser faces (fast, accurate position) = PRIMARY for bbox
   // Server SSE faces (slow, ~1fps, has identity) = enriches with name/color
@@ -334,8 +350,6 @@ export default function CameraDetailPage() {
 
     // No server data yet — just show browser faces
     if (faceDetections.length === 0) return browserFaces;
-
-    console.log('[Merge] MATCHING:', browserFaces.length, 'browser,', faceDetections.length, 'server, server[0]:', faceDetections[0]?.label, faceDetections[0]?.color);
 
     const MATCH_DIST = 0.25; // max center distance (normalized) to match
     const result: Detection[] = [];
@@ -363,12 +377,6 @@ export default function CameraDetailPage() {
         }
       }
 
-      const sfCx = faceDetections[0] ? faceDetections[0].bbox.x + faceDetections[0].bbox.w / 2 : 0;
-      const sfCy = faceDetections[0] ? faceDetections[0].bbox.y + faceDetections[0].bbox.h / 2 : 0;
-      const actualDist = Math.sqrt((bfCx - sfCx) ** 2 + (bfCy - sfCy) ** 2);
-      console.log('[Merge] dist:', actualDist.toFixed(3), 'threshold:', MATCH_DIST, 'matched:', !!bestServer,
-        'bfC:', bfCx.toFixed(2), bfCy.toFixed(2), 'sfC:', sfCx.toFixed(2), sfCy.toFixed(2));
-
       if (bestServer) {
         usedServerIndices.add(bestIdx);
         result.push({
@@ -385,9 +393,6 @@ export default function CameraDetailPage() {
       }
     }
 
-    if (result.length > 0 && result[0].label !== 'Лицо') {
-      console.log('[Merge] RESULT:', result[0].label, result[0].color, result[0].confidence);
-    }
     return result;
   }, [isAttendance, faceDetections, browserFaces]);
 

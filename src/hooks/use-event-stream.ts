@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
 
 interface CameraEvent {
@@ -35,20 +35,12 @@ export function useEventStream(onEvent: EventHandler) {
       }
 
       const branchParam = branchIdRef.current ? `?branchId=${branchIdRef.current}` : '';
-      console.log('[useEventStream] connecting to', `/api/events/stream${branchParam}`);
       const es = new EventSource(`/api/events/stream${branchParam}`);
       eventSourceRef.current = es;
-
-      es.onopen = () => {
-        console.log('[useEventStream] connected, readyState:', es.readyState);
-      };
 
       es.onmessage = (e) => {
         try {
           const event = JSON.parse(e.data) as CameraEvent;
-          if (event.type === 'face_detected') {
-            console.log('[useEventStream] face_detected received:', event.data);
-          }
           onEventRef.current(event);
         } catch {
           // Ignore parse errors (keepalive, etc.)
@@ -56,7 +48,6 @@ export function useEventStream(onEvent: EventHandler) {
       };
 
       es.onerror = () => {
-        console.log('[useEventStream] error, readyState:', es.readyState);
         es.close();
         eventSourceRef.current = null;
         if (!cancelled) {
