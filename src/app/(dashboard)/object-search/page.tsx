@@ -409,7 +409,7 @@ function UniqueVisitorsTab() {
           <CardContent className="pt-6">
             <div className="text-center">
               <p className="text-3xl font-bold text-green-500">{data.approximate.totalPeopleDetections}</p>
-              <p className="text-sm text-muted-foreground">Детекций людей (YOLO)</p>
+              <p className="text-sm text-muted-foreground">Детекций людей</p>
             </div>
           </CardContent>
         </Card>

@@ -251,7 +251,7 @@ export default function DashboardPage() {
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Детекция объектов в реальном времени (YOLOv8)
+                    Детекция объектов в реальном времени
                   </p>
                 </div>
               </div>

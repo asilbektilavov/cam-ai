@@ -711,7 +711,7 @@ export default function SettingsPage() {
                       <ShieldCheck className="h-6 w-6 text-blue-500" />
                     </div>
                     <div>
-                      <p className="font-semibold">Только детекция (YOLO)</p>
+                      <p className="font-semibold">Только детекция</p>
                       <p className="mt-1 text-sm text-muted-foreground">
                         Обнаружение объектов с bounding boxes в реальном времени. Определяет людей, транспорт, животных и другие объекты. Без текстовых описаний сцены.
                       </p>

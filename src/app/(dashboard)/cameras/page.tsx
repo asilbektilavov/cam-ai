@@ -425,7 +425,7 @@ export default function CamerasPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="detection">Обнаружение объектов (YOLO)</SelectItem>
+                    <SelectItem value="detection">Обнаружение объектов</SelectItem>
                     <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
                     <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
                   </SelectContent>
@@ -784,7 +784,7 @@ export default function CamerasPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="detection">Обнаружение объектов (YOLO)</SelectItem>
+                      <SelectItem value="detection">Обнаружение объектов</SelectItem>
                       <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
                       <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
                     </SelectContent>
