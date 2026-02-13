@@ -45,6 +45,7 @@ import { Go2rtcInlinePlayer } from '@/components/go2rtc-inline-player';
 import { DetectionOverlay, type Detection } from '@/components/detection-overlay';
 import { useEventStream } from '@/hooks/use-event-stream';
 import { useBrowserDetection } from '@/hooks/use-browser-detection';
+import { useBrowserFaceDetection } from '@/hooks/use-browser-face-detection';
 import { PtzControls } from '@/components/ptz-controls';
 import { ExportDialog } from '@/components/export-dialog';
 import HeatmapOverlay from '@/components/heatmap-overlay';
@@ -62,6 +63,7 @@ interface CameraDetail {
   streamUrl: string;
   status: string;
   venueType: string;
+  purpose: string;
   resolution: string;
   fps: number;
   isMonitoring: boolean;
@@ -98,6 +100,7 @@ export default function CameraDetailPage() {
   const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
   const [liveDetections, setLiveDetections] = useState<Detection[]>([]);
   const [fireDetections, setFireDetections] = useState<Detection[]>([]);
+  const [faceDetections, setFaceDetections] = useState<Detection[]>([]);
   const [measuredLatency, setMeasuredLatency] = useState<number | undefined>();
   const latencyEmaRef = useRef<number | null>(null);
 
@@ -123,15 +126,26 @@ export default function CameraDetailPage() {
     return types;
   }, [selectedClasses, selectedOtherTypes]);
 
+  const isAttendance = camera?.purpose?.startsWith('attendance_') ?? false;
+
   const {
     detections: browserDetections,
     fps: browserFps,
     backend: browserBackend,
     loading: browserLoading,
   } = useBrowserDetection(videoRef, {
-    enabled: selectedClasses.size > 0,
+    enabled: !isAttendance && selectedClasses.size > 0,
     enabledClasses: browserEnabledTypes,
     targetFps: 10,
+  });
+
+  // Browser-side face detection for attendance cameras (instant visual feedback)
+  const {
+    detections: browserFaces,
+    fps: faceFps,
+    loading: faceLoading,
+  } = useBrowserFaceDetection(videoRef, {
+    enabled: isAttendance && (camera?.isStreaming || camera?.isMonitoring || false),
   });
   const [onvifForm, setOnvifForm] = useState({
     onvifHost: '',
@@ -276,6 +290,11 @@ export default function CameraDetailPage() {
           }
         }
 
+        // Face detections from attendance-service
+        if (event.type === 'face_detected' && Array.isArray(event.data.detections)) {
+          setFaceDetections(event.data.detections as Detection[]);
+        }
+
         // Fire/smoke from server-side HSV detection
         if (event.type === 'fire_detected' || event.type === 'smoke_detected') {
           const regions = event.data.regions as Array<{ bbox: { x: number; y: number; w: number; h: number } }> | undefined;
@@ -297,6 +316,63 @@ export default function CameraDetailPage() {
       [cameraId]
     )
   );
+
+  // Merge attendance detections:
+  // Browser faces (fast, accurate position) = PRIMARY for bbox
+  // Server SSE faces (slow, ~1fps, has identity) = enriches with name/color
+  const mergedFaceDetections = useMemo(() => {
+    if (!isAttendance) return faceDetections;
+
+    // No browser data — fall back to server detections
+    if (browserFaces.length === 0) return faceDetections;
+
+    const result: Detection[] = [];
+    const usedServerIndices = new Set<number>();
+
+    for (const bf of browserFaces) {
+      // Find best overlapping server face by IoU
+      let bestServer: Detection | null = null;
+      let bestIdx = -1;
+      let bestOverlap = 0.25; // min threshold to match
+
+      for (let i = 0; i < faceDetections.length; i++) {
+        const sf = faceDetections[i];
+        const x1 = Math.max(sf.bbox.x, bf.bbox.x);
+        const y1 = Math.max(sf.bbox.y, bf.bbox.y);
+        const x2 = Math.min(sf.bbox.x + sf.bbox.w, bf.bbox.x + bf.bbox.w);
+        const y2 = Math.min(sf.bbox.y + sf.bbox.h, bf.bbox.y + bf.bbox.h);
+        const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+        const bfArea = bf.bbox.w * bf.bbox.h;
+        const overlap = bfArea > 0 ? inter / bfArea : 0;
+        if (overlap > bestOverlap) {
+          bestOverlap = overlap;
+          bestServer = sf;
+          bestIdx = i;
+        }
+      }
+
+      if (bestServer) {
+        // Browser position (fast) + server identity (name, color)
+        usedServerIndices.add(bestIdx);
+        result.push({
+          ...bestServer,
+          bbox: bf.bbox, // use browser bbox — it tracks faster
+        });
+      } else {
+        // No server match — show as blue browser face
+        result.push(bf);
+      }
+    }
+
+    // Add unmatched server faces (server might see faces browser missed)
+    for (let i = 0; i < faceDetections.length; i++) {
+      if (!usedServerIndices.has(i)) {
+        result.push(faceDetections[i]);
+      }
+    }
+
+    return result;
+  }, [isAttendance, faceDetections, browserFaces]);
 
   // Use browser detections when available, fall back to SSE server detections
   const useBrowser = browserDetections.length > 0 || (!browserLoading && browserFps > 0);
@@ -412,12 +488,12 @@ export default function CameraDetailPage() {
                   onVideoRef={handleVideoRef}
                 />
                 <DetectionOverlay
-                  detections={filteredDetections}
-                  visible={selectedClasses.size > 0}
-                  pipelineLatencyMs={useBrowser ? 0 : measuredLatency}
+                  detections={isAttendance ? mergedFaceDetections : filteredDetections}
+                  visible={isAttendance || selectedClasses.size > 0}
+                  pipelineLatencyMs={isAttendance ? undefined : (useBrowser ? 0 : measuredLatency)}
                 />
-                {/* Browser AI badge */}
-                {selectedClasses.size > 0 && (
+                {/* Browser AI badge — only for detection cameras */}
+                {!isAttendance && selectedClasses.size > 0 && (
                   <div className="absolute bottom-3 left-3 z-20">
                     {browserLoading ? (
                       <Badge variant="secondary" className="bg-black/60 text-yellow-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
@@ -433,6 +509,31 @@ export default function CameraDetailPage() {
                         AI Browser {browserFps}fps {browserBackend === 'webgpu' ? '⚡' : ''}
                       </Badge>
                     ) : null}
+                  </div>
+                )}
+                {/* Attendance badge */}
+                {isAttendance && (camera.isMonitoring || camera.isStreaming) && (
+                  <div className="absolute bottom-3 left-3 z-20 flex gap-1">
+                    {faceLoading ? (
+                      <Badge variant="secondary" className="bg-black/60 text-yellow-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Face AI загрузка...
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="bg-black/60 text-green-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-400" />
+                        </span>
+                        Face AI {faceFps > 0 ? `${faceFps}fps` : 'Browser'}
+                      </Badge>
+                    )}
+                    {camera.isMonitoring && (
+                      <Badge variant="secondary" className="bg-black/60 text-blue-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                        <Shield className="h-3 w-3" />
+                        Recognition
+                      </Badge>
+                    )}
                   </div>
                 )}
               </>
@@ -490,8 +591,8 @@ export default function CameraDetailPage() {
             )}
           </div>
 
-          {/* Detection Filter */}
-          {(camera.isStreaming || camera.isMonitoring) && (
+          {/* Detection Filter — only for detection cameras */}
+          {!isAttendance && (camera.isStreaming || camera.isMonitoring) && (
             <Card>
               <CardContent className="p-3">
                 <div className="flex items-center gap-2 mb-2.5">
@@ -618,51 +719,53 @@ export default function CameraDetailPage() {
             </Card>
           </div>
 
-          {/* Analytics Tabs */}
-          <Tabs defaultValue="heatmap" className="mt-2">
-            <TabsList>
-              <TabsTrigger value="heatmap">
-                <MapPin className="h-4 w-4 mr-1.5" />
-                Тепловая карта
-              </TabsTrigger>
-              <TabsTrigger value="people">
-                <Users className="h-4 w-4 mr-1.5" />
-                Подсчёт людей
-              </TabsTrigger>
-              <TabsTrigger value="occupancy">
-                <DoorOpen className="h-4 w-4 mr-1.5" />
-                Заполняемость
-              </TabsTrigger>
-            </TabsList>
+          {/* Analytics Tabs — only for detection cameras */}
+          {!isAttendance && (
+            <Tabs defaultValue="heatmap" className="mt-2">
+              <TabsList>
+                <TabsTrigger value="heatmap">
+                  <MapPin className="h-4 w-4 mr-1.5" />
+                  Тепловая карта
+                </TabsTrigger>
+                <TabsTrigger value="people">
+                  <Users className="h-4 w-4 mr-1.5" />
+                  Подсчёт людей
+                </TabsTrigger>
+                <TabsTrigger value="occupancy">
+                  <DoorOpen className="h-4 w-4 mr-1.5" />
+                  Заполняемость
+                </TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="heatmap">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <MapPin className="h-4 w-4" />
-                    Тепловая карта активности
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <HeatmapOverlay cameraId={cameraId} />
-                </CardContent>
-              </Card>
-            </TabsContent>
+              <TabsContent value="heatmap">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      Тепловая карта активности
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <HeatmapOverlay cameraId={cameraId} />
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-            <TabsContent value="people">
-              <PeopleCounterWidget
-                cameraId={cameraId}
-                cameraName={camera.name}
-              />
-            </TabsContent>
+              <TabsContent value="people">
+                <PeopleCounterWidget
+                  cameraId={cameraId}
+                  cameraName={camera.name}
+                />
+              </TabsContent>
 
-            <TabsContent value="occupancy">
-              <OccupancyWidget
-                cameraId={cameraId}
-                cameraName={camera.name}
-              />
-            </TabsContent>
-          </Tabs>
+              <TabsContent value="occupancy">
+                <OccupancyWidget
+                  cameraId={cameraId}
+                  cameraName={camera.name}
+                />
+              </TabsContent>
+            </Tabs>
+          )}
         </div>
 
         {/* PTZ Sidebar */}

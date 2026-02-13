@@ -7,20 +7,21 @@ import { join } from 'path';
 
 // GET /api/attendance/employees — list employees (also used by attendance-service sync)
 export async function GET(req: NextRequest) {
-  // Support both session-based and API key auth
+  // Support service-to-service sync: x-attendance-sync header or x-api-key
+  const syncHeader = req.headers.get('x-attendance-sync');
   const apiKey = req.headers.get('x-api-key');
-  if (apiKey) {
-    // API key auth — return all active employees with descriptors
+  if (syncHeader === 'true' || apiKey) {
+    // Service auth — return all active employees with photo paths for attendance-service
     const employees = await prisma.employee.findMany({
       where: { isActive: true },
-      select: { id: true, name: true, faceDescriptor: true },
+      select: { id: true, name: true, photoPath: true },
     });
 
     return NextResponse.json(
       employees.map((e) => ({
         id: e.id,
         name: e.name,
-        faceDescriptor: e.faceDescriptor ? JSON.parse(e.faceDescriptor) : null,
+        photoPath: e.photoPath,
       }))
     );
   }

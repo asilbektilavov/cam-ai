@@ -23,7 +23,7 @@ import numpy as np
 import face_recognition
 import httpx
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ def _report_event(employee_id: str, employee_name: str, camera_id: str,
             resp = httpx.post(
                 f"{CAM_AI_API_URL}/api/attendance/event",
                 json=event,
-                headers={"x-api-key": API_KEY} if API_KEY else {},
+                headers={"x-attendance-sync": "true", **({"x-api-key": API_KEY} if API_KEY else {})},
                 timeout=10,
             )
             if resp.status_code >= 400:
@@ -143,6 +143,141 @@ def _frame_to_b64_jpeg(frame: np.ndarray, max_side: int = 320) -> str:
 # Camera Watcher — one thread per camera
 # ---------------------------------------------------------------------------
 
+class FrameGrabber(threading.Thread):
+    """Background thread that continuously reads from RTSP/HTTP and keeps only the latest frame."""
+
+    def __init__(self, stream_url: str, camera_id: str):
+        super().__init__(daemon=True)
+        self.stream_url = stream_url
+        self.camera_id = camera_id
+        self._stop_event = threading.Event()
+        self._frame: Optional[np.ndarray] = None
+        self._frame_lock = threading.Lock()
+        self._connected = False
+        # Detect IP Webcam (HTTP without explicit video path)
+        self._is_ipwebcam = (
+            stream_url.startswith("http://") and
+            not stream_url.endswith(("/video", "/stream", ".mjpg", ".mjpeg"))
+        )
+
+    def stop(self):
+        self._stop_event.set()
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop_event.is_set()
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    def get_latest_frame(self) -> Optional[np.ndarray]:
+        """Return the latest frame and clear it (so same frame isn't processed twice)."""
+        with self._frame_lock:
+            frame = self._frame
+            self._frame = None
+            return frame
+
+    def _grab_ipwebcam(self):
+        """Grab frames from IP Webcam by polling /shot.jpg endpoint."""
+        base = self.stream_url.rstrip("/")
+        shot_url = f"{base}/shot.jpg"
+        retry_count = 0
+        max_retries = 10
+        log.info("Grabber %s: using IP Webcam mode (%s)", self.camera_id, shot_url)
+
+        while not self.stopped:
+            try:
+                resp = httpx.get(shot_url, timeout=5)
+                if resp.status_code != 200:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        log.error("Grabber %s: max retries reached", self.camera_id)
+                        break
+                    log.warning("Grabber %s: HTTP %s, retry %d/%d",
+                                self.camera_id, resp.status_code, retry_count, max_retries)
+                    time.sleep(5)
+                    continue
+
+                nparr = np.frombuffer(resp.content, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if frame is None:
+                    retry_count += 1
+                    time.sleep(1)
+                    continue
+
+                retry_count = 0
+                if not self._connected:
+                    self._connected = True
+                    log.info("Grabber %s: connected to %s (%dx%d)",
+                             self.camera_id, shot_url, frame.shape[1], frame.shape[0])
+
+                with self._frame_lock:
+                    self._frame = frame
+
+                time.sleep(0.3)  # ~3fps polling — avoid overloading phone camera
+
+            except Exception as e:
+                retry_count += 1
+                self._connected = False
+                if retry_count >= max_retries:
+                    log.error("Grabber %s: max retries reached (%s)", self.camera_id, e)
+                    break
+                log.warning("Grabber %s: error %s, retry %d/%d",
+                            self.camera_id, e, retry_count, max_retries)
+                time.sleep(5)
+
+        self._connected = False
+        log.info("Grabber stopped for camera %s", self.camera_id)
+
+    def run(self):
+        if self._is_ipwebcam:
+            self._grab_ipwebcam()
+            return
+
+        cap = None
+        retry_count = 0
+        max_retries = 10
+
+        while not self.stopped:
+            if cap is None or not cap.isOpened():
+                if retry_count >= max_retries:
+                    log.error("Grabber %s: max retries reached, stopping", self.camera_id)
+                    break
+                cap = cv2.VideoCapture(self.stream_url, cv2.CAP_FFMPEG)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                if self.stream_url.startswith("rtsp://"):
+                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|analyzeduration;2000000|fflags;nobuffer"
+                if not cap.isOpened():
+                    retry_count += 1
+                    self._connected = False
+                    log.warning("Grabber %s: cannot open, retry %d/%d in 5s",
+                                self.camera_id, retry_count, max_retries)
+                    time.sleep(5)
+                    continue
+                retry_count = 0
+                self._connected = True
+                log.info("Grabber %s: connected to %s", self.camera_id, self.stream_url)
+
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                log.warning("Grabber %s: frame read failed, reconnecting...", self.camera_id)
+                cap.release()
+                cap = None
+                self._connected = False
+                time.sleep(2)
+                continue
+
+            # Always overwrite with the latest frame
+            with self._frame_lock:
+                self._frame = frame
+
+        if cap is not None:
+            cap.release()
+        self._connected = False
+        log.info("Grabber stopped for camera %s", self.camera_id)
+
+
 class CameraWatcher(threading.Thread):
     """Continuously reads frames from a camera and detects/matches faces."""
 
@@ -156,6 +291,9 @@ class CameraWatcher(threading.Thread):
         self.last_frame_time = 0.0
         self.faces_detected = 0
         self.matches_found = 0
+        # Annotated frame for MJPEG streaming
+        self._annotated_frame: Optional[bytes] = None
+        self._frame_lock = threading.Lock()
 
     def stop(self):
         self._stop_event.set()
@@ -164,82 +302,134 @@ class CameraWatcher(threading.Thread):
     def stopped(self) -> bool:
         return self._stop_event.is_set()
 
+    def get_frame(self) -> Optional[bytes]:
+        """Return latest annotated JPEG frame."""
+        with self._frame_lock:
+            return self._annotated_frame
+
+    def _push_face_events(self, faces: list[dict]):
+        """Send face detection events to CamAI API for browser overlay rendering."""
+        try:
+            httpx.post(
+                f"{CAM_AI_API_URL}/api/attendance/face-events",
+                json={"cameraId": self.camera_id, "faces": faces},
+                headers={"x-attendance-sync": "true"},
+                timeout=5,
+            )
+        except Exception as e:
+            log.debug("Failed to push face events: %s", e)
+
     def run(self):
         log.info("Starting watcher for camera %s (%s) direction=%s",
                  self.camera_id, self.stream_url, self.direction)
-        cap = None
-        retry_count = 0
-        max_retries = 10
+
+        # Start background frame grabber
+        grabber = FrameGrabber(self.stream_url, self.camera_id)
+        grabber.start()
+        first_frame_logged = False
 
         while not self.stopped:
-            # Open / reconnect
-            if cap is None or not cap.isOpened():
-                if retry_count >= max_retries:
-                    log.error("Camera %s: max retries reached, stopping", self.camera_id)
+            frame = grabber.get_latest_frame()
+            if frame is None:
+                if grabber.stopped:
+                    log.error("Camera %s: grabber died, stopping watcher", self.camera_id)
                     break
-                cap = cv2.VideoCapture(self.stream_url)
-                if not cap.isOpened():
-                    retry_count += 1
-                    log.warning("Camera %s: cannot open, retry %d/%d in 5s",
-                                self.camera_id, retry_count, max_retries)
-                    time.sleep(5)
-                    continue
-                retry_count = 0
-                log.info("Camera %s: connected", self.camera_id)
-
-            ret, frame = cap.read()
-            if not ret:
-                log.warning("Camera %s: frame read failed, reconnecting...", self.camera_id)
-                cap.release()
-                cap = None
-                time.sleep(2)
+                time.sleep(0.05)  # wait for frame
                 continue
 
+            if not first_frame_logged:
+                first_frame_logged = True
+                log.info("Camera %s: first frame received (%dx%d)", self.camera_id, frame.shape[1], frame.shape[0])
+
             t0 = time.time()
+            h, w = frame.shape[:2]
 
             # Convert BGR -> RGB for face_recognition
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # Downscale for speed (process at 1/2 resolution)
-            small = cv2.resize(rgb, (0, 0), fx=0.5, fy=0.5)
+            # Downscale for faster CNN detection, keep scale for bbox mapping
+            max_width = 400
+            if w > max_width:
+                scale = max_width / w
+                small = cv2.resize(rgb, (max_width, int(h * scale)))
+            else:
+                scale = 1.0
+                small = rgb
 
-            # Detect faces
-            locations = face_recognition.face_locations(small, model="hog")
+            locations = face_recognition.face_locations(small, model="cnn")
+            detect_time = time.time() - t0
+
             if not locations:
+                log.debug("Camera %s: no faces (%.1fs)", self.camera_id, detect_time)
+                # No faces — send empty once to clear browser overlays
+                if hasattr(self, '_had_faces') and self._had_faces:
+                    self._push_face_events([])
+                    self._had_faces = False
+                elapsed = time.time() - t0
+                self.fps = 1.0 / max(elapsed + POLL_INTERVAL, 0.001)
                 self.last_frame_time = time.time()
                 time.sleep(POLL_INTERVAL)
                 continue
 
-            encodings = face_recognition.face_encodings(small, locations)
+            # Map locations back to original resolution for encoding
+            if scale != 1.0:
+                locations = [
+                    (int(top / scale), int(right / scale), int(bottom / scale), int(left / scale))
+                    for top, right, bottom, left in locations
+                ]
+
+            encodings = face_recognition.face_encodings(rgb, locations)
             self.faces_detected += len(encodings)
+            log.info("Camera %s: detected %d face(s)", self.camera_id, len(encodings))
 
-            # Match against known employees
             with _employees_lock:
-                if not _employees:
-                    time.sleep(POLL_INTERVAL)
-                    continue
-                known_encodings = [e["encoding"] for e in _employees]
-                known_ids = [e["id"] for e in _employees]
-                known_names = [e["name"] for e in _employees]
+                known_encodings = [e["encoding"] for e in _employees] if _employees else []
+                known_ids = [e["id"] for e in _employees] if _employees else []
+                known_names = [e["name"] for e in _employees] if _employees else []
 
-            for enc in encodings:
-                distances = face_recognition.face_distance(known_encodings, enc)
-                best_idx = int(np.argmin(distances))
-                best_dist = distances[best_idx]
+            face_events: list[dict] = []
 
-                if best_dist <= MATCH_TOLERANCE:
-                    confidence = 1.0 - best_dist
-                    snapshot = _frame_to_b64_jpeg(frame)
-                    direction = "check_in" if self.direction == "entry" else "check_out"
-                    _report_event(
-                        known_ids[best_idx],
-                        known_names[best_idx],
-                        self.camera_id,
-                        direction,
-                        confidence,
-                        snapshot,
-                    )
-                    self.matches_found += 1
+            for i, enc in enumerate(encodings):
+                top, right, bottom, left = locations[i]
+
+                matched_name: str | None = None
+                confidence = 0.0
+
+                if known_encodings:
+                    distances = face_recognition.face_distance(known_encodings, enc)
+                    best_idx = int(np.argmin(distances))
+                    best_dist = distances[best_idx]
+
+                    if best_dist <= MATCH_TOLERANCE:
+                        matched_name = known_names[best_idx]
+                        confidence = 1.0 - best_dist
+                        snapshot = _frame_to_b64_jpeg(frame)
+                        direction = "check_in" if self.direction == "entry" else "check_out"
+                        _report_event(
+                            known_ids[best_idx],
+                            matched_name,
+                            self.camera_id,
+                            direction,
+                            confidence,
+                            snapshot,
+                        )
+                        self.matches_found += 1
+
+                # Normalized bbox (0-1) for browser overlay
+                face_events.append({
+                    "bbox": {
+                        "x": round(left / w, 4),
+                        "y": round(top / h, 4),
+                        "w": round((right - left) / w, 4),
+                        "h": round((bottom - top) / h, 4),
+                    },
+                    "name": matched_name,
+                    "confidence": round(confidence if matched_name else 0.5, 4),
+                })
+
+            # Push face events to CamAI API for browser overlay
+            self._had_faces = True
+            self._push_face_events(face_events)
 
             elapsed = time.time() - t0
             self.fps = 1.0 / max(elapsed, 0.001)
@@ -250,8 +440,8 @@ class CameraWatcher(threading.Thread):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        if cap is not None:
-            cap.release()
+        grabber.stop()
+        grabber.join(timeout=3)
         log.info("Watcher stopped for camera %s", self.camera_id)
 
 
@@ -291,31 +481,47 @@ def status():
     return {"events": events, "total": len(events)}
 
 
+def _download_and_encode(emp_id: str, emp_name: str, photo_url: str) -> dict | None:
+    """Download employee photo from CamAI API and extract face encoding."""
+    try:
+        resp = httpx.get(photo_url, timeout=15)
+        if resp.status_code != 200:
+            log.warning("Employee %s (%s): photo download failed HTTP %s", emp_name, emp_id, resp.status_code)
+            return None
+        nparr = np.frombuffer(resp.content, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            log.warning("Employee %s (%s): cannot decode photo", emp_name, emp_id)
+            return None
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        encodings = face_recognition.face_encodings(rgb)
+        if not encodings:
+            log.warning("Employee %s (%s): no face found in photo", emp_name, emp_id)
+            return None
+        return {"id": emp_id, "name": emp_name, "encoding": encodings[0]}
+    except Exception as e:
+        log.warning("Employee %s (%s): error %s", emp_name, emp_id, e)
+        return None
+
+
 @app.post("/employees/sync")
 async def sync_employees(employees: list[dict]):
     """
     Receive employee list from CamAI API.
-    Each item: {id, name, faceDescriptor: number[128]}
+    Each item: {id, name, photoUrl: str} — downloads photo and extracts encoding via dlib.
     """
     loaded = []
     errors = []
     for emp in employees:
-        try:
-            desc = emp.get("faceDescriptor")
-            if not desc or not isinstance(desc, list):
-                errors.append(f"{emp.get('id', '?')}: missing faceDescriptor")
-                continue
-            encoding = np.array(desc, dtype=np.float64)
-            if encoding.shape != (128,):
-                errors.append(f"{emp.get('id', '?')}: descriptor must be 128-D, got {encoding.shape}")
-                continue
-            loaded.append({
-                "id": emp["id"],
-                "name": emp.get("name", "Unknown"),
-                "encoding": encoding,
-            })
-        except Exception as e:
-            errors.append(f"{emp.get('id', '?')}: {e}")
+        photo_url = emp.get("photoUrl")
+        if not photo_url:
+            errors.append(f"{emp.get('id', '?')}: missing photoUrl")
+            continue
+        result = _download_and_encode(emp["id"], emp.get("name", "Unknown"), photo_url)
+        if result:
+            loaded.append(result)
+        else:
+            errors.append(f"{emp.get('id', '?')}: face extraction failed")
 
     with _employees_lock:
         _employees.clear()
@@ -398,6 +604,34 @@ async def stop_camera(camera_id: str = Form(...)):
     return {"status": "stopped", "camera_id": camera_id}
 
 
+@app.get("/cameras/{camera_id}/stream")
+async def camera_stream(camera_id: str):
+    """MJPEG stream of annotated frames with face bounding boxes."""
+    with _watchers_lock:
+        watcher = _watchers.get(camera_id)
+    if watcher is None or not watcher.is_alive():
+        raise HTTPException(status_code=404, detail="Camera watcher not running")
+
+    def generate():
+        last_frame = None
+        while True:
+            frame = watcher.get_frame()
+            if frame is not None and frame is not last_frame:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                )
+                last_frame = frame
+            time.sleep(0.05)  # ~20 fps max
+            if watcher.stopped:
+                break
+
+    return StreamingResponse(
+        generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
 @app.post("/detect")
 async def detect_faces(photo: UploadFile = File(...)):
     """
@@ -473,32 +707,65 @@ async def _startup():
     log.info("  MATCH_TOLERANCE = %s", MATCH_TOLERANCE)
     log.info("  COOLDOWN_SECONDS = %s", COOLDOWN_SECONDS)
 
-    # Try to sync employees from API
+    # Try to sync employees from API — download photos and extract dlib encodings
     def _initial_sync():
         time.sleep(3)  # wait for API to be ready
         try:
-            headers = {"x-api-key": API_KEY} if API_KEY else {}
+            headers = {"x-attendance-sync": "true"}
+            if API_KEY:
+                headers["x-api-key"] = API_KEY
             resp = httpx.get(f"{CAM_AI_API_URL}/api/attendance/employees", headers=headers, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
-                employees = data if isinstance(data, list) else data.get("employees", [])
-                loaded = []
-                for emp in employees:
-                    desc = emp.get("faceDescriptor")
-                    if desc and isinstance(desc, (list, str)):
-                        if isinstance(desc, str):
-                            desc = json.loads(desc)
-                        encoding = np.array(desc, dtype=np.float64)
-                        if encoding.shape == (128,):
-                            loaded.append({"id": emp["id"], "name": emp["name"], "encoding": encoding})
-                with _employees_lock:
-                    _employees.clear()
-                    _employees.extend(loaded)
-                log.info("Initial sync: loaded %d employees", len(loaded))
-            else:
+            if resp.status_code != 200:
                 log.warning("Initial sync failed: HTTP %s", resp.status_code)
+                return
+
+            data = resp.json()
+            employees = data if isinstance(data, list) else data.get("employees", [])
+            loaded = []
+            for emp in employees:
+                photo_path = emp.get("photoPath")
+                if not photo_path:
+                    log.warning("Employee %s: no photo, skipping", emp.get("name", "?"))
+                    continue
+                # Download photo from CamAI API
+                photo_url = f"{CAM_AI_API_URL}/api/attendance/{emp['id']}/photo"
+                result = _download_and_encode(emp["id"], emp.get("name", "Unknown"), photo_url)
+                if result:
+                    loaded.append(result)
+
+            with _employees_lock:
+                _employees.clear()
+                _employees.extend(loaded)
+            log.info("Initial sync: loaded %d/%d employees with face encodings", len(loaded), len(employees))
+
+            # Auto-recover active attendance cameras
+            _recover_cameras(headers)
         except Exception as e:
             log.warning("Initial sync failed: %s (will retry via /employees/sync)", e)
+
+    def _recover_cameras(headers: dict):
+        """Restore camera watchers for cameras that were monitoring before service restart."""
+        try:
+            resp = httpx.get(f"{CAM_AI_API_URL}/api/attendance/cameras", headers=headers, timeout=15)
+            if resp.status_code != 200:
+                log.warning("Camera recovery failed: HTTP %s", resp.status_code)
+                return
+            cameras = resp.json()
+            for cam in cameras:
+                cam_id = cam["id"]
+                stream_url = cam["streamUrl"]
+                direction = cam.get("direction", "entry")
+                with _watchers_lock:
+                    if cam_id in _watchers and _watchers[cam_id].is_alive():
+                        continue
+                    watcher = CameraWatcher(cam_id, stream_url, direction)
+                    watcher.start()
+                    _watchers[cam_id] = watcher
+                log.info("Recovered camera: %s (%s) direction=%s", cam.get("name", "?"), cam_id, direction)
+            if cameras:
+                log.info("Camera recovery: restored %d cameras", len(cameras))
+        except Exception as e:
+            log.warning("Camera recovery failed: %s", e)
 
     threading.Thread(target=_initial_sync, daemon=True).start()
 

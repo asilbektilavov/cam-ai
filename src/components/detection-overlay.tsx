@@ -70,8 +70,9 @@ export function DetectionOverlay({ detections, visible }: DetectionOverlayProps)
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, rect.width, rect.height);
 
-      if (visible) {
-        for (const det of detectionsRef.current) {
+      const dets = detectionsRef.current;
+      if (visible && dets.length > 0) {
+        for (const det of dets) {
           drawBox(ctx, det, rect.width, rect.height);
         }
       }

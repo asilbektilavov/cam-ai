@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
+import { go2rtcManager } from '@/lib/services/go2rtc-manager';
 import { checkPermission, RBACError } from '@/lib/rbac';
 
 const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
@@ -64,8 +65,9 @@ export async function POST(
   if (!camera) return notFound('Camera not found');
 
   if (camera.purpose.startsWith('attendance_')) {
-    // Attendance camera — send to attendance-service
+    // Attendance camera — register go2rtc stream for browser + send to attendance-service
     try {
+      void go2rtcManager.addStream(id, camera.streamUrl);
       await startAttendanceCamera(camera);
       await prisma.camera.update({
         where: { id },
@@ -115,6 +117,7 @@ export async function DELETE(
     } catch {
       // Attendance service may be down, still update DB
     }
+    void go2rtcManager.removeStream(id);
     await prisma.camera.update({
       where: { id },
       data: { isMonitoring: false, status: 'offline' },
