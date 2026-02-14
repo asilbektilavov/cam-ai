@@ -91,6 +91,121 @@ def looks_like_plate(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Fuzzy plate deduplication
+# ---------------------------------------------------------------------------
+
+def _levenshtein(a: str, b: str) -> int:
+    """Compute Levenshtein edit distance between two strings."""
+    if len(a) < len(b):
+        return _levenshtein(b, a)
+    if len(b) == 0:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1]
+        for j, cb in enumerate(b):
+            cost = 0 if ca == cb else 1
+            curr.append(min(curr[j] + 1, prev[j + 1] + 1, prev[j] + cost))
+        prev = curr
+    return prev[-1]
+
+
+def _bbox_iou(a: dict, b: dict) -> float:
+    """Compute IoU (Intersection over Union) of two bboxes {x,y,w,h} (0..1)."""
+    ax1, ay1 = a["x"], a["y"]
+    ax2, ay2 = ax1 + a["w"], ay1 + a["h"]
+    bx1, by1 = b["x"], b["y"]
+    bx2, by2 = bx1 + b["w"], by1 + b["h"]
+
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    union = a["w"] * a["h"] + b["w"] * b["h"] - inter
+    return inter / union if union > 0 else 0.0
+
+
+# Per-camera buffer of recently detected plates for deduplication.
+# Key: camera_id → list of {number, bbox, confidence, time, reported}
+_recent_plates: dict[str, list[dict]] = {}
+_recent_plates_lock = threading.Lock()
+
+# How long to keep a plate in the recent buffer (seconds)
+RECENT_PLATE_TTL = 30.0
+# Max Levenshtein distance to consider two readings as the same plate
+MAX_EDIT_DISTANCE = 3
+# Min bbox IoU to consider two bboxes as the same region (0 = only use text similarity)
+MIN_BBOX_IOU = 0.15
+
+
+def _find_similar_recent(camera_id: str, plate_number: str, bbox: dict) -> dict | None:
+    """Find a similar plate in recent buffer for this camera.
+    Returns the existing entry or None."""
+    now = time.time()
+    with _recent_plates_lock:
+        entries = _recent_plates.get(camera_id, [])
+        # Clean expired entries
+        entries = [e for e in entries if now - e["time"] < RECENT_PLATE_TTL]
+        _recent_plates[camera_id] = entries
+
+        for entry in entries:
+            # Check text similarity
+            dist = _levenshtein(plate_number, entry["number"])
+            if dist <= MAX_EDIT_DISTANCE:
+                # Similar text — check if bboxes overlap (same physical plate)
+                iou = _bbox_iou(bbox, entry["bbox"])
+                if iou >= MIN_BBOX_IOU:
+                    return entry
+
+            # Also check pure bbox overlap with high IoU (OCR might be very different)
+            iou = _bbox_iou(bbox, entry["bbox"])
+            if iou >= 0.5:
+                return entry
+
+    return None
+
+
+def _update_recent(camera_id: str, plate_number: str, bbox: dict,
+                   confidence: float, reported: bool = False) -> None:
+    """Add or update a plate in the recent buffer."""
+    now = time.time()
+    with _recent_plates_lock:
+        entries = _recent_plates.get(camera_id, [])
+        # Clean expired
+        entries = [e for e in entries if now - e["time"] < RECENT_PLATE_TTL]
+
+        # Update existing or add new
+        found = False
+        for entry in entries:
+            dist = _levenshtein(plate_number, entry["number"])
+            iou = _bbox_iou(bbox, entry["bbox"])
+            if (dist <= MAX_EDIT_DISTANCE and iou >= MIN_BBOX_IOU) or iou >= 0.5:
+                # Same plate — update with higher confidence reading
+                if confidence > entry["confidence"]:
+                    entry["number"] = plate_number
+                    entry["confidence"] = confidence
+                entry["bbox"] = bbox
+                entry["time"] = now
+                if reported:
+                    entry["reported"] = True
+                found = True
+                break
+
+        if not found:
+            entries.append({
+                "number": plate_number,
+                "bbox": bbox,
+                "confidence": confidence,
+                "time": now,
+                "reported": reported,
+            })
+
+        _recent_plates[camera_id] = entries
+
+
+# ---------------------------------------------------------------------------
 # In-memory state
 # ---------------------------------------------------------------------------
 
@@ -99,9 +214,6 @@ _known_plates_lock = threading.Lock()
 
 _watchers: dict[str, "PlateWatcher"] = {}
 _watchers_lock = threading.Lock()
-
-_cooldowns: dict[tuple[str, str], float] = {}
-_cooldowns_lock = threading.Lock()
 
 # GPU detection
 _gpu_available = False
@@ -227,21 +339,32 @@ def _draw_plate_overlay(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int,
 
 
 def _report_detection(camera_id: str, plate_number: str, confidence: float,
-                      snapshot_b64: str | None = None):
-    """Send plate detection event to the CamAI API (non-blocking)."""
-    key = (plate_number, camera_id)
-    now = time.time()
+                      bbox: dict, snapshot_b64: str | None = None):
+    """Send plate detection event to the CamAI API (non-blocking).
 
-    with _cooldowns_lock:
-        last = _cooldowns.get(key, 0)
-        if now - last < COOLDOWN_SECONDS:
-            return
-        _cooldowns[key] = now
+    Uses fuzzy deduplication: if a similar plate (by edit distance + bbox overlap)
+    was recently reported for this camera, skip it. This prevents the same physical
+    plate from generating dozens of DB records due to inconsistent OCR readings.
+    """
+    # Check if a similar plate was already reported recently
+    similar = _find_similar_recent(camera_id, plate_number, bbox)
+    if similar and similar.get("reported"):
+        # Already reported — just update the buffer with better reading
+        _update_recent(camera_id, plate_number, bbox, confidence)
+        return
+
+    # Mark as reported and update buffer
+    _update_recent(camera_id, plate_number, bbox, confidence, reported=True)
+
+    # Use the best reading from the buffer (might have been updated by _update_recent)
+    best = _find_similar_recent(camera_id, plate_number, bbox)
+    best_number = best["number"] if best else plate_number
+    best_confidence = best["confidence"] if best else confidence
 
     event = {
         "cameraId": camera_id,
-        "plateNumber": plate_number,
-        "confidence": round(confidence, 4),
+        "plateNumber": best_number,
+        "confidence": round(best_confidence, 4),
         "snapshot": snapshot_b64,
     }
 
@@ -262,7 +385,7 @@ def _report_detection(camera_id: str, plate_number: str, confidence: float,
             log.warning("Failed to push detection: %s", e)
 
     threading.Thread(target=_push, daemon=True).start()
-    log.info("PLATE DETECTED: %s via camera %s (conf=%.2f)", plate_number, camera_id, confidence)
+    log.info("PLATE REPORTED: %s via camera %s (conf=%.2f)", best_number, camera_id, best_confidence)
 
 
 # ---------------------------------------------------------------------------
@@ -428,14 +551,17 @@ class PlateWatcher(threading.Thread):
     def _push_plate_events(self, plates: list[dict]):
         """Send plate detection events to CamAI API for browser overlay rendering."""
         try:
-            httpx.post(
+            resp = httpx.post(
                 f"{CAM_AI_API_URL}/api/lpr/plate-events",
                 json={"cameraId": self.camera_id, "plates": plates},
                 headers={"x-plate-sync": "true"},
                 timeout=5,
             )
+            if resp.status_code >= 400:
+                log.warning("Push plate events failed: HTTP %s — %s",
+                            resp.status_code, resp.text[:200])
         except Exception as e:
-            log.debug("Failed to push plate events: %s", e)
+            log.warning("Failed to push plate events: %s", e)
 
     def run(self):
         log.info("Starting plate watcher for camera %s (%s)", self.camera_id, self.stream_url)
@@ -549,15 +675,22 @@ class PlateWatcher(threading.Thread):
                     if is_known:
                         self.known_matches += 1
 
+                    # Normalized bbox (0-1) for overlay and deduplication
+                    norm_bbox = {
+                        "x": round(x1 / w, 4),
+                        "y": round(y1 / h, 4),
+                        "w": round((x2 - x1) / w, 4),
+                        "h": round((y2 - y1) / h, 4),
+                    }
+
+                    # Use best reading from recent buffer for overlay label
+                    similar = _find_similar_recent(self.camera_id, normalized, norm_bbox)
+                    overlay_number = similar["number"] if similar and similar["confidence"] > plate_conf else normalized
+
                     # Normalized bbox (0-1) for browser overlay
                     plate_events.append({
-                        "bbox": {
-                            "x": round(x1 / w, 4),
-                            "y": round(y1 / h, 4),
-                            "w": round((x2 - x1) / w, 4),
-                            "h": round((y2 - y1) / h, 4),
-                        },
-                        "number": normalized,
+                        "bbox": norm_bbox,
+                        "number": overlay_number,
                         "confidence": round(plate_conf, 4),
                         "isKnown": is_known,
                     })
@@ -571,8 +704,9 @@ class PlateWatcher(threading.Thread):
                         )
                         snapshot_b64 = _frame_to_b64_jpeg(annotated)
 
-                    # Report to DB (with cooldown)
-                    _report_detection(self.camera_id, normalized, plate_conf, snapshot_b64)
+                    # Report to DB (with fuzzy deduplication)
+                    _report_detection(self.camera_id, normalized, plate_conf,
+                                      norm_bbox, snapshot_b64)
 
             # Push plate events for browser overlay
             if plate_events:

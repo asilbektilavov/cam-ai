@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
+// Force dynamic to prevent Next.js from caching GET responses
+export const dynamic = 'force-dynamic';
+
 // File-based cache for plate detections — same pattern as face-events
 const CACHE_DIR = path.join('/tmp', 'camai-plate-events');
 
@@ -28,9 +31,10 @@ function readCache(cameraId: string): { detections: unknown[]; ts: number } | nu
 function writeCache(cameraId: string, detections: unknown[]) {
   try {
     ensureCacheDir();
-    fs.writeFileSync(getCacheFile(cameraId), JSON.stringify({ detections, ts: Date.now() }));
-  } catch {
-    // ignore
+    const file = getCacheFile(cameraId);
+    fs.writeFileSync(file, JSON.stringify({ detections, ts: Date.now() }));
+  } catch (e) {
+    console.error('[plate-events] writeCache error:', e);
   }
 }
 
