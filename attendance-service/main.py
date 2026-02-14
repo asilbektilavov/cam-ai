@@ -151,13 +151,34 @@ def _report_search_sighting(person_id: str, person_name: str, camera_id: str,
             return  # skip duplicate
         _cooldowns[key] = now
 
-    # Draw bbox on snapshot if available
+    # Draw semi-transparent bbox + label on snapshot
     snapshot_frame = frame.copy()
     if bbox:
         top, right, bottom, left = bbox
-        cv2.rectangle(snapshot_frame, (left, top), (right, bottom), (0, 0, 255), 2)
-        cv2.putText(snapshot_frame, person_name, (left, top - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        from PIL import Image, ImageDraw, ImageFont
+        pil_img = Image.fromarray(cv2.cvtColor(snapshot_frame, cv2.COLOR_BGR2RGB)).convert("RGBA")
+        overlay = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        # Semi-transparent green rectangle
+        draw.rectangle([(left, top), (right, bottom)], outline=(0, 200, 0, 200), width=3)
+        draw.rectangle([(left + 1, top + 1), (right - 1, bottom - 1)],
+                       fill=(0, 200, 0, 30))
+        # Label background + text
+        font_size = max(16, int((bottom - top) * 0.25))
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+        except OSError:
+            font = ImageFont.load_default()
+        label = f"{person_name} ({round(confidence * 100)}%)"
+        text_bbox = draw.textbbox((0, 0), label, font=font)
+        tw, th = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
+        label_y = max(0, top - th - 8)
+        draw.rectangle([(left, label_y), (left + tw + 8, label_y + th + 6)],
+                       fill=(0, 0, 0, 140))
+        draw.text((left + 4, label_y + 2), label, fill=(0, 220, 0, 255), font=font)
+        # Composite and convert back to BGR
+        pil_img = Image.alpha_composite(pil_img, overlay).convert("RGB")
+        snapshot_frame = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
     snapshot_b64 = _frame_to_b64_jpeg(snapshot_frame, max_side=640)
 

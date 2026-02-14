@@ -48,6 +48,7 @@ interface PersonDetail extends SearchPerson {
     timestamp: string;
     confidence: number;
     description: string | null;
+    framePath: string | null;
     camera: { id: string; name: string; location: string };
   }>;
 }
