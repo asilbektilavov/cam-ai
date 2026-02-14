@@ -1,8 +1,7 @@
 fastapi
 uvicorn[standard]
 opencv-python-headless
-easyocr
+fast-alpr[onnx]
 Pillow
-requests
 numpy
 httpx

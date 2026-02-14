@@ -1,15 +1,14 @@
 """
 CamAI Plate Service — standalone license plate recognition.
 
-Architecture (inspired by github.com/Alexander-Zadorozhnyy/Licence-Plate-Recognition):
-  1. YOLOv8 detects license plate bounding boxes (~23ms, ~96% accuracy)
-  2. EasyOCR reads text from cropped plate region (much more accurate than full-frame)
-  3. Results pushed to CamAI API for browser overlay + DB records
+Uses fast-alpr (ONNX-based) for both plate detection and OCR:
+  - YOLOv9-t for plate bounding box detection (~7MB ONNX)
+  - MobileViT-v2 for plate text OCR (~5MB ONNX, 93.3% accuracy, 65+ countries)
+  - Results pushed to CamAI API for browser overlay + DB records
 """
 
 from __future__ import annotations
 
-import io
 import os
 import re
 import sys
@@ -17,14 +16,12 @@ import time
 import base64
 import logging
 import threading
-from datetime import datetime, timezone
 from typing import Optional
 
 import cv2
 import numpy as np
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -35,13 +32,13 @@ from pydantic import BaseModel
 CAM_AI_API_URL = os.getenv("CAM_AI_API_URL", "http://localhost:3000")
 API_KEY = os.getenv("PLATE_API_KEY", "")
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2.0"))  # seconds between frames
-COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "120"))  # 2 min per (plate, camera)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-MIN_PLATE_CONFIDENCE = float(os.getenv("MIN_PLATE_CONFIDENCE", "0.4"))  # YOLO plate detection
-MIN_OCR_CONFIDENCE = float(os.getenv("MIN_OCR_CONFIDENCE", "0.3"))  # EasyOCR text reading
-YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH",
-                             os.path.join(os.path.dirname(__file__), "models", "license_plate_detector.pt"))
-USE_GPU = os.getenv("USE_GPU", "auto").lower()  # "true", "false", or "auto" (detect)
+MIN_PLATE_CONFIDENCE = float(os.getenv("MIN_PLATE_CONFIDENCE", "0.4"))  # plate detection
+MIN_OCR_CONFIDENCE = float(os.getenv("MIN_OCR_CONFIDENCE", "0.3"))  # OCR text reading
+
+# fast-alpr models (downloaded automatically on first run)
+DETECTOR_MODEL = os.getenv("DETECTOR_MODEL", "yolo-v9-t-384-license-plate-end2end")
+OCR_MODEL = os.getenv("OCR_MODEL", "global-plates-mobile-vit-v2-model")
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
@@ -68,7 +65,7 @@ app.add_middleware(
 
 CYR_TO_LAT = str.maketrans("АВЕКМНОРСТУХ", "ABEKMHOPCTYX")
 
-# Valid Russian plate characters (from Alexander-Zadorozhnyy repo)
+# Valid Russian plate characters
 PLATE_SYMBOLS = set("0123456789ABEKMHOPCTYX")
 
 
@@ -83,7 +80,7 @@ def normalize_plate(text: str) -> str:
 def looks_like_plate(text: str) -> bool:
     """Check if normalized text looks like a license plate."""
     n = normalize_plate(text)
-    if len(n) < 6 or len(n) > 10:
+    if len(n) < 4 or len(n) > 10:
         return False
     has_letter = any(c.isalpha() for c in n)
     has_digit = any(c.isdigit() for c in n)
@@ -136,30 +133,24 @@ _recent_plates_lock = threading.Lock()
 RECENT_PLATE_TTL = 30.0
 # Max Levenshtein distance to consider two readings as the same plate
 MAX_EDIT_DISTANCE = 3
-# Min bbox IoU to consider two bboxes as the same region (0 = only use text similarity)
+# Min bbox IoU to consider two bboxes as the same region
 MIN_BBOX_IOU = 0.15
 
 
 def _find_similar_recent(camera_id: str, plate_number: str, bbox: dict) -> dict | None:
-    """Find a similar plate in recent buffer for this camera.
-    Returns the existing entry or None."""
+    """Find a similar plate in recent buffer for this camera."""
     now = time.time()
     with _recent_plates_lock:
         entries = _recent_plates.get(camera_id, [])
-        # Clean expired entries
         entries = [e for e in entries if now - e["time"] < RECENT_PLATE_TTL]
         _recent_plates[camera_id] = entries
 
         for entry in entries:
-            # Check text similarity
             dist = _levenshtein(plate_number, entry["number"])
             if dist <= MAX_EDIT_DISTANCE:
-                # Similar text — check if bboxes overlap (same physical plate)
                 iou = _bbox_iou(bbox, entry["bbox"])
                 if iou >= MIN_BBOX_IOU:
                     return entry
-
-            # Also check pure bbox overlap with high IoU (OCR might be very different)
             iou = _bbox_iou(bbox, entry["bbox"])
             if iou >= 0.5:
                 return entry
@@ -173,16 +164,13 @@ def _update_recent(camera_id: str, plate_number: str, bbox: dict,
     now = time.time()
     with _recent_plates_lock:
         entries = _recent_plates.get(camera_id, [])
-        # Clean expired
         entries = [e for e in entries if now - e["time"] < RECENT_PLATE_TTL]
 
-        # Update existing or add new
         found = False
         for entry in entries:
             dist = _levenshtein(plate_number, entry["number"])
             iou = _bbox_iou(bbox, entry["bbox"])
             if (dist <= MAX_EDIT_DISTANCE and iou >= MIN_BBOX_IOU) or iou >= 0.5:
-                # Same plate — update with higher confidence reading
                 if confidence > entry["confidence"]:
                     entry["number"] = plate_number
                     entry["confidence"] = confidence
@@ -215,77 +203,26 @@ _known_plates_lock = threading.Lock()
 _watchers: dict[str, "PlateWatcher"] = {}
 _watchers_lock = threading.Lock()
 
-# GPU detection
-_gpu_available = False
-_gpu_name: str | None = None
+# fast-alpr instance — lazy init (thread-safe)
+_alpr = None
+_alpr_lock = threading.Lock()
 
 
-def _detect_gpu() -> tuple[bool, str | None]:
-    """Check if CUDA GPU is available for PyTorch."""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            name = torch.cuda.get_device_name(0)
-            return True, name
-    except ImportError:
-        pass
-    return False, None
-
-
-def _should_use_gpu() -> bool:
-    """Determine if GPU should be used based on USE_GPU setting."""
-    global _gpu_available, _gpu_name
-    _gpu_available, _gpu_name = _detect_gpu()
-
-    if USE_GPU == "true":
-        if not _gpu_available:
-            log.warning("USE_GPU=true but no CUDA GPU found — falling back to CPU")
-            return False
-        return True
-    elif USE_GPU == "false":
-        return False
-    else:  # "auto"
-        return _gpu_available
-
-
-_use_gpu = False  # set on startup
-
-# YOLO model — lazy init
-_yolo_model = None
-_yolo_lock = threading.Lock()
-
-# EasyOCR reader — lazy init
-_reader = None
-_reader_lock = threading.Lock()
-
-
-def _get_yolo():
-    """Lazy-initialize YOLOv8 plate detection model."""
-    global _yolo_model
-    if _yolo_model is None:
-        with _yolo_lock:
-            if _yolo_model is None:
-                from ultralytics import YOLO
-                device = "0" if _use_gpu else "cpu"
-                log.info("Loading YOLOv8 plate detector from %s (device=%s)...",
-                         YOLO_MODEL_PATH, device)
-                _yolo_model = YOLO(YOLO_MODEL_PATH)
-                # YOLO auto-detects CUDA; we pass device per-call in yolo(frame, device=...)
-                log.info("YOLOv8 plate detector ready (GPU=%s)", _use_gpu)
-    return _yolo_model
-
-
-def _get_reader():
-    """Lazy-initialize EasyOCR reader for plate text recognition."""
-    global _reader
-    if _reader is None:
-        with _reader_lock:
-            if _reader is None:
-                import easyocr
-                log.info("Initializing EasyOCR reader (gpu=%s)...", _use_gpu)
-                _reader = easyocr.Reader(['en', 'ru'], gpu=_use_gpu)
-                log.info("EasyOCR reader ready")
-    return _reader
+def _get_alpr():
+    """Lazy-initialize fast-alpr ONNX engine."""
+    global _alpr
+    if _alpr is None:
+        with _alpr_lock:
+            if _alpr is None:
+                from fast_alpr import ALPR
+                log.info("Initializing fast-alpr (detector=%s, ocr=%s)...",
+                         DETECTOR_MODEL, OCR_MODEL)
+                _alpr = ALPR(
+                    detector_model=DETECTOR_MODEL,
+                    ocr_model=OCR_MODEL,
+                )
+                log.info("fast-alpr ready (ONNX)")
+    return _alpr
 
 
 # ---------------------------------------------------------------------------
@@ -343,20 +280,15 @@ def _report_detection(camera_id: str, plate_number: str, confidence: float,
     """Send plate detection event to the CamAI API (non-blocking).
 
     Uses fuzzy deduplication: if a similar plate (by edit distance + bbox overlap)
-    was recently reported for this camera, skip it. This prevents the same physical
-    plate from generating dozens of DB records due to inconsistent OCR readings.
+    was recently reported for this camera, skip it.
     """
-    # Check if a similar plate was already reported recently
     similar = _find_similar_recent(camera_id, plate_number, bbox)
     if similar and similar.get("reported"):
-        # Already reported — just update the buffer with better reading
         _update_recent(camera_id, plate_number, bbox, confidence)
         return
 
-    # Mark as reported and update buffer
     _update_recent(camera_id, plate_number, bbox, confidence, reported=True)
 
-    # Use the best reading from the buffer (might have been updated by _update_recent)
     best = _find_similar_recent(camera_id, plate_number, bbox)
     best_number = best["number"] if best else plate_number
     best_confidence = best["confidence"] if best else confidence
@@ -457,7 +389,7 @@ class FrameGrabber(threading.Thread):
 
                 with self._frame_lock:
                     self._frame = frame
-                time.sleep(1.0)  # 1fps grab — reduce load on camera
+                time.sleep(1.0)
 
             except Exception as e:
                 retry_count += 1
@@ -522,13 +454,11 @@ class PlateWatcher(threading.Thread):
     """
     Continuously reads frames from a camera and detects license plates.
 
-    Pipeline (per frame):
-      1. YOLOv8 → plate bounding boxes  (~23ms)
-      2. Crop each plate region
-      3. EasyOCR on grayscale crop → plate text  (~25ms)
-      4. Normalize text, check against known plates
-      5. Push bbox events for browser overlay
-      6. Report to DB (with cooldown + screenshot if conf >= 90%)
+    Pipeline (per frame) using fast-alpr:
+      1. ALPR.predict(frame) → plate detections with bbox + OCR text
+      2. Normalize text, check against known plates
+      3. Push bbox events for browser overlay
+      4. Report to DB (with fuzzy deduplication)
     """
 
     def __init__(self, camera_id: str, stream_url: str):
@@ -572,9 +502,8 @@ class PlateWatcher(threading.Thread):
         last_plate_time = 0.0
         last_plate_events: list[dict] = []
 
-        # Lazy-init models in watcher thread
-        yolo = _get_yolo()
-        reader = _get_reader()
+        # Lazy-init fast-alpr in watcher thread
+        alpr = _get_alpr()
 
         while not self.stopped:
             frame = grabber.get_latest_frame()
@@ -593,120 +522,102 @@ class PlateWatcher(threading.Thread):
             t0 = time.time()
             h, w = frame.shape[:2]
 
-            # Step 1: YOLOv8 plate detection
+            # fast-alpr: detect plates + OCR in one call
             try:
-                results = yolo(frame, imgsz=320, conf=MIN_PLATE_CONFIDENCE,
-                              device="0" if _use_gpu else "cpu", verbose=False)
+                results = alpr.predict(frame)
             except Exception as e:
-                log.warning("Camera %s: YOLO error: %s", self.camera_id, e)
+                log.warning("Camera %s: ALPR error: %s", self.camera_id, e)
                 time.sleep(POLL_INTERVAL)
                 continue
 
             plate_events: list[dict] = []
 
-            # Step 2: Process each detected plate
             for result in results:
-                boxes = result.boxes
-                if boxes is None:
+                det = result.detection
+                ocr = result.ocr
+
+                # Extract bbox from detection
+                x1, y1 = int(det.bounding_box.x1), int(det.bounding_box.y1)
+                x2, y2 = int(det.bounding_box.x2), int(det.bounding_box.y2)
+                det_conf = float(det.confidence)
+
+                # Filter by detection confidence
+                if det_conf < MIN_PLATE_CONFIDENCE:
                     continue
 
-                for box in boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    det_conf = float(box.conf[0])
+                # Clamp to frame bounds
+                x1 = max(0, x1)
+                y1 = max(0, y1)
+                x2 = min(w, x2)
+                y2 = min(h, y2)
 
-                    # Clamp to frame bounds
-                    x1 = max(0, x1)
-                    y1 = max(0, y1)
-                    x2 = min(w, x2)
-                    y2 = min(h, y2)
+                if x2 - x1 < 10 or y2 - y1 < 5:
+                    continue
 
-                    if x2 - x1 < 10 or y2 - y1 < 5:
-                        continue
+                # OCR result
+                if ocr is None or not ocr.text:
+                    continue
 
-                    # Step 3: Crop plate region and run OCR
-                    plate_crop = frame[y1:y2, x1:x2]
-                    plate_gray = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY)
+                ocr_conf = float(ocr.confidence)
+                if ocr_conf < MIN_OCR_CONFIDENCE:
+                    continue
 
-                    try:
-                        ocr_results = reader.readtext(plate_gray)
-                    except Exception as e:
-                        log.debug("OCR error on crop: %s", e)
-                        continue
+                raw_text = ocr.text
+                normalized = normalize_plate(raw_text)
 
-                    # Combine all OCR text from the crop
-                    texts = []
-                    total_conf = 0.0
-                    count = 0
-                    for (_bbox, text, conf) in ocr_results:
-                        if conf >= MIN_OCR_CONFIDENCE:
-                            texts.append(text)
-                            total_conf += conf
-                            count += 1
+                if not looks_like_plate(normalized):
+                    continue
 
-                    if not texts:
-                        continue
+                # Combined confidence
+                plate_conf = (det_conf + ocr_conf) / 2
 
-                    raw_text = " ".join(texts)
-                    normalized = normalize_plate(raw_text)
+                self.plates_detected += 1
+                log.info("Camera %s: plate '%s' (norm: %s, det=%.2f, ocr=%.2f, conf=%.2f)",
+                         self.camera_id, raw_text, normalized,
+                         det_conf, ocr_conf, plate_conf)
 
-                    if not looks_like_plate(raw_text):
-                        continue
+                # Check if known plate
+                is_known = False
+                with _known_plates_lock:
+                    for kp in _known_plates:
+                        if kp["number"] == normalized:
+                            is_known = True
+                            break
 
-                    avg_ocr_conf = total_conf / count if count else 0
-                    # Use YOLO confidence as main detection confidence
-                    # (how certain we are a plate exists in this bbox).
-                    # OCR confidence is about text reading quality, not detection.
-                    # Averaging gives a balanced score that doesn't collapse like multiplication.
-                    plate_conf = (det_conf + avg_ocr_conf) / 2
+                if is_known:
+                    self.known_matches += 1
 
-                    self.plates_detected += 1
-                    log.info("Camera %s: plate '%s' (norm: %s, yolo=%.2f, ocr=%.2f, conf=%.2f)",
-                             self.camera_id, raw_text.strip(), normalized,
-                             det_conf, avg_ocr_conf, plate_conf)
+                # Normalized bbox (0-1) for overlay and deduplication
+                norm_bbox = {
+                    "x": round(x1 / w, 4),
+                    "y": round(y1 / h, 4),
+                    "w": round((x2 - x1) / w, 4),
+                    "h": round((y2 - y1) / h, 4),
+                }
 
-                    # Check if known plate
-                    is_known = False
-                    with _known_plates_lock:
-                        for kp in _known_plates:
-                            if kp["number"] == normalized:
-                                is_known = True
-                                break
+                # Use best reading from recent buffer for overlay label
+                similar = _find_similar_recent(self.camera_id, normalized, norm_bbox)
+                overlay_number = similar["number"] if similar and similar["confidence"] > plate_conf else normalized
 
-                    if is_known:
-                        self.known_matches += 1
+                plate_events.append({
+                    "bbox": norm_bbox,
+                    "number": overlay_number,
+                    "confidence": round(plate_conf, 4),
+                    "isKnown": is_known,
+                })
 
-                    # Normalized bbox (0-1) for overlay and deduplication
-                    norm_bbox = {
-                        "x": round(x1 / w, 4),
-                        "y": round(y1 / h, 4),
-                        "w": round((x2 - x1) / w, 4),
-                        "h": round((y2 - y1) / h, 4),
-                    }
+                # Screenshot for DB
+                snapshot_b64 = None
+                if plate_conf >= 0.55:
+                    annotated = _draw_plate_overlay(
+                        frame, x1, y1, x2, y2,
+                        normalized, plate_conf, is_known
+                    )
+                    snapshot_b64 = _frame_to_b64_jpeg(annotated)
 
-                    # Use best reading from recent buffer for overlay label
-                    similar = _find_similar_recent(self.camera_id, normalized, norm_bbox)
-                    overlay_number = similar["number"] if similar and similar["confidence"] > plate_conf else normalized
-
-                    # Normalized bbox (0-1) for browser overlay
-                    plate_events.append({
-                        "bbox": norm_bbox,
-                        "number": overlay_number,
-                        "confidence": round(plate_conf, 4),
-                        "isKnown": is_known,
-                    })
-
-                    # Screenshot for DB (save when confidence is decent)
-                    snapshot_b64 = None
-                    if plate_conf >= 0.55:
-                        annotated = _draw_plate_overlay(
-                            frame, x1, y1, x2, y2,
-                            normalized, plate_conf, is_known
-                        )
-                        snapshot_b64 = _frame_to_b64_jpeg(annotated)
-
-                    # Report to DB (with fuzzy deduplication)
-                    _report_detection(self.camera_id, normalized, plate_conf,
-                                      norm_bbox, snapshot_b64)
+                # Report to DB (with fuzzy deduplication)
+                _report_detection(self.camera_id, normalized, plate_conf,
+                                  norm_bbox, snapshot_b64)
 
             # Push plate events for browser overlay
             if plate_events:
@@ -750,17 +661,15 @@ def health():
     return {
         "status": "ok",
         "service": "plate-service",
+        "engine": "fast-alpr",
         "known_plates": len(_known_plates),
         "cameras": cams,
-        "gpu": {
-            "available": _gpu_available,
-            "name": _gpu_name,
-            "enabled": _use_gpu,
-            "setting": USE_GPU,
+        "models": {
+            "detector": DETECTOR_MODEL,
+            "ocr": OCR_MODEL,
         },
         "config": {
             "poll_interval": POLL_INTERVAL,
-            "cooldown_seconds": COOLDOWN_SECONDS,
             "min_plate_confidence": MIN_PLATE_CONFIDENCE,
             "min_ocr_confidence": MIN_OCR_CONFIDENCE,
         },
@@ -843,22 +752,13 @@ async def sync_plates(plates: list[dict]):
 
 @app.on_event("startup")
 async def _startup():
-    global _use_gpu
-    _use_gpu = _should_use_gpu()
-
-    log.info("Plate service starting...")
+    log.info("Plate service starting (fast-alpr)...")
     log.info("  CAM_AI_API_URL = %s", CAM_AI_API_URL)
     log.info("  POLL_INTERVAL  = %s", POLL_INTERVAL)
-    log.info("  COOLDOWN_SECONDS = %s", COOLDOWN_SECONDS)
+    log.info("  DETECTOR_MODEL = %s", DETECTOR_MODEL)
+    log.info("  OCR_MODEL      = %s", OCR_MODEL)
     log.info("  MIN_PLATE_CONFIDENCE = %s", MIN_PLATE_CONFIDENCE)
-    log.info("  MIN_OCR_CONFIDENCE = %s", MIN_OCR_CONFIDENCE)
-    log.info("  YOLO_MODEL = %s", YOLO_MODEL_PATH)
-    log.info("  USE_GPU = %s (available=%s, name=%s)",
-             USE_GPU, _gpu_available, _gpu_name or "none")
-    if _use_gpu:
-        log.info("  >>> GPU ENABLED — YOLO + EasyOCR will use CUDA")
-    else:
-        log.info("  >>> CPU mode — set USE_GPU=true for GPU acceleration")
+    log.info("  MIN_OCR_CONFIDENCE   = %s", MIN_OCR_CONFIDENCE)
 
     def _initial_sync():
         time.sleep(3)
