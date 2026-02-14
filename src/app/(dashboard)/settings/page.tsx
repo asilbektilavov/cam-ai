@@ -37,6 +37,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 import { apiGet, apiPatch, apiPost, apiPut, apiDelete } from '@/lib/api-client';
@@ -136,6 +143,11 @@ export default function SettingsPage() {
   } | null>(null);
   const [geminiKeyLoading, setGeminiKeyLoading] = useState(true);
   const [savingGeminiKey, setSavingGeminiKey] = useState(false);
+
+  // Data reset
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   // Sync
   const [syncLoading, setSyncLoading] = useState(true);
@@ -332,6 +344,24 @@ export default function SettingsPage() {
       toast.error(err instanceof Error ? err.message : 'Ошибка сохранения');
     } finally {
       setSavingAnalysisMode(false);
+    }
+  };
+
+  const handleResetData = async () => {
+    if (!resetPassword) {
+      toast.error('Введите пароль');
+      return;
+    }
+    setResetting(true);
+    try {
+      await apiPost('/api/settings/reset-data', { password: resetPassword });
+      toast.success('Все данные организации удалены');
+      setResetDialogOpen(false);
+      setResetPassword('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка сброса данных');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -674,6 +704,37 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Danger Zone */}
+          <Card className="mt-4 border-red-500/30">
+            <CardHeader>
+              <CardTitle className="text-red-500 flex items-center gap-2">
+                <Trash2 className="h-5 w-5" />
+                Опасная зона
+              </CardTitle>
+              <CardDescription>
+                Необратимые действия с данными организации
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Удалить все данные</p>
+                  <p className="text-sm text-muted-foreground">
+                    Камеры, события, записи, сотрудники, поиск людей, аналитика — всё будет удалено. Аккаунт и настройки сохранятся.
+                  </p>
+                </div>
+                <Button
+                  variant="destructive"
+                  className="gap-2 shrink-0"
+                  onClick={() => setResetDialogOpen(true)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Сбросить данные
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Analysis Mode */}
@@ -989,6 +1050,47 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Reset Data Confirmation Dialog */}
+      <Dialog open={resetDialogOpen} onOpenChange={(open) => { setResetDialogOpen(open); if (!open) setResetPassword(''); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-500">Удаление всех данных</DialogTitle>
+            <DialogDescription>
+              Будут удалены все камеры, события, записи посещаемости, сотрудники,
+              данные поиска людей, аналитика и интеграции. Это действие необратимо.
+              Введите пароль аккаунта для подтверждения.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-2">
+              <Label htmlFor="reset-password">Пароль</Label>
+              <Input
+                id="reset-password"
+                type="password"
+                placeholder="Введите пароль аккаунта"
+                value={resetPassword}
+                onChange={(e) => setResetPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleResetData()}
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setResetDialogOpen(false)}>
+                Отмена
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleResetData}
+                disabled={resetting || !resetPassword}
+                className="gap-2"
+              >
+                {resetting && <Loader2 className="h-4 w-4 animate-spin" />}
+                Удалить все данные
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
