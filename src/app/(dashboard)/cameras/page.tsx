@@ -125,11 +125,12 @@ export default function CamerasPage() {
   const [showCredentials, setShowCredentials] = useState(false);
   const [addingCameraIp, setAddingCameraIp] = useState<string | null>(null);
   const [testingCameraIp, setTestingCameraIp] = useState<string | null>(null);
+  const [quickAddPurpose, setQuickAddPurpose] = useState('detection');
 
   const router = useRouter();
   const { hasMotion } = useMotionTracker();
   const { descriptors: searchDescriptors } = useSearchDescriptors();
-  const { selectedBranchId } = useAppStore();
+  const { selectedBranchId, setSelectedBranchId } = useAppStore();
 
   const fetchCameras = useCallback(async () => {
     try {
@@ -231,9 +232,18 @@ export default function CamerasPage() {
   };
 
   const handleQuickAdd = async (cam: { ip: string; suggestedUrl: string; name: string; brand?: string }) => {
-    if (!selectedBranchId) {
-      toast.error('Сначала выберите филиал');
-      return;
+    let branchId = selectedBranchId;
+    // Auto-create branch if none exists
+    if (!branchId) {
+      try {
+        const branch = await apiPost<{ id: string }>('/api/branches', { name: 'Офис', address: '' });
+        branchId = branch.id;
+        setSelectedBranchId(branch.id);
+        toast.success('Филиал "Офис" создан автоматически');
+      } catch {
+        toast.error('Не удалось создать филиал. Создайте его в разделе "Филиалы"');
+        return;
+      }
     }
     setAddingCameraIp(cam.ip);
     try {
@@ -248,13 +258,22 @@ export default function CamerasPage() {
           url = url.replace('rtsp://', `rtsp://${cred}@`);
         }
       }
+      const purposeVenueMap: Record<string, string> = {
+        lpr: 'parking',
+        attendance_entry: 'office',
+        attendance_exit: 'office',
+        people_search: 'office',
+        detection: 'retail',
+      };
       await apiPost('/api/cameras', {
         name: cam.name || cam.brand || 'Камера',
         location: `IP: ${cam.ip}`,
         streamUrl: url,
-        branchId: selectedBranchId,
+        branchId,
         resolution: '1920x1080',
         fps: 30,
+        purpose: quickAddPurpose,
+        venueType: purposeVenueMap[quickAddPurpose] || 'retail',
       });
       toast.success(`Камера "${cam.name}" добавлена`);
       setDiscoveredCameras((prev) =>
@@ -292,12 +311,31 @@ export default function CamerasPage() {
       toast.error('Заполните все обязательные поля');
       return;
     }
-    if (!selectedBranchId) {
-      toast.error('Выберите филиал');
-      return;
+    let branchId = selectedBranchId;
+    if (!branchId) {
+      try {
+        const branch = await apiPost<{ id: string }>('/api/branches', { name: 'Офис', address: '' });
+        branchId = branch.id;
+        setSelectedBranchId(branch.id);
+        toast.success('Филиал "Офис" создан автоматически');
+      } catch {
+        toast.error('Не удалось создать филиал. Создайте его в разделе "Филиалы"');
+        return;
+      }
     }
     try {
-      await apiPost('/api/cameras', { ...newCamera, branchId: selectedBranchId });
+      const purposeVenueMap: Record<string, string> = {
+        lpr: 'parking',
+        attendance_entry: 'office',
+        attendance_exit: 'office',
+        people_search: 'office',
+        detection: 'retail',
+      };
+      await apiPost('/api/cameras', {
+        ...newCamera,
+        branchId,
+        venueType: purposeVenueMap[newCamera.purpose] || 'retail',
+      });
       toast.success(`Камера "${newCamera.name}" добавлена`);
       setNewCamera({ name: '', location: '', streamUrl: '', resolution: '1920x1080', fps: 30, purpose: 'detection' });
       setDialogOpen(false);
@@ -606,6 +644,25 @@ export default function CamerasPage() {
               </div>
             )}
           </div>
+
+          {/* Purpose selector for quick add */}
+          {!scanning && discoveredCameras.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground whitespace-nowrap">Назначение:</Label>
+              <Select value={quickAddPurpose} onValueChange={setQuickAddPurpose}>
+                <SelectTrigger className="h-8 text-xs w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="detection">Обнаружение объектов</SelectItem>
+                  <SelectItem value="attendance_entry">Посещаемость — вход</SelectItem>
+                  <SelectItem value="attendance_exit">Посещаемость — выход</SelectItem>
+                  <SelectItem value="people_search">Поиск людей</SelectItem>
+                  <SelectItem value="lpr">Распознавание номеров (LPR)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {/* Rescan button */}
           {!scanning && discoveredCameras.length > 0 && (
