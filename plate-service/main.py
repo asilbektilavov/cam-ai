@@ -606,9 +606,9 @@ class PlateWatcher(threading.Thread):
                     "isKnown": is_known,
                 })
 
-                # Screenshot for DB
+                # Screenshot for DB (only for high-confidence detections)
                 snapshot_b64 = None
-                if plate_conf >= 0.55:
+                if plate_conf >= 0.85:
                     annotated = _draw_plate_overlay(
                         frame, x1, y1, x2, y2,
                         normalized, plate_conf, is_known

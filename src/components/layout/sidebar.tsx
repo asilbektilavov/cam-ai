@@ -16,23 +16,11 @@ import {
   X,
   ScanFace,
   BookOpen,
-  Building2,
-  Archive,
   HardDrive,
   LayoutGrid,
-  Map,
   Car,
-  Shield,
-  Workflow,
-  ClipboardList,
   Stethoscope,
   SearchCode,
-  Users,
-  ShoppingBag,
-  Volume2,
-  Server,
-  Key,
-  HardHat,
   UserCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -43,30 +31,17 @@ import { useAppStore } from '@/lib/store';
 const navItems = [
   { href: '/onboarding', label: 'Начало работы', icon: BookOpen },
   { href: '/dashboard', label: 'Дашборд', icon: LayoutDashboard },
-  { href: '/branches', label: 'Филиалы', icon: Building2 },
   { href: '/cameras', label: 'Камеры', icon: Camera },
   { href: '/wall', label: 'Видеостена', icon: LayoutGrid },
-  { href: '/map', label: 'Карта объекта', icon: Map },
-  { href: '/archive', label: 'Видеоархив', icon: Archive },
   { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
   { href: '/lpr', label: 'Номера авто', icon: Car },
   { href: '/attendance', label: 'Посещаемость', icon: UserCheck },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
   { href: '/object-search', label: 'Поиск объектов', icon: SearchCode },
-  { href: '/automation', label: 'Автоматизация', icon: Workflow },
-  { href: '/audit', label: 'Аудит', icon: ClipboardList },
   { href: '/storage', label: 'Хранилище', icon: HardDrive },
   { href: '/diagnostics', label: 'Диагностика', icon: Stethoscope },
   { href: '/integrations', label: 'Интеграции', icon: Plug },
   { href: '/settings', label: 'Настройки', icon: Settings },
-];
-
-const advancedItems = [
-  { href: '/cross-tracking', label: 'Кросс-трекинг', icon: Users },
-  { href: '/shelf-monitoring', label: 'Мониторинг полок', icon: ShoppingBag },
-  { href: '/audio-analytics', label: 'Аудио-аналитика', icon: Volume2 },
-  { href: '/failover', label: 'Отказоустойчивость', icon: Server },
-  { href: '/licenses', label: 'Лицензии', icon: Key },
 ];
 
 export function Sidebar() {
@@ -140,36 +115,6 @@ export function Sidebar() {
             );
           })}
 
-          {/* Advanced Features */}
-          <Separator className="my-2" />
-          {sidebarOpen && (
-            <p className="px-3 py-1 text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">
-              Расширенные функции
-            </p>
-          )}
-          {advancedItems.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => {
-                  if (window.innerWidth < 768) {
-                    setSidebarOpen(false);
-                  }
-                }}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                )}
-              >
-                <item.icon className="h-5 w-5 shrink-0" />
-                {sidebarOpen && <span>{item.label}</span>}
-              </Link>
-            );
-          })}
         </nav>
 
         <Separator />

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { appEvents, CameraEvent } from '@/lib/services/event-emitter';
+import '@/lib/services/notification-dispatcher'; // ensure listener is active
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
@@ -49,6 +51,8 @@ export async function POST(req: NextRequest) {
     select: { organizationId: true, branchId: true },
   });
   if (camera) {
+    const description = `${direction === 'check_in' ? 'Вход' : 'Выход'}: ${employee.name} (${Math.round((confidence ?? 0) * 100)}%)`;
+
     await prisma.event.create({
       data: {
         cameraId,
@@ -56,9 +60,39 @@ export async function POST(req: NextRequest) {
         branchId: camera.branchId || undefined,
         type: 'face_detected',
         severity: 'info',
-        description: `${direction === 'check_in' ? 'Вход' : 'Выход'}: ${employee.name} (${Math.round((confidence ?? 0) * 100)}%)`,
+        description,
         metadata: JSON.stringify({ employeeId, direction, confidence }),
       },
+    });
+
+    // Get camera name for notifications
+    const cameraFull = await prisma.camera.findUnique({
+      where: { id: cameraId },
+      select: { name: true, location: true },
+    });
+
+    // Emit camera-event for AutomationEngine
+    const cameraEvent: CameraEvent = {
+      type: 'face_detected',
+      cameraId,
+      organizationId: camera.organizationId,
+      branchId: camera.branchId || '',
+      data: { employeeId, employeeName: employee.name, direction, confidence },
+    };
+    appEvents.emit('camera-event', cameraEvent);
+
+    // Emit smart-alert for NotificationDispatcher (Telegram)
+    appEvents.emit('smart-alert', {
+      featureType: 'person_search',
+      cameraId,
+      cameraName: cameraFull?.name || 'Камера',
+      cameraLocation: cameraFull?.location || '',
+      organizationId: camera.organizationId,
+      branchId: camera.branchId || '',
+      integrationId: null,
+      severity: 'info',
+      message: description,
+      metadata: { employeeId, employeeName: employee.name, direction, confidence },
     });
   }
 
