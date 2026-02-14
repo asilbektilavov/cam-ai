@@ -146,18 +146,33 @@ async function probeRtsp(ip: string, port: number, user: string, pass: string): 
     try {
       const cred = pass ? `${user}:${pass}` : user;
       const url = `rtsp://${cred}@${ip}:${port}${path}`;
+      // Use DESCRIBE (not OPTIONS) — OPTIONS returns 200 for any path on many cameras.
+      // DESCRIBE returns SDP only for valid streams and proper 401 for auth failures.
       const ok = await new Promise<boolean>((resolve) => {
         const socket = new net.Socket();
-        socket.setTimeout(2000);
+        socket.setTimeout(3000);
         let responded = false;
+        let buf = '';
         socket.once('connect', () => {
-          socket.write(`OPTIONS ${url} RTSP/1.0\r\nCSeq: 1\r\n\r\n`);
+          socket.write(`DESCRIBE ${url} RTSP/1.0\r\nCSeq: 2\r\nAccept: application/sdp\r\n\r\n`);
         });
         socket.on('data', (data) => {
-          const str = data.toString();
-          responded = true;
-          socket.destroy();
-          resolve(str.includes('RTSP/1.0 200'));
+          buf += data.toString();
+          // Check for non-200 status early (401, 404, etc.)
+          if (buf.includes('RTSP/1.0 4') || buf.includes('RTSP/1.0 5')) {
+            responded = true;
+            socket.destroy();
+            resolve(false);
+            return;
+          }
+          // For 200 OK, wait until we have SDP body (m=video/m=audio lines)
+          const is200 = buf.includes('RTSP/1.0 200');
+          const hasSdp = buf.includes('m=video') || buf.includes('m=audio');
+          if (is200 && hasSdp) {
+            responded = true;
+            socket.destroy();
+            resolve(true);
+          }
         });
         socket.once('timeout', () => { socket.destroy(); resolve(false); });
         socket.once('error', () => { socket.destroy(); resolve(false); });
