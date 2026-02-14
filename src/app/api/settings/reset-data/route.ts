@@ -102,5 +102,33 @@ export async function POST(request: Request) {
     // ignore
   }
 
+  // Clean up plate events cache
+  try {
+    const plateCacheDir = '/tmp/camai-plate-events';
+    if (fs.existsSync(plateCacheDir)) {
+      fs.rmSync(plateCacheDir, { recursive: true, force: true });
+    }
+  } catch {
+    // ignore
+  }
+
+  // Sync attendance-service: clear employees and search persons
+  try {
+    await Promise.allSettled([
+      fetch('http://localhost:8002/employees/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '[]',
+      }),
+      fetch('http://localhost:8002/search-persons/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '[]',
+      }),
+    ]);
+  } catch {
+    // attendance-service may not be running
+  }
+
   return NextResponse.json({ success: true });
 }

@@ -23,6 +23,12 @@ export async function register() {
           `[Init] Resumed monitoring for ${cameras.length} camera(s)`
         );
       }
+
+      // Reconcile attendance-service: stop stale watchers not in DB
+      const { reconcileAttendanceCameras } = await import(
+        '@/lib/services/attendance-reconciler'
+      );
+      await reconcileAttendanceCameras();
     } catch (error) {
       console.error('[Init] Failed to resume camera monitoring:', error);
     }

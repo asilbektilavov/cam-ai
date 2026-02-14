@@ -4,6 +4,7 @@ import Google from 'next-auth/providers/google';
 import GitHub from 'next-auth/providers/github';
 import bcrypt from 'bcryptjs';
 import { prisma } from './prisma';
+import { authRateLimiter } from './rate-limit';
 
 // Build providers list dynamically based on available env vars
 const providers: NextAuthConfig['providers'] = [];
@@ -51,8 +52,13 @@ providers.push(
       email: { label: 'Email', type: 'email' },
       password: { label: 'Password', type: 'password' },
     },
-    async authorize(credentials) {
+    async authorize(credentials, request) {
       if (!credentials?.email || !credentials?.password) return null;
+
+      // Rate limit by email to prevent brute-force
+      const email = (credentials.email as string).toLowerCase();
+      const rl = authRateLimiter.check(email);
+      if (!rl.allowed) return null;
 
       const user = await prisma.user.findUnique({
         where: { email: credentials.email as string },

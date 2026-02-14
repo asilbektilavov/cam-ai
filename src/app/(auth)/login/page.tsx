@@ -27,7 +27,7 @@ export default function LoginPage() {
 
   // Fetch available OAuth providers on mount
   useEffect(() => {
-    fetch('/api/auth/providers')
+    fetch('/api/auth/oauth-config')
       .then((res) => res.json())
       .then((data) => setProviders(data))
       .catch(() => setProviders({ google: false, github: false, oidc: false }));
