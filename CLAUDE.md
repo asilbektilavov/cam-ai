@@ -115,6 +115,43 @@ Works autonomously without browser. 5-minute cooldown per (employee, camera).
 ### Singleton Pattern (Turbopack HMR)
 Use `process` as singleton container, NOT `globalThis`. Turbopack creates separate module contexts during HMR, breaking `globalThis` singletons. See `src/lib/services/event-emitter.ts` and face-events route.
 
+## License Plate Recognition (LPR) Architecture
+
+### plate-service (port 8003)
+Python FastAPI + EasyOCR. Autonomous plate recognition:
+- Auto-started by Next.js (`plate-service-manager.ts`) when LPR camera monitoring begins
+- Watches cameras via RTSP/HTTP, detects plates via EasyOCR at ~1fps
+- Matches against known plates (synced from Next.js API)
+- Reports detections to DB via POST `/api/lpr/detection-event` (120s cooldown per plate+camera)
+- Pushes plate overlay data to POST `/api/lpr/plate-events` (browser reads via polling)
+
+**Start**: auto-started by Next.js, or `cd plate-service && ./venv/bin/python main.py`
+
+### Detection Architecture Pattern (shared by all AI services)
+
+All camera AI services follow the same **dual-pipeline** pattern:
+
+1. **Server pipeline (analytics + DB)**: Python service detects objects → POST results to Next.js API → Prisma DB records + screenshots
+2. **Browser overlay pipeline (visual feedback)**: Python service pushes bbox data → file-based cache (`/tmp/camai-*-events/`) → browser polls every 500ms → DetectionOverlay canvas
+
+The browser overlay is purely visual — it shows the user what the server is detecting in near-real-time. The server pipeline is autonomous and works without the browser open.
+
+```
+                    ┌─ POST /api/.../detection-event → Prisma DB (analytics)
+Python service ─────┤
+                    └─ POST /api/.../plate-events → file cache → browser polls → DetectionOverlay
+```
+
+Camera purposes: `detection` (YOLO objects), `attendance_entry`/`attendance_exit` (faces), `people_search` (face search), `lpr` (license plates)
+
+### Key Files (LPR)
+- `plate-service/main.py` — FrameGrabber, PlateWatcher, EasyOCR, plate matching
+- `src/lib/services/plate-service-manager.ts` — auto-start plate-service as child process
+- `src/app/api/lpr/plate-events/route.ts` — file-based cache + polling GET endpoint
+- `src/app/api/lpr/detection-event/route.ts` — plate detection DB records + screenshots
+- `src/app/api/lpr/cameras/route.ts` — camera recovery for plate-service
+- `src/app/(dashboard)/lpr/page.tsx` — LPR Journal, Database, Stats
+
 ## Development Notes
 - All UI components are from shadcn/ui (in `src/components/ui/`)
 - Use `cn()` from `@/lib/utils` for conditional class names

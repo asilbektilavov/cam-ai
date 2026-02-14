@@ -64,6 +64,8 @@ go2rtc.yaml
 # python venvs
 attendance-service/venv/
 detection-service/venv/
+plate-service/venv/
+plate-service/models/*.pt
 
 # claude
 .claude/

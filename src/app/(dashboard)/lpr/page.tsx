@@ -15,6 +15,7 @@ import {
   BarChart3,
   CheckSquare,
   RefreshCw,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -144,6 +145,7 @@ function JournalTab() {
   const [filterTo, setFilterTo] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchDetections = useCallback(async () => {
@@ -308,6 +310,7 @@ function JournalTab() {
                     <th className="text-left p-3 font-medium">Тип</th>
                     <th className="text-left p-3 font-medium">Владелец</th>
                     <th className="text-right p-3 font-medium">Точность</th>
+                    <th className="text-center p-3 font-medium">Фото</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -337,6 +340,27 @@ function JournalTab() {
                           {(det.confidence * 100).toFixed(0)}%
                         </span>
                       </td>
+                      <td className="p-3 text-center">
+                        {det.imagePath ? (
+                          <button
+                            type="button"
+                            className="inline-block rounded overflow-hidden border border-border hover:border-primary transition-colors cursor-pointer"
+                            onClick={() => setPreviewSrc(det.imagePath)}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={det.imagePath}
+                              alt={det.number}
+                              className="h-10 w-auto object-cover"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).parentElement!.style.display = 'none';
+                              }}
+                            />
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -345,6 +369,20 @@ function JournalTab() {
           </CardContent>
         </Card>
       )}
+
+      {/* Full-size screenshot preview */}
+      <Dialog open={!!previewSrc} onOpenChange={() => setPreviewSrc(null)}>
+        <DialogContent className="max-w-2xl p-2">
+          {previewSrc && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={previewSrc}
+              alt="Скриншот распознавания"
+              className="w-full h-auto rounded-lg"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

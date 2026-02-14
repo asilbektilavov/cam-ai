@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+opencv-python-headless
+easyocr
+Pillow
+requests
+numpy
+httpx

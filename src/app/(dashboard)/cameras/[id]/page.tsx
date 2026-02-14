@@ -44,6 +44,7 @@ import { DetectionOverlay, type Detection } from '@/components/detection-overlay
 import { useEventStream } from '@/hooks/use-event-stream';
 import { useBrowserDetection } from '@/hooks/use-browser-detection';
 import { useBrowserFaceDetection } from '@/hooks/use-browser-face-detection';
+import { useBrowserPlateDetection } from '@/hooks/use-browser-plate-detection';
 import { PtzControls } from '@/components/ptz-controls';
 import { ExportDialog } from '@/components/export-dialog';
 import HeatmapOverlay from '@/components/heatmap-overlay';
@@ -108,6 +109,7 @@ export default function CameraDetailPage() {
   const [liveCounts, setLiveCounts] = useState({ personCount: 0, totalCount: 0 });
   const [fireDetections, setFireDetections] = useState<Detection[]>([]);
   const [faceDetections, setFaceDetections] = useState<Detection[]>([]);
+  const [plateDetections, setPlateDetections] = useState<Detection[]>([]);
 
   // Browser-side detection via ONNX Runtime Web
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -133,19 +135,20 @@ export default function CameraDetailPage() {
 
   const isAttendance = camera?.purpose?.startsWith('attendance_') ?? false;
   const isPeopleSearch = camera?.purpose === 'people_search';
+  const isLpr = camera?.purpose === 'lpr';
   const isFaceMode = isAttendance || isPeopleSearch;
+  const isDetectionMode = !isFaceMode && !isLpr;
 
   // Browser ONNX detection: purely visual, independent from server detection-service
-  // Runs at low FPS to avoid lagging the video stream
+  // Uses setTimeout loop to avoid blocking video rendering
   const {
     detections: browserDetections,
     fps: browserFps,
     backend: browserBackend,
     loading: browserLoading,
   } = useBrowserDetection(videoRef, {
-    enabled: !isFaceMode && selectedClasses.size > 0,
+    enabled: isDetectionMode && selectedClasses.size > 0,
     enabledClasses: browserEnabledTypes,
-    targetFps: 3,
   });
 
   // Browser-side face detection for attendance cameras (instant visual feedback)
@@ -155,6 +158,16 @@ export default function CameraDetailPage() {
     loading: faceLoading,
   } = useBrowserFaceDetection(videoRef, {
     enabled: isFaceMode && (camera?.isStreaming || camera?.isMonitoring || false),
+  });
+
+  // Browser-side plate detection for LPR cameras (fast visual bbox)
+  const {
+    detections: browserPlates,
+    fps: plateFps,
+    backend: plateBackend,
+    loading: plateLoading,
+  } = useBrowserPlateDetection(videoRef, {
+    enabled: isLpr && (camera?.isStreaming || camera?.isMonitoring || false),
   });
   const [onvifForm, setOnvifForm] = useState({
     onvifHost: '',
@@ -334,6 +347,33 @@ export default function CameraDetailPage() {
     };
   }, [isFaceMode, camera?.isMonitoring, cameraId]);
 
+  // Poll plate recognition data from server (for LPR cameras)
+  useEffect(() => {
+    if (!isLpr || !camera?.isMonitoring) return;
+
+    let active = true;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/lpr/plate-events?cameraId=${cameraId}`);
+        if (!active) return;
+        const data = await res.json();
+        if (Array.isArray(data.detections)) {
+          setPlateDetections(data.detections as Detection[]);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 500);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isLpr, camera?.isMonitoring, cameraId]);
+
   // Merge attendance detections:
   // Browser faces (fast, accurate position) = PRIMARY for bbox
   // Server SSE faces (slow, ~1fps, has identity) = enriches with name/color
@@ -389,6 +429,60 @@ export default function CameraDetailPage() {
 
     return result;
   }, [isFaceMode, faceDetections, browserFaces]);
+
+  // Merge plate detections:
+  // Browser plates (fast, accurate position) = PRIMARY for bbox
+  // Server plates (slow, has OCR text) = enriches with plate number label
+  const mergedPlateDetections = useMemo(() => {
+    if (!isLpr) return plateDetections;
+    if (browserPlates.length === 0) return plateDetections;
+    if (plateDetections.length === 0) return browserPlates;
+
+    const MATCH_DIST = 0.25;
+    const result: Detection[] = [];
+    const usedServerIndices = new Set<number>();
+
+    for (const bp of browserPlates) {
+      const bpCx = bp.bbox.x + bp.bbox.w / 2;
+      const bpCy = bp.bbox.y + bp.bbox.h / 2;
+
+      let bestServer: Detection | null = null;
+      let bestIdx = -1;
+      let bestDist = MATCH_DIST;
+
+      for (let i = 0; i < plateDetections.length; i++) {
+        if (usedServerIndices.has(i)) continue;
+        const sp = plateDetections[i];
+        const spCx = sp.bbox.x + sp.bbox.w / 2;
+        const spCy = sp.bbox.y + sp.bbox.h / 2;
+        const dist = Math.sqrt((bpCx - spCx) ** 2 + (bpCy - spCy) ** 2);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestServer = sp;
+          bestIdx = i;
+        }
+      }
+
+      if (bestServer) {
+        usedServerIndices.add(bestIdx);
+        result.push({
+          ...bestServer, // server label (plate number), color, confidence
+          bbox: bp.bbox,  // browser bbox (faster tracking)
+        });
+      } else {
+        result.push(bp); // no server match — show browser bbox only
+      }
+    }
+
+    // Add unmatched server detections (may have plates browser didn't detect)
+    for (let i = 0; i < plateDetections.length; i++) {
+      if (!usedServerIndices.has(i)) {
+        result.push(plateDetections[i]);
+      }
+    }
+
+    return result;
+  }, [isLpr, plateDetections, browserPlates]);
 
   // Browser detections + fire/smoke from server SSE
   const filteredDetections = useMemo(() => {
@@ -474,11 +568,11 @@ export default function CameraDetailPage() {
                   onVideoRef={handleVideoRef}
                 />
                 <DetectionOverlay
-                  detections={isFaceMode ? mergedFaceDetections : filteredDetections}
-                  visible={isFaceMode || selectedClasses.size > 0}
+                  detections={isFaceMode ? mergedFaceDetections : isLpr ? mergedPlateDetections : isDetectionMode ? filteredDetections : []}
+                  visible={isFaceMode || isLpr || (isDetectionMode && selectedClasses.size > 0)}
                 />
                 {/* AI detection badge — for detection cameras */}
-                {!isFaceMode && selectedClasses.size > 0 && (
+                {isDetectionMode && selectedClasses.size > 0 && (
                   <div className="absolute bottom-3 left-3 z-20">
                     {browserLoading ? (
                       <Badge variant="secondary" className="bg-black/60 text-yellow-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
@@ -517,6 +611,31 @@ export default function CameraDetailPage() {
                       <Badge variant="secondary" className="bg-black/60 text-blue-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
                         <Shield className="h-3 w-3" />
                         {isPeopleSearch ? 'Search' : 'Recognition'}
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                {/* LPR mode badge */}
+                {isLpr && (camera.isStreaming || camera.isMonitoring) && (
+                  <div className="absolute bottom-3 left-3 z-20 flex gap-1">
+                    {plateLoading ? (
+                      <Badge variant="secondary" className="bg-black/60 text-yellow-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        LPR AI загрузка...
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="bg-black/60 text-green-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-400" />
+                        </span>
+                        LPR AI {plateFps > 0 ? `${plateFps}fps` : ''} {plateBackend === 'webgpu' ? '⚡' : ''}
+                      </Badge>
+                    )}
+                    {camera.isMonitoring && (
+                      <Badge variant="secondary" className="bg-black/60 text-blue-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                        <Car className="h-3 w-3" />
+                        OCR
                       </Badge>
                     )}
                   </div>
@@ -577,7 +696,7 @@ export default function CameraDetailPage() {
           </div>
 
           {/* Detection Filter — only for detection cameras */}
-          {!isFaceMode && (camera.isStreaming || camera.isMonitoring) && (
+          {isDetectionMode && (camera.isStreaming || camera.isMonitoring) && (
             <Card>
               <CardContent className="p-3">
                 <div className="flex items-center gap-2 mb-2.5">
@@ -705,7 +824,7 @@ export default function CameraDetailPage() {
           </div>
 
           {/* Analytics Tabs — only for detection cameras */}
-          {!isFaceMode && (
+          {isDetectionMode && (
             <Tabs defaultValue="heatmap" className="mt-2">
               <TabsList>
                 <TabsTrigger value="heatmap">

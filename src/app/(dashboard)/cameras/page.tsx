@@ -23,6 +23,7 @@ import {
   LogIn,
   LogOut as LogOutIcon,
   ScanFace,
+  Car,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -83,6 +84,7 @@ const PURPOSE_LABELS: Record<string, string> = {
   attendance_entry: 'Вход',
   attendance_exit: 'Выход',
   people_search: 'Поиск людей',
+  lpr: 'Номера',
 };
 
 export default function CamerasPage() {
@@ -431,6 +433,7 @@ export default function CamerasPage() {
                     <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
                     <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
                     <SelectItem value="people_search">Поиск людей</SelectItem>
+                    <SelectItem value="lpr">Распознавание номеров</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -791,6 +794,7 @@ export default function CamerasPage() {
                       <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
                       <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
                       <SelectItem value="people_search">Поиск людей</SelectItem>
+                      <SelectItem value="lpr">Распознавание номеров</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -927,6 +931,8 @@ export default function CamerasPage() {
                           <><LogIn className="h-3 w-3 mr-0.5" />Вход</>
                         ) : camera.purpose === 'people_search' ? (
                           <><ScanFace className="h-3 w-3 mr-0.5" />Поиск</>
+                        ) : camera.purpose === 'lpr' ? (
+                          <><Car className="h-3 w-3 mr-0.5" />Номера</>
                         ) : (
                           <><LogOutIcon className="h-3 w-3 mr-0.5" />Выход</>
                         )}

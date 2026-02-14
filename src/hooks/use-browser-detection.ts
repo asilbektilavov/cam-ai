@@ -7,7 +7,6 @@ import { browserYolo } from '@/lib/browser-yolo';
 interface UseBrowserDetectionOptions {
   enabled?: boolean;
   enabledClasses?: Set<string>;
-  targetFps?: number;
 }
 
 interface UseBrowserDetectionResult {
@@ -33,12 +32,16 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
 /**
  * Hook that runs YOLOv8n in the browser via ONNX Runtime Web.
  * Supports both WebRTC (video.readyState >= 2) and MJPEG (poster data URL) modes.
+ *
+ * Uses setTimeout instead of requestAnimationFrame to avoid blocking
+ * the browser's paint/render pipeline. ONNX inference on the 12MB YOLOv8n
+ * model takes ~50-100ms which would cause video frame drops inside rAF.
  */
 export function useBrowserDetection(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   options: UseBrowserDetectionOptions = {},
 ): UseBrowserDetectionResult {
-  const { enabled = true, enabledClasses, targetFps = 10 } = options;
+  const { enabled = true, enabledClasses } = options;
 
   const [detections, setDetections] = useState<Detection[]>([]);
   const [fps, setFps] = useState(0);
@@ -88,45 +91,40 @@ export function useBrowserDetection(
     return () => clearInterval(interval);
   }, [enabled]);
 
-  // Detection loop — runs as long as enabled && model ready
+  // Detection loop — uses setTimeout to NOT block the video render pipeline.
+  // rAF callbacks block paint; setTimeout macrotasks let the browser paint between runs.
   useEffect(() => {
     if (!enabled || loading || error) return;
 
     let running = true;
-    let lastRunTime = 0;
-    const minInterval = 1000 / targetFps;
-    let detecting = false;
     let lastPoster = '';
+    let timerId: ReturnType<typeof setTimeout> | null = null;
 
     const loop = async () => {
       if (!running) return;
 
-      const now = performance.now();
-      if (now - lastRunTime < minInterval || detecting) {
-        requestAnimationFrame(loop);
-        return;
-      }
-
       if (document.hidden) {
-        requestAnimationFrame(loop);
+        timerId = setTimeout(loop, 500);
         return;
       }
 
       const video = videoRef.current;
       if (!video) {
-        requestAnimationFrame(loop);
+        timerId = setTimeout(loop, 200);
         return;
       }
 
-      detecting = true;
-      lastRunTime = now;
+      const hasVideoData = video.readyState >= 2 && video.videoWidth > 0;
+      const hasPoster = !!(video.poster && video.poster.startsWith('data:image'));
+      const posterChanged = hasPoster && video.poster !== lastPoster;
+
+      if (!hasVideoData && !posterChanged) {
+        timerId = setTimeout(loop, 100);
+        return;
+      }
 
       try {
         let dets: Detection[] = [];
-        const hasVideoData = video.readyState >= 2 && video.videoWidth > 0;
-        const hasPoster = !!(video.poster && video.poster.startsWith('data:image'));
-        const posterChanged = hasPoster && video.poster !== lastPoster;
-
         if (hasVideoData) {
           dets = await browserYolo.detect(video, enabledClassesRef.current);
         } else if (hasPoster && posterChanged) {
@@ -136,9 +134,7 @@ export function useBrowserDetection(
             dets = await browserYolo.detect(img, enabledClassesRef.current);
           }
         } else {
-          // No video data and no new poster — skip
-          detecting = false;
-          if (running) requestAnimationFrame(loop);
+          timerId = setTimeout(loop, 100);
           return;
         }
 
@@ -150,19 +146,20 @@ export function useBrowserDetection(
         console.warn('[BrowserDetection] Detection error:', e);
       }
 
-      detecting = false;
-
+      // Yield 150ms to browser for video rendering (~9 video frames at 60fps).
+      // Without this gap, ONNX inference (~50-100ms) would hog the main thread.
       if (running) {
-        requestAnimationFrame(loop);
+        timerId = setTimeout(loop, 150);
       }
     };
 
-    requestAnimationFrame(loop);
+    timerId = setTimeout(loop, 0);
 
     return () => {
       running = false;
+      if (timerId !== null) clearTimeout(timerId);
     };
-  }, [enabled, loading, error, targetFps, videoRef]);
+  }, [enabled, loading, error, videoRef]);
 
   return { detections, fps, backend, loading, error };
 }

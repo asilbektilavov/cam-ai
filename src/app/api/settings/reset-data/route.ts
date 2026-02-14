@@ -66,7 +66,7 @@ export async function POST(request: Request) {
     // Audit log
     prisma.auditLog.deleteMany({ where: { organizationId: orgId } }),
     // Sync
-    prisma.syncQueue.deleteMany({ where: { organizationId: orgId } }),
+    prisma.syncQueue.deleteMany({}),
     prisma.remoteEvent.deleteMany({ where: { remoteCamera: { instance: { organizationId: orgId } } } }),
     prisma.remoteCamera.deleteMany({ where: { instance: { organizationId: orgId } } }),
     prisma.remoteInstance.deleteMany({ where: { organizationId: orgId } }),
@@ -83,6 +83,16 @@ export async function POST(request: Request) {
     const sightingsDir = path.join(process.cwd(), 'public', 'uploads', 'sightings');
     if (fs.existsSync(sightingsDir)) {
       fs.rmSync(sightingsDir, { recursive: true, force: true });
+    }
+  } catch {
+    // ignore cleanup errors
+  }
+
+  // Clean up plate screenshots
+  try {
+    const platesDir = path.join(process.cwd(), 'public', 'uploads', 'plates');
+    if (fs.existsSync(platesDir)) {
+      fs.rmSync(platesDir, { recursive: true, force: true });
     }
   } catch {
     // ignore cleanup errors
