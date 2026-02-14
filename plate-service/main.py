@@ -41,6 +41,7 @@ MIN_PLATE_CONFIDENCE = float(os.getenv("MIN_PLATE_CONFIDENCE", "0.4"))  # YOLO p
 MIN_OCR_CONFIDENCE = float(os.getenv("MIN_OCR_CONFIDENCE", "0.3"))  # EasyOCR text reading
 YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH",
                              os.path.join(os.path.dirname(__file__), "models", "license_plate_detector.pt"))
+USE_GPU = os.getenv("USE_GPU", "auto").lower()  # "true", "false", or "auto" (detect)
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
@@ -102,6 +103,41 @@ _watchers_lock = threading.Lock()
 _cooldowns: dict[tuple[str, str], float] = {}
 _cooldowns_lock = threading.Lock()
 
+# GPU detection
+_gpu_available = False
+_gpu_name: str | None = None
+
+
+def _detect_gpu() -> tuple[bool, str | None]:
+    """Check if CUDA GPU is available for PyTorch."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            return True, name
+    except ImportError:
+        pass
+    return False, None
+
+
+def _should_use_gpu() -> bool:
+    """Determine if GPU should be used based on USE_GPU setting."""
+    global _gpu_available, _gpu_name
+    _gpu_available, _gpu_name = _detect_gpu()
+
+    if USE_GPU == "true":
+        if not _gpu_available:
+            log.warning("USE_GPU=true but no CUDA GPU found — falling back to CPU")
+            return False
+        return True
+    elif USE_GPU == "false":
+        return False
+    else:  # "auto"
+        return _gpu_available
+
+
+_use_gpu = False  # set on startup
+
 # YOLO model — lazy init
 _yolo_model = None
 _yolo_lock = threading.Lock()
@@ -118,9 +154,12 @@ def _get_yolo():
         with _yolo_lock:
             if _yolo_model is None:
                 from ultralytics import YOLO
-                log.info("Loading YOLOv8 plate detector from %s ...", YOLO_MODEL_PATH)
+                device = "0" if _use_gpu else "cpu"
+                log.info("Loading YOLOv8 plate detector from %s (device=%s)...",
+                         YOLO_MODEL_PATH, device)
                 _yolo_model = YOLO(YOLO_MODEL_PATH)
-                log.info("YOLOv8 plate detector ready")
+                # YOLO auto-detects CUDA; we pass device per-call in yolo(frame, device=...)
+                log.info("YOLOv8 plate detector ready (GPU=%s)", _use_gpu)
     return _yolo_model
 
 
@@ -131,8 +170,8 @@ def _get_reader():
         with _reader_lock:
             if _reader is None:
                 import easyocr
-                log.info("Initializing EasyOCR reader...")
-                _reader = easyocr.Reader(['en', 'ru'], gpu=False)
+                log.info("Initializing EasyOCR reader (gpu=%s)...", _use_gpu)
+                _reader = easyocr.Reader(['en', 'ru'], gpu=_use_gpu)
                 log.info("EasyOCR reader ready")
     return _reader
 
@@ -430,7 +469,8 @@ class PlateWatcher(threading.Thread):
 
             # Step 1: YOLOv8 plate detection
             try:
-                results = yolo(frame, imgsz=320, conf=MIN_PLATE_CONFIDENCE, verbose=False)
+                results = yolo(frame, imgsz=320, conf=MIN_PLATE_CONFIDENCE,
+                              device="0" if _use_gpu else "cpu", verbose=False)
             except Exception as e:
                 log.warning("Camera %s: YOLO error: %s", self.camera_id, e)
                 time.sleep(POLL_INTERVAL)
@@ -578,6 +618,12 @@ def health():
         "service": "plate-service",
         "known_plates": len(_known_plates),
         "cameras": cams,
+        "gpu": {
+            "available": _gpu_available,
+            "name": _gpu_name,
+            "enabled": _use_gpu,
+            "setting": USE_GPU,
+        },
         "config": {
             "poll_interval": POLL_INTERVAL,
             "cooldown_seconds": COOLDOWN_SECONDS,
@@ -663,6 +709,9 @@ async def sync_plates(plates: list[dict]):
 
 @app.on_event("startup")
 async def _startup():
+    global _use_gpu
+    _use_gpu = _should_use_gpu()
+
     log.info("Plate service starting...")
     log.info("  CAM_AI_API_URL = %s", CAM_AI_API_URL)
     log.info("  POLL_INTERVAL  = %s", POLL_INTERVAL)
@@ -670,6 +719,12 @@ async def _startup():
     log.info("  MIN_PLATE_CONFIDENCE = %s", MIN_PLATE_CONFIDENCE)
     log.info("  MIN_OCR_CONFIDENCE = %s", MIN_OCR_CONFIDENCE)
     log.info("  YOLO_MODEL = %s", YOLO_MODEL_PATH)
+    log.info("  USE_GPU = %s (available=%s, name=%s)",
+             USE_GPU, _gpu_available, _gpu_name or "none")
+    if _use_gpu:
+        log.info("  >>> GPU ENABLED — YOLO + EasyOCR will use CUDA")
+    else:
+        log.info("  >>> CPU mode — set USE_GPU=true for GPU acceleration")
 
     def _initial_sync():
         time.sleep(3)

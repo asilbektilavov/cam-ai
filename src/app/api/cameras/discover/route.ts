@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   try {
     // Run both scans in parallel
     const [portResults, onvifResults] = await Promise.allSettled([
-      scanNetwork(),
+      scanNetwork(username, password),
       onvifDiscover(4000),
     ]);
 

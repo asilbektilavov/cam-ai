@@ -37,44 +37,38 @@ export async function POST(request: Request) {
   const orgId = session.user.organizationId;
 
   // Delete all org data in correct order (respecting foreign keys)
+  // Each table must be deleted BEFORE the tables it references via FK
   await prisma.$transaction([
-    // Sightings & search persons
-    prisma.personSighting.deleteMany({ where: { searchPerson: { organizationId: orgId } } }),
-    prisma.searchPerson.deleteMany({ where: { organizationId: orgId } }),
-    // Attendance
-    prisma.attendanceRecord.deleteMany({ where: { employee: { organizationId: orgId } } }),
-    prisma.employee.deleteMany({ where: { organizationId: orgId } }),
-    // Events & analysis
+    // 1. Leaf tables first (no other table references these)
     prisma.analysisFrame.deleteMany({ where: { session: { camera: { organizationId: orgId } } } }),
-    prisma.analysisSession.deleteMany({ where: { camera: { organizationId: orgId } } }),
-    prisma.event.deleteMany({ where: { organizationId: orgId } }),
-    // Detections & plates
-    prisma.plateDetection.deleteMany({ where: { camera: { organizationId: orgId } } }),
-    prisma.licensePlate.deleteMany({ where: { organizationId: orgId } }),
-    prisma.detectionZone.deleteMany({ where: { camera: { organizationId: orgId } } }),
-    // Recordings
-    prisma.recording.deleteMany({ where: { camera: { organizationId: orgId } } }),
-    // Notifications
-    prisma.notification.deleteMany({ where: { organizationId: orgId } }),
-    // Automation rules
-    prisma.automationRule.deleteMany({ where: { organizationId: orgId } }),
-    // Smart features
-    prisma.smartFeature.deleteMany({ where: { camera: { organizationId: orgId } } }),
-    // Wall layouts & floor plans
+    prisma.personSighting.deleteMany({ where: { searchPerson: { organizationId: orgId } } }),
+    prisma.remoteEvent.deleteMany({ where: { remoteInstance: { organizationId: orgId } } }),
+    prisma.syncQueue.deleteMany({}),
+    prisma.auditLog.deleteMany({ where: { organizationId: orgId } }),
     prisma.wallLayout.deleteMany({ where: { organizationId: orgId } }),
     prisma.floorPlan.deleteMany({ where: { organizationId: orgId } }),
-    // Audit log
-    prisma.auditLog.deleteMany({ where: { organizationId: orgId } }),
-    // Sync
-    prisma.syncQueue.deleteMany({}),
-    prisma.remoteEvent.deleteMany({ where: { remoteCamera: { instance: { organizationId: orgId } } } }),
-    prisma.remoteCamera.deleteMany({ where: { instance: { organizationId: orgId } } }),
+    prisma.automationRule.deleteMany({ where: { organizationId: orgId } }),
+
+    // 2. Tables referencing Camera, Employee, Integration, LicensePlate, etc.
+    prisma.analysisSession.deleteMany({ where: { camera: { organizationId: orgId } } }),
+    prisma.attendanceRecord.deleteMany({ where: { employee: { organizationId: orgId } } }),
+    prisma.plateDetection.deleteMany({ where: { camera: { organizationId: orgId } } }),
+    prisma.detectionZone.deleteMany({ where: { camera: { organizationId: orgId } } }),
+    prisma.recording.deleteMany({ where: { camera: { organizationId: orgId } } }),
+    prisma.event.deleteMany({ where: { organizationId: orgId } }),
+    prisma.notification.deleteMany({ where: { organizationId: orgId } }),
+    prisma.smartFeature.deleteMany({ where: { camera: { organizationId: orgId } } }),
+    prisma.searchPerson.deleteMany({ where: { organizationId: orgId } }),
+    prisma.remoteCamera.deleteMany({ where: { remoteInstance: { organizationId: orgId } } }),
+
+    // 3. Mid-level tables
+    prisma.employee.deleteMany({ where: { organizationId: orgId } }),
+    prisma.licensePlate.deleteMany({ where: { organizationId: orgId } }),
     prisma.remoteInstance.deleteMany({ where: { organizationId: orgId } }),
-    // Cameras (after all camera-dependent data)
     prisma.camera.deleteMany({ where: { organizationId: orgId } }),
-    // Integrations
+
+    // 4. Tables referenced by Camera and others
     prisma.integration.deleteMany({ where: { organizationId: orgId } }),
-    // Branches
     prisma.branch.deleteMany({ where: { organizationId: orgId } }),
   ]);
 

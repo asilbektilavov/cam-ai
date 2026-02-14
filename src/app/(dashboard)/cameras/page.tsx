@@ -208,13 +208,17 @@ export default function CamerasPage() {
   };
 
   const handleSelectDiscovered = (cam: { ip: string; suggestedUrl: string; brand?: string; name?: string }) => {
-    // Replace hardcoded credentials with user-provided ones (or placeholder)
+    // Use URL as-is (scanner already probed credentials), override only if user specified custom ones
     let url = cam.suggestedUrl;
-    if (url.startsWith('rtsp://')) {
-      const user = showCredentials ? scanCredentials.username : 'admin';
-      const pass = showCredentials ? scanCredentials.password : '';
-      const cred = pass ? `${user}:${pass}` : user;
-      url = url.replace(/rtsp:\/\/[^@]*@/, `rtsp://${cred}@`);
+    if (showCredentials && url.startsWith('rtsp://')) {
+      const cred = scanCredentials.password
+        ? `${scanCredentials.username}:${scanCredentials.password}`
+        : scanCredentials.username;
+      if (url.includes('@')) {
+        url = url.replace(/rtsp:\/\/[^@]*@/, `rtsp://${cred}@`);
+      } else {
+        url = url.replace('rtsp://', `rtsp://${cred}@`);
+      }
     }
     setNewCamera({
       ...newCamera,
@@ -234,11 +238,15 @@ export default function CamerasPage() {
     setAddingCameraIp(cam.ip);
     try {
       let url = cam.suggestedUrl;
-      if (url.startsWith('rtsp://')) {
-        const user = showCredentials ? scanCredentials.username : 'admin';
-        const pass = showCredentials ? scanCredentials.password : '';
-        const cred = pass ? `${user}:${pass}` : user;
-        url = url.replace(/rtsp:\/\/[^@]*@/, `rtsp://${cred}@`);
+      if (showCredentials && url.startsWith('rtsp://')) {
+        const cred = scanCredentials.password
+          ? `${scanCredentials.username}:${scanCredentials.password}`
+          : scanCredentials.username;
+        if (url.includes('@')) {
+          url = url.replace(/rtsp:\/\/[^@]*@/, `rtsp://${cred}@`);
+        } else {
+          url = url.replace('rtsp://', `rtsp://${cred}@`);
+        }
       }
       await apiPost('/api/cameras', {
         name: cam.name || cam.brand || 'Камера',

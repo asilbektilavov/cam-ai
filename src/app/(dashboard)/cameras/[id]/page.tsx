@@ -110,6 +110,7 @@ export default function CameraDetailPage() {
   const [fireDetections, setFireDetections] = useState<Detection[]>([]);
   const [faceDetections, setFaceDetections] = useState<Detection[]>([]);
   const [plateDetections, setPlateDetections] = useState<Detection[]>([]);
+  const [plateServiceGpu, setPlateServiceGpu] = useState<boolean | null>(null);
 
   // Browser-side detection via ONNX Runtime Web
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -374,6 +375,15 @@ export default function CameraDetailPage() {
     };
   }, [isLpr, camera?.isMonitoring, cameraId]);
 
+  // Check plate-service GPU status (once)
+  useEffect(() => {
+    if (!isLpr || !camera?.isMonitoring) return;
+    fetch('http://localhost:8003/health')
+      .then(r => r.json())
+      .then(d => setPlateServiceGpu(d.gpu?.enabled ?? false))
+      .catch(() => setPlateServiceGpu(null));
+  }, [isLpr, camera?.isMonitoring]);
+
   // Merge attendance detections:
   // Browser faces (fast, accurate position) = PRIMARY for bbox
   // Server SSE faces (slow, ~1fps, has identity) = enriches with name/color
@@ -633,9 +643,12 @@ export default function CameraDetailPage() {
                       </Badge>
                     )}
                     {camera.isMonitoring && (
-                      <Badge variant="secondary" className="bg-black/60 text-blue-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                      <Badge variant="secondary" className={cn(
+                        "bg-black/60 border-0 text-[10px] px-1.5 py-0.5 gap-1",
+                        plateServiceGpu ? "text-purple-400" : "text-blue-400"
+                      )}>
                         <Car className="h-3 w-3" />
-                        OCR
+                        OCR {plateServiceGpu ? 'GPU ⚡' : 'CPU'}
                       </Badge>
                     )}
                   </div>

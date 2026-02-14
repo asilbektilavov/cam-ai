@@ -23,7 +23,7 @@ const CAMERA_PORTS = [
   { port: 34567, protocol: 'rtsp' as const }, // Chinese NVR
 ];
 
-const SCAN_TIMEOUT = 500;
+const SCAN_TIMEOUT = 1000;
 const MAX_CONCURRENT = 50;
 
 // Virtual/tunnel interface prefixes to skip
@@ -95,6 +95,17 @@ async function checkPort(ip: string, port: number): Promise<boolean> {
   });
 }
 
+async function checkPortSlow(ip: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(2000);
+    socket.once('connect', () => { socket.destroy(); resolve(true); });
+    socket.once('timeout', () => { socket.destroy(); resolve(false); });
+    socket.once('error', () => { socket.destroy(); resolve(false); });
+    socket.connect(port, ip);
+  });
+}
+
 function guessBrand(ports: number[]): string | undefined {
   if (ports.includes(37777)) return 'Dahua';
   if (ports.includes(34567)) return 'XMeye/NVR';
@@ -103,6 +114,13 @@ function guessBrand(ports: number[]): string | undefined {
   if (ports.includes(554)) return 'RTSP Camera';
   return undefined;
 }
+
+// Common default credentials for IP cameras
+const DEFAULT_CREDENTIALS = [
+  { user: 'admin', pass: 'admin' },
+  { user: 'admin', pass: '' },
+  { user: 'admin', pass: '12345' },
+];
 
 // Common RTSP paths to probe (ordered by popularity)
 const RTSP_PATHS = [
@@ -117,15 +135,20 @@ const RTSP_PATHS = [
   '/live',                     // Generic
 ];
 
-async function probeRtspPath(ip: string, port: number, user: string, pass: string): Promise<string | null> {
+interface RtspProbeResult {
+  path: string;
+  user: string;
+  pass: string;
+}
+
+async function probeRtsp(ip: string, port: number, user: string, pass: string): Promise<RtspProbeResult | null> {
   for (const path of RTSP_PATHS) {
     try {
       const cred = pass ? `${user}:${pass}` : user;
       const url = `rtsp://${cred}@${ip}:${port}${path}`;
-      // Quick TCP connect + send RTSP OPTIONS to check if path responds
       const ok = await new Promise<boolean>((resolve) => {
         const socket = new net.Socket();
-        socket.setTimeout(1500);
+        socket.setTimeout(2000);
         let responded = false;
         socket.once('connect', () => {
           socket.write(`OPTIONS ${url} RTSP/1.0\r\nCSeq: 1\r\n\r\n`);
@@ -134,15 +157,14 @@ async function probeRtspPath(ip: string, port: number, user: string, pass: strin
           const str = data.toString();
           responded = true;
           socket.destroy();
-          // 200 OK = path exists; 401 = path exists but needs auth (still valid path)
-          resolve(str.includes('RTSP/1.0 200') || str.includes('RTSP/1.0 401'));
+          resolve(str.includes('RTSP/1.0 200'));
         });
         socket.once('timeout', () => { socket.destroy(); resolve(false); });
         socket.once('error', () => { socket.destroy(); resolve(false); });
         socket.once('close', () => { if (!responded) resolve(false); });
         socket.connect(port, ip);
       });
-      if (ok) return path;
+      if (ok) return { path, user, pass };
     } catch {
       continue;
     }
@@ -150,13 +172,29 @@ async function probeRtspPath(ip: string, port: number, user: string, pass: strin
   return null;
 }
 
-function buildSuggestedUrl(ip: string, ports: number[], brand?: string, detectedPath?: string | null): string {
+async function probeRtspPath(ip: string, port: number, customUser?: string, customPass?: string): Promise<RtspProbeResult | null> {
+  // If custom credentials provided, try them first
+  const creds = customUser
+    ? [{ user: customUser, pass: customPass || '' }, ...DEFAULT_CREDENTIALS]
+    : DEFAULT_CREDENTIALS;
+
+  for (const { user, pass } of creds) {
+    const result = await probeRtsp(ip, port, user, pass);
+    if (result) return result;
+  }
+  return null;
+}
+
+function buildSuggestedUrl(ip: string, ports: number[], brand?: string, probe?: RtspProbeResult | null): string {
   if (brand === 'IP Webcam' || (ports.includes(8080) && !ports.includes(554))) {
     return `http://${ip}:8080/video`;
   }
   if (ports.includes(554)) {
-    const path = detectedPath || (brand === 'Dahua' ? '/cam/realmonitor?channel=1&subtype=0' : '/Streaming/Channels/101');
-    return `rtsp://admin@${ip}:554${path}`;
+    const path = probe?.path || (brand === 'Dahua' ? '/cam/realmonitor?channel=1&subtype=0' : '/Streaming/Channels/101');
+    const user = probe?.user || 'admin';
+    const pass = probe?.pass || '';
+    const cred = pass ? `${user}:${pass}` : user;
+    return `rtsp://${cred}@${ip}:554${path}`;
   }
   if (ports.includes(8554)) {
     return `rtsp://${ip}:8554/stream`;
@@ -164,7 +202,7 @@ function buildSuggestedUrl(ip: string, ports: number[], brand?: string, detected
   return `http://${ip}:${ports[0]}`;
 }
 
-export async function discoverCameras(): Promise<DiscoveredCamera[]> {
+export async function discoverCameras(customUser?: string, customPass?: string): Promise<DiscoveredCamera[]> {
   const subnets = getAllSubnets();
   if (subnets.length === 0) {
     throw new Error('Не удалось определить подсеть');
@@ -206,10 +244,20 @@ export async function discoverCameras(): Promise<DiscoveredCamera[]> {
     for (const { ip, openPorts } of results) {
       if (openPorts.length === 0) continue;
 
-      const hasRtsp = openPorts.includes(554) || openPorts.includes(8554) || openPorts.includes(37777);
+      let hasRtsp = openPorts.includes(554) || openPorts.includes(8554) || openPorts.includes(37777);
       const hasHttp8080 = openPorts.includes(8080);
 
-      // Skip devices with only port 80/443 and no RTSP — likely routers/printers/NAS
+      // If device has port 80 but no RTSP detected, retry port 554 with longer timeout
+      // Many IP cameras respond slowly on RTSP port
+      if (!hasRtsp && openPorts.includes(80)) {
+        const rtspOpen = await checkPortSlow(ip, 554);
+        if (rtspOpen) {
+          openPorts.push(554);
+          hasRtsp = true;
+        }
+      }
+
+      // Skip devices with only port 80/443 and no RTSP and no 8080 — likely routers/printers/NAS
       if (!hasRtsp && !hasHttp8080 && openPorts.every((p) => p === 80 || p === 443)) {
         continue;
       }
@@ -218,17 +266,17 @@ export async function discoverCameras(): Promise<DiscoveredCamera[]> {
       const hasHttp = openPorts.includes(80) || hasHttp8080;
       const protocol = hasRtsp ? 'rtsp' as const : hasHttp ? 'http' as const : 'unknown' as const;
 
-      // Probe RTSP paths to find working one
-      let detectedPath: string | null = null;
+      // Probe RTSP paths + credentials to find working combination
+      let probe: RtspProbeResult | null = null;
       if (openPorts.includes(554)) {
-        detectedPath = await probeRtspPath(ip, 554, 'admin', '');
+        probe = await probeRtspPath(ip, 554, customUser, customPass);
       }
 
       discovered.push({
         ip,
         ports: openPorts.sort((a, b) => a - b),
         protocol,
-        suggestedUrl: buildSuggestedUrl(ip, openPorts, brand, detectedPath),
+        suggestedUrl: buildSuggestedUrl(ip, openPorts, brand, probe),
         brand,
         name: brand || 'Камера',
       });
