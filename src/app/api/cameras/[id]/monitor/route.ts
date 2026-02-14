@@ -18,6 +18,8 @@ async function startExternalCamera(
   // Attendance cameras need direction
   if (camera.purpose.startsWith('attendance_')) {
     form.append('direction', camera.purpose === 'attendance_entry' ? 'entry' : 'exit');
+  } else if (camera.purpose === 'people_search') {
+    form.append('direction', 'search');
   }
 
   const resp = await fetch(`${serviceUrl}/cameras/start`, {
@@ -28,6 +30,30 @@ async function startExternalCamera(
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`Service error: ${err}`);
+  }
+}
+
+async function syncSearchPersons() {
+  try {
+    // Fetch search person descriptors from our API (internal, no auth needed for server-side)
+    const descriptorsResp = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/person-search/descriptors`, {
+      headers: { 'x-attendance-sync': 'true' },
+    });
+    if (!descriptorsResp.ok) return;
+    const descriptors = await descriptorsResp.json();
+    if (!Array.isArray(descriptors) || descriptors.length === 0) return;
+
+    // Send to attendance-service
+    const resp = await fetch(`${ATTENDANCE_SERVICE_URL}/search-persons/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(descriptors),
+    });
+    if (!resp.ok) {
+      console.warn('[Monitor] Failed to sync search persons:', await resp.text());
+    }
+  } catch (e) {
+    console.warn('[Monitor] Search persons sync error:', e instanceof Error ? e.message : e);
   }
 }
 
@@ -70,10 +96,14 @@ export async function POST(
   });
   if (!camera) return notFound('Camera not found');
 
-  if (camera.purpose.startsWith('attendance_')) {
-    // Attendance camera — register go2rtc stream for browser + send to attendance-service
+  if (camera.purpose.startsWith('attendance_') || camera.purpose === 'people_search') {
+    // Attendance / People Search camera — register go2rtc stream + send to attendance-service
     try {
       void go2rtcManager.addStream(id, camera.streamUrl);
+      // Sync search persons before starting people_search camera
+      if (camera.purpose === 'people_search') {
+        await syncSearchPersons();
+      }
       await startExternalCamera(ATTENDANCE_SERVICE_URL, camera);
       await prisma.camera.update({
         where: { id },
@@ -126,7 +156,7 @@ export async function DELETE(
   });
   if (!camera) return notFound('Camera not found');
 
-  if (camera.purpose.startsWith('attendance_')) {
+  if (camera.purpose.startsWith('attendance_') || camera.purpose === 'people_search') {
     try {
       await stopExternalCamera(ATTENDANCE_SERVICE_URL, id);
     } catch {

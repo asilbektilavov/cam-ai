@@ -61,5 +61,9 @@ dev.db-journal
 /bin/go2rtc
 go2rtc.yaml
 
+# python venvs
+attendance-service/venv/
+detection-service/venv/
+
 # claude
 .claude/

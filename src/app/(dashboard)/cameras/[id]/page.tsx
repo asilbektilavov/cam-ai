@@ -132,6 +132,8 @@ export default function CameraDetailPage() {
   }, [selectedClasses, selectedOtherTypes]);
 
   const isAttendance = camera?.purpose?.startsWith('attendance_') ?? false;
+  const isPeopleSearch = camera?.purpose === 'people_search';
+  const isFaceMode = isAttendance || isPeopleSearch;
 
   // Browser ONNX detection: purely visual, independent from server detection-service
   // Runs at low FPS to avoid lagging the video stream
@@ -141,7 +143,7 @@ export default function CameraDetailPage() {
     backend: browserBackend,
     loading: browserLoading,
   } = useBrowserDetection(videoRef, {
-    enabled: !isAttendance && selectedClasses.size > 0,
+    enabled: !isFaceMode && selectedClasses.size > 0,
     enabledClasses: browserEnabledTypes,
     targetFps: 3,
   });
@@ -152,7 +154,7 @@ export default function CameraDetailPage() {
     fps: faceFps,
     loading: faceLoading,
   } = useBrowserFaceDetection(videoRef, {
-    enabled: isAttendance && (camera?.isStreaming || camera?.isMonitoring || false),
+    enabled: isFaceMode && (camera?.isStreaming || camera?.isMonitoring || false),
   });
   const [onvifForm, setOnvifForm] = useState({
     onvifHost: '',
@@ -307,7 +309,7 @@ export default function CameraDetailPage() {
   // Poll face recognition data from server (reliable, works regardless of SSE state)
   // Only active when the page is open for an attendance camera
   useEffect(() => {
-    if (!isAttendance || !camera?.isMonitoring) return;
+    if (!isFaceMode || !camera?.isMonitoring) return;
 
     let active = true;
     const poll = async () => {
@@ -330,14 +332,14 @@ export default function CameraDetailPage() {
       active = false;
       clearInterval(interval);
     };
-  }, [isAttendance, camera?.isMonitoring, cameraId]);
+  }, [isFaceMode, camera?.isMonitoring, cameraId]);
 
   // Merge attendance detections:
   // Browser faces (fast, accurate position) = PRIMARY for bbox
   // Server SSE faces (slow, ~1fps, has identity) = enriches with name/color
   // Uses center-distance matching (robust to bbox size differences between models)
   const mergedFaceDetections = useMemo(() => {
-    if (!isAttendance) return faceDetections;
+    if (!isFaceMode) return faceDetections;
     if (browserFaces.length === 0) return faceDetections;
 
     // No server data yet — just show browser faces
@@ -386,7 +388,7 @@ export default function CameraDetailPage() {
     }
 
     return result;
-  }, [isAttendance, faceDetections, browserFaces]);
+  }, [isFaceMode, faceDetections, browserFaces]);
 
   // Browser detections + fire/smoke from server SSE
   const filteredDetections = useMemo(() => {
@@ -472,11 +474,11 @@ export default function CameraDetailPage() {
                   onVideoRef={handleVideoRef}
                 />
                 <DetectionOverlay
-                  detections={isAttendance ? mergedFaceDetections : filteredDetections}
-                  visible={isAttendance || selectedClasses.size > 0}
+                  detections={isFaceMode ? mergedFaceDetections : filteredDetections}
+                  visible={isFaceMode || selectedClasses.size > 0}
                 />
                 {/* AI detection badge — for detection cameras */}
-                {!isAttendance && selectedClasses.size > 0 && (
+                {!isFaceMode && selectedClasses.size > 0 && (
                   <div className="absolute bottom-3 left-3 z-20">
                     {browserLoading ? (
                       <Badge variant="secondary" className="bg-black/60 text-yellow-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
@@ -494,8 +496,8 @@ export default function CameraDetailPage() {
                     ) : null}
                   </div>
                 )}
-                {/* Attendance badge */}
-                {isAttendance && (camera.isMonitoring || camera.isStreaming) && (
+                {/* Face mode badge (attendance + people search) */}
+                {isFaceMode && (camera.isMonitoring || camera.isStreaming) && (
                   <div className="absolute bottom-3 left-3 z-20 flex gap-1">
                     {faceLoading ? (
                       <Badge variant="secondary" className="bg-black/60 text-yellow-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
@@ -514,7 +516,7 @@ export default function CameraDetailPage() {
                     {camera.isMonitoring && (
                       <Badge variant="secondary" className="bg-black/60 text-blue-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
                         <Shield className="h-3 w-3" />
-                        Recognition
+                        {isPeopleSearch ? 'Search' : 'Recognition'}
                       </Badge>
                     )}
                   </div>
@@ -575,7 +577,7 @@ export default function CameraDetailPage() {
           </div>
 
           {/* Detection Filter — only for detection cameras */}
-          {!isAttendance && (camera.isStreaming || camera.isMonitoring) && (
+          {!isFaceMode && (camera.isStreaming || camera.isMonitoring) && (
             <Card>
               <CardContent className="p-3">
                 <div className="flex items-center gap-2 mb-2.5">
@@ -703,7 +705,7 @@ export default function CameraDetailPage() {
           </div>
 
           {/* Analytics Tabs — only for detection cameras */}
-          {!isAttendance && (
+          {!isFaceMode && (
             <Tabs defaultValue="heatmap" className="mt-2">
               <TabsList>
                 <TabsTrigger value="heatmap">

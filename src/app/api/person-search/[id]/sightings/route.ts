@@ -4,25 +4,37 @@ import { getAuthSession, unauthorized, notFound, badRequest } from '@/lib/api-ut
 import { appEvents, CameraEvent } from '@/lib/services/event-emitter';
 import type { SmartAlert } from '@/lib/services/event-emitter';
 import { checkPermission, RBACError } from '@/lib/rbac';
+import fs from 'fs';
+import path from 'path';
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getAuthSession();
-  if (!session) return unauthorized();
-
-  try {
-    checkPermission(session, 'view_events');
-  } catch (e: any) {
-    if (e instanceof RBACError) {
-      return NextResponse.json({ error: e.message }, { status: e.status });
-    }
-    throw e;
-  }
-
   const { id } = await params;
-  const orgId = session.user.organizationId;
+
+  // Allow internal calls from attendance-service (x-attendance-sync header)
+  const isInternal = req.headers.get('x-attendance-sync') === 'true';
+
+  let orgId: string;
+  if (isInternal) {
+    // Internal call — find org from person
+    const personLookup = await prisma.searchPerson.findUnique({ where: { id } });
+    if (!personLookup) return notFound('Person not found');
+    orgId = personLookup.organizationId;
+  } else {
+    const session = await getAuthSession();
+    if (!session) return unauthorized();
+    try {
+      checkPermission(session, 'view_events');
+    } catch (e: any) {
+      if (e instanceof RBACError) {
+        return NextResponse.json({ error: e.message }, { status: e.status });
+      }
+      throw e;
+    }
+    orgId = session.user.organizationId;
+  }
 
   const person = await prisma.searchPerson.findFirst({
     where: { id, organizationId: orgId },
@@ -30,7 +42,7 @@ export async function POST(
   if (!person) return notFound('Person not found');
 
   const body = await req.json();
-  const { cameraId, confidence, description } = body;
+  const { cameraId, confidence, description, snapshot } = body;
 
   if (!cameraId || confidence === undefined) {
     return badRequest('Missing cameraId or confidence');
@@ -41,12 +53,29 @@ export async function POST(
   });
   if (!camera) return badRequest('Camera not found');
 
+  // Save snapshot if provided
+  let framePath: string | null = null;
+  if (snapshot) {
+    try {
+      const dir = path.join(process.cwd(), 'public', 'uploads', 'sightings');
+      fs.mkdirSync(dir, { recursive: true });
+      const filename = `${id}_${Date.now()}.jpg`;
+      const filePath = path.join(dir, filename);
+      const buf = Buffer.from(snapshot, 'base64');
+      fs.writeFileSync(filePath, buf);
+      framePath = `/uploads/sightings/${filename}`;
+    } catch (e) {
+      console.warn('Failed to save sighting snapshot:', e);
+    }
+  }
+
   const sighting = await prisma.personSighting.create({
     data: {
       searchPersonId: id,
       cameraId,
       confidence,
       description: description || null,
+      framePath,
       notified: true,
     },
   });

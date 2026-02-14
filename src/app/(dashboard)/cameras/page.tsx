@@ -22,6 +22,7 @@ import {
   UserCheck,
   LogIn,
   LogOut as LogOutIcon,
+  ScanFace,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -81,6 +82,7 @@ const PURPOSE_LABELS: Record<string, string> = {
   detection: 'Обнаружение',
   attendance_entry: 'Вход',
   attendance_exit: 'Выход',
+  people_search: 'Поиск людей',
 };
 
 export default function CamerasPage() {
@@ -428,6 +430,7 @@ export default function CamerasPage() {
                     <SelectItem value="detection">Обнаружение объектов</SelectItem>
                     <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
                     <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
+                    <SelectItem value="people_search">Поиск людей</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -787,6 +790,7 @@ export default function CamerasPage() {
                       <SelectItem value="detection">Обнаружение объектов</SelectItem>
                       <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
                       <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
+                      <SelectItem value="people_search">Поиск людей</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -921,6 +925,8 @@ export default function CamerasPage() {
                       <Badge variant="outline" className="text-[10px] bg-black/50 text-white border-white/30">
                         {camera.purpose === 'attendance_entry' ? (
                           <><LogIn className="h-3 w-3 mr-0.5" />Вход</>
+                        ) : camera.purpose === 'people_search' ? (
+                          <><ScanFace className="h-3 w-3 mr-0.5" />Поиск</>
                         ) : (
                           <><LogOutIcon className="h-3 w-3 mr-0.5" />Выход</>
                         )}

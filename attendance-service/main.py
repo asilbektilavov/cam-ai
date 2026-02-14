@@ -33,8 +33,8 @@ from fastapi.middleware.cors import CORSMiddleware
 CAM_AI_API_URL = os.getenv("CAM_AI_API_URL", "http://localhost:3000")
 API_KEY = os.getenv("ATTENDANCE_API_KEY", "")
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "0.5"))  # seconds between frames
-MATCH_TOLERANCE = float(os.getenv("MATCH_TOLERANCE", "0.45"))  # lower = stricter
-COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "5"))  # 5 sec between same person events
+MATCH_TOLERANCE = float(os.getenv("MATCH_TOLERANCE", "0.55"))  # lower = stricter
+COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "120"))  # 2 min cooldown per (person, camera)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 logging.basicConfig(
@@ -64,11 +64,15 @@ app.add_middleware(
 _employees: list[dict] = []
 _employees_lock = threading.Lock()
 
+# Search persons: list of {id, name, encoding (np.ndarray), integrationId}
+_search_persons: list[dict] = []
+_search_persons_lock = threading.Lock()
+
 # Camera watchers: cameraId -> CameraWatcher thread
 _watchers: dict[str, "CameraWatcher"] = {}
 _watchers_lock = threading.Lock()
 
-# Cooldown tracker: (employeeId, cameraId) -> last_event_timestamp
+# Cooldown tracker: (personId, cameraId) -> last_event_timestamp
 _cooldowns: dict[tuple[str, str], float] = {}
 _cooldowns_lock = threading.Lock()
 
@@ -93,6 +97,11 @@ def _report_event(employee_id: str, employee_name: str, camera_id: str,
         if now - last < COOLDOWN_SECONDS:
             return  # skip duplicate
         _cooldowns[key] = now
+        # Clear cooldowns for this person on ALL other cameras
+        # so they can be re-recorded there after switching cameras
+        to_remove = [k for k in _cooldowns if k[0] == employee_id and k[1] != camera_id]
+        for k in to_remove:
+            del _cooldowns[k]
 
     event = {
         "employeeId": employee_id,
@@ -127,6 +136,52 @@ def _report_event(employee_id: str, employee_name: str, camera_id: str,
     threading.Thread(target=_push, daemon=True).start()
     log.info("ATTENDANCE: %s %s (%s) via camera %s (conf=%.2f)",
              direction.upper(), employee_name, employee_id, camera_id, confidence)
+
+
+def _report_search_sighting(person_id: str, person_name: str, camera_id: str,
+                             confidence: float, frame: np.ndarray,
+                             bbox: tuple[int, int, int, int] | None = None):
+    """Report a search person sighting to the CamAI API."""
+    key = (person_id, camera_id)
+    now = time.time()
+
+    with _cooldowns_lock:
+        last = _cooldowns.get(key, 0)
+        if now - last < COOLDOWN_SECONDS:
+            return  # skip duplicate
+        _cooldowns[key] = now
+
+    # Draw bbox on snapshot if available
+    snapshot_frame = frame.copy()
+    if bbox:
+        top, right, bottom, left = bbox
+        cv2.rectangle(snapshot_frame, (left, top), (right, bottom), (0, 0, 255), 2)
+        cv2.putText(snapshot_frame, person_name, (left, top - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+    snapshot_b64 = _frame_to_b64_jpeg(snapshot_frame, max_side=640)
+
+    # Push to CamAI API (non-blocking)
+    def _push():
+        try:
+            resp = httpx.post(
+                f"{CAM_AI_API_URL}/api/person-search/{person_id}/sightings",
+                json={
+                    "cameraId": camera_id,
+                    "confidence": round(confidence, 4),
+                    "snapshot": snapshot_b64,
+                },
+                headers={"x-attendance-sync": "true", **({"x-api-key": API_KEY} if API_KEY else {})},
+                timeout=10,
+            )
+            if resp.status_code >= 400:
+                log.warning("Sighting API returned %s: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            log.warning("Failed to push sighting: %s", e)
+
+    threading.Thread(target=_push, daemon=True).start()
+    log.info("SEARCH SIGHTING: %s (%s) via camera %s (conf=%.2f)",
+             person_name, person_id, camera_id, confidence)
 
 
 def _frame_to_b64_jpeg(frame: np.ndarray, max_side: int = 320) -> str:
@@ -285,7 +340,7 @@ class CameraWatcher(threading.Thread):
         super().__init__(daemon=True)
         self.camera_id = camera_id
         self.stream_url = stream_url
-        self.direction = direction  # "entry" or "exit"
+        self.direction = direction  # "entry", "exit", or "search"
         self._stop_event = threading.Event()
         self.fps = 0.0
         self.last_frame_time = 0.0
@@ -382,10 +437,22 @@ class CameraWatcher(threading.Thread):
             self.faces_detected += len(encodings)
             log.info("Camera %s: detected %d face(s)", self.camera_id, len(encodings))
 
-            with _employees_lock:
-                known_encodings = [e["encoding"] for e in _employees] if _employees else []
-                known_ids = [e["id"] for e in _employees] if _employees else []
-                known_names = [e["name"] for e in _employees] if _employees else []
+            is_search = self.direction == "search"
+
+            # Load employee encodings (for attendance cameras)
+            emp_encodings = emp_ids = emp_names = []
+            if not is_search:
+                with _employees_lock:
+                    emp_encodings = [e["encoding"] for e in _employees] if _employees else []
+                    emp_ids = [e["id"] for e in _employees] if _employees else []
+                    emp_names = [e["name"] for e in _employees] if _employees else []
+
+            # Load search person encodings (for ALL cameras)
+            sp_encodings = sp_ids = sp_names = []
+            with _search_persons_lock:
+                sp_encodings = [p["encoding"] for p in _search_persons] if _search_persons else []
+                sp_ids = [p["id"] for p in _search_persons] if _search_persons else []
+                sp_names = [p["name"] for p in _search_persons] if _search_persons else []
 
             face_events: list[dict] = []
 
@@ -395,18 +462,42 @@ class CameraWatcher(threading.Thread):
                 matched_name: str | None = None
                 confidence = 0.0
 
-                if known_encodings:
-                    distances = face_recognition.face_distance(known_encodings, enc)
-                    best_idx = int(np.argmin(distances))
-                    best_dist = distances[best_idx]
+                # 1) Check search persons first (highest priority — wanted people)
+                if sp_encodings:
+                    sp_distances = face_recognition.face_distance(sp_encodings, enc)
+                    sp_best_idx = int(np.argmin(sp_distances))
+                    sp_best_dist = sp_distances[sp_best_idx]
+                    log.debug("Camera %s: search dist=%.3f (tol=%.2f) for %s",
+                              self.camera_id, sp_best_dist, MATCH_TOLERANCE, sp_names[sp_best_idx])
 
-                    if best_dist <= MATCH_TOLERANCE:
-                        matched_name = known_names[best_idx]
-                        confidence = 1.0 - best_dist
+                    if sp_best_dist <= MATCH_TOLERANCE:
+                        matched_name = sp_names[sp_best_idx]
+                        confidence = 1.0 - sp_best_dist
+                        _report_search_sighting(
+                            sp_ids[sp_best_idx],
+                            matched_name,
+                            self.camera_id,
+                            confidence,
+                            frame,
+                            bbox=(top, right, bottom, left),
+                        )
+                        self.matches_found += 1
+
+                # 2) Check employees (only for attendance cameras, and only if not already matched as search person)
+                if not matched_name and emp_encodings:
+                    emp_distances = face_recognition.face_distance(emp_encodings, enc)
+                    emp_best_idx = int(np.argmin(emp_distances))
+                    emp_best_dist = emp_distances[emp_best_idx]
+                    log.debug("Camera %s: emp dist=%.3f (tol=%.2f) for %s",
+                              self.camera_id, emp_best_dist, MATCH_TOLERANCE, emp_names[emp_best_idx])
+
+                    if emp_best_dist <= MATCH_TOLERANCE:
+                        matched_name = emp_names[emp_best_idx]
+                        confidence = 1.0 - emp_best_dist
                         snapshot = _frame_to_b64_jpeg(frame)
                         direction = "check_in" if self.direction == "entry" else "check_out"
                         _report_event(
-                            known_ids[best_idx],
+                            emp_ids[emp_best_idx],
                             matched_name,
                             self.camera_id,
                             direction,
@@ -464,6 +555,7 @@ def health():
         "status": "ok",
         "service": "attendance",
         "employees_loaded": len(_employees),
+        "search_persons_loaded": len(_search_persons),
         "cameras": cams,
         "config": {
             "poll_interval": POLL_INTERVAL,
@@ -571,13 +663,48 @@ async def register_employee(
     }
 
 
+@app.post("/search-persons/sync")
+async def sync_search_persons(persons: list[dict]):
+    """
+    Receive search persons list from CamAI API.
+    Each item: {id, name, descriptor: list[float], integrationId: str|null}
+    """
+    loaded = []
+    errors = []
+    for p in persons:
+        descriptor = p.get("descriptor")
+        if not descriptor or not isinstance(descriptor, list):
+            errors.append(f"{p.get('id', '?')}: missing or invalid descriptor")
+            continue
+        try:
+            encoding = np.array(descriptor, dtype=np.float64)
+            if encoding.shape != (128,):
+                errors.append(f"{p.get('id', '?')}: descriptor not 128-D (got {encoding.shape})")
+                continue
+            loaded.append({
+                "id": p["id"],
+                "name": p.get("name", "Unknown"),
+                "encoding": encoding,
+                "integrationId": p.get("integrationId"),
+            })
+        except Exception as e:
+            errors.append(f"{p.get('id', '?')}: {e}")
+
+    with _search_persons_lock:
+        _search_persons.clear()
+        _search_persons.extend(loaded)
+
+    log.info("Synced %d search persons (%d errors)", len(loaded), len(errors))
+    return {"loaded": len(loaded), "errors": errors}
+
+
 @app.post("/cameras/start")
 async def start_camera(camera_id: str = Form(...),
                        stream_url: str = Form(...),
                        direction: str = Form("entry")):
     """Start watching a camera for face recognition."""
-    if direction not in ("entry", "exit"):
-        raise HTTPException(status_code=400, detail="direction must be 'entry' or 'exit'")
+    if direction not in ("entry", "exit", "search"):
+        raise HTTPException(status_code=400, detail="direction must be 'entry', 'exit', or 'search'")
 
     with _watchers_lock:
         if camera_id in _watchers and _watchers[camera_id].is_alive():
@@ -738,10 +865,45 @@ async def _startup():
                 _employees.extend(loaded)
             log.info("Initial sync: loaded %d/%d employees with face encodings", len(loaded), len(employees))
 
-            # Auto-recover active attendance cameras
+            # Sync search persons
+            _sync_search_persons(headers)
+
+            # Auto-recover active attendance + people_search cameras
             _recover_cameras(headers)
         except Exception as e:
             log.warning("Initial sync failed: %s (will retry via /employees/sync)", e)
+
+    def _sync_search_persons(headers: dict):
+        """Load search persons from CamAI API and store their descriptors."""
+        try:
+            resp = httpx.get(f"{CAM_AI_API_URL}/api/person-search/descriptors", headers=headers, timeout=15)
+            if resp.status_code != 200:
+                log.warning("Search persons sync failed: HTTP %s", resp.status_code)
+                return
+            persons = resp.json()
+            loaded = []
+            for p in persons:
+                descriptor = p.get("descriptor")
+                if not descriptor:
+                    continue
+                try:
+                    encoding = np.array(descriptor, dtype=np.float64)
+                    if encoding.shape == (128,):
+                        loaded.append({
+                            "id": p["id"],
+                            "name": p.get("name", "Unknown"),
+                            "encoding": encoding,
+                            "integrationId": p.get("integrationId"),
+                        })
+                except Exception:
+                    pass
+
+            with _search_persons_lock:
+                _search_persons.clear()
+                _search_persons.extend(loaded)
+            log.info("Search persons sync: loaded %d persons", len(loaded))
+        except Exception as e:
+            log.warning("Search persons sync failed: %s", e)
 
     def _recover_cameras(headers: dict):
         """Restore camera watchers for cameras that were monitoring before service restart."""

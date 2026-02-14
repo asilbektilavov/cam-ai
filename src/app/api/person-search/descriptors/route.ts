@@ -3,23 +3,33 @@ import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized } from '@/lib/api-utils';
 import { checkPermission, RBACError } from '@/lib/rbac';
 
-export async function GET(_req: NextRequest) {
-  const session = await getAuthSession();
-  if (!session) return unauthorized();
+export async function GET(req: NextRequest) {
+  // Allow internal calls from attendance-service
+  const isInternal = req.headers.get('x-attendance-sync') === 'true';
 
-  try {
-    checkPermission(session, 'view_events');
-  } catch (e: any) {
-    if (e instanceof RBACError) {
-      return NextResponse.json({ error: e.message }, { status: e.status });
+  let orgFilter: { organizationId: string } | object = {};
+
+  if (isInternal) {
+    // Internal call — return all active search persons across all orgs
+    orgFilter = {};
+  } else {
+    const session = await getAuthSession();
+    if (!session) return unauthorized();
+
+    try {
+      checkPermission(session, 'view_events');
+    } catch (e: any) {
+      if (e instanceof RBACError) {
+        return NextResponse.json({ error: e.message }, { status: e.status });
+      }
+      throw e;
     }
-    throw e;
+
+    orgFilter = { organizationId: session.user.organizationId };
   }
 
-  const orgId = session.user.organizationId;
-
   const persons = await prisma.searchPerson.findMany({
-    where: { organizationId: orgId, isActive: true },
+    where: { ...orgFilter, isActive: true },
     select: {
       id: true,
       name: true,

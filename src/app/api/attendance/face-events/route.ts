@@ -1,15 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { appEvents, CameraEvent } from '@/lib/services/event-emitter';
+import fs from 'fs';
+import path from 'path';
 
-// Process-level cache for latest face detections per camera.
-// Survives Turbopack HMR (unlike module-level variables).
-const CACHE_KEY = '__camai_faceCache__';
-const proc = process as unknown as Record<string, Map<string, { detections: unknown[]; ts: number }> | undefined>;
-if (!proc[CACHE_KEY]) {
-  proc[CACHE_KEY] = new Map();
+// File-based cache for face detections — reliable across Turbopack HMR and workers.
+const CACHE_DIR = path.join('/tmp', 'camai-face-events');
+
+function ensureCacheDir() {
+  if (!fs.existsSync(CACHE_DIR)) {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+  }
 }
-const faceCache = proc[CACHE_KEY]!;
+
+function getCacheFile(cameraId: string) {
+  // Sanitize cameraId for filesystem
+  return path.join(CACHE_DIR, `${cameraId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+}
+
+function readCache(cameraId: string): { detections: unknown[]; ts: number } | null {
+  try {
+    const file = getCacheFile(cameraId);
+    if (!fs.existsSync(file)) return null;
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(cameraId: string, detections: unknown[]) {
+  try {
+    ensureCacheDir();
+    const file = getCacheFile(cameraId);
+    fs.writeFileSync(file, JSON.stringify({ detections, ts: Date.now() }));
+  } catch {
+    // ignore write errors
+  }
+}
 
 // GET /api/attendance/face-events?cameraId=xxx — browser polls for latest face data
 export async function GET(req: NextRequest) {
@@ -18,7 +46,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ detections: [] });
   }
 
-  const cached = faceCache.get(cameraId);
+  const cached = readCache(cameraId);
   if (!cached || Date.now() - cached.ts > 5000) {
     // No data or stale (>5s) — return empty
     return NextResponse.json({ detections: [] });
@@ -53,8 +81,8 @@ export async function POST(req: NextRequest) {
     color: f.name ? '#22C55E' : '#EF4444', // green for recognized, red for unknown
   }));
 
-  // Store in process-level cache for polling
-  faceCache.set(cameraId, { detections, ts: Date.now() });
+  // Store in file-based cache for polling
+  writeCache(cameraId, detections);
 
   // Also emit via SSE for backward compatibility
   const camera = await prisma.camera.findUnique({

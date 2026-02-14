@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
-// GET /api/attendance/cameras — list active attendance cameras (for attendance-service auto-recovery)
+// GET /api/attendance/cameras — list active attendance + people_search cameras (for attendance-service auto-recovery)
 export async function GET() {
   const cameras = await prisma.camera.findMany({
     where: {
-      purpose: { startsWith: 'attendance_' },
+      purpose: { in: ['attendance_entry', 'attendance_exit', 'people_search'] },
       isMonitoring: true,
     },
     select: {
@@ -21,7 +21,9 @@ export async function GET() {
       id: c.id,
       name: c.name,
       streamUrl: c.streamUrl,
-      direction: c.purpose === 'attendance_entry' ? 'entry' : 'exit',
+      direction: c.purpose === 'attendance_entry' ? 'entry'
+        : c.purpose === 'attendance_exit' ? 'exit'
+        : 'search',
     }))
   );
 }
