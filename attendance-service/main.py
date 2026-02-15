@@ -357,7 +357,11 @@ class FrameGrabber(threading.Thread):
 class CameraWatcher(threading.Thread):
     """Continuously reads frames from a camera and detects/matches faces."""
 
-    def __init__(self, camera_id: str, stream_url: str, direction: str):
+    def __init__(self, camera_id: str, stream_url: str, direction: str,
+                 auto_zoom_enabled: bool = False,
+                 ptz_host: str = "", ptz_port: int = 80,
+                 ptz_user: str = "admin", ptz_pass: str = "",
+                 **_kwargs):
         super().__init__(daemon=True)
         self.camera_id = camera_id
         self.stream_url = stream_url
@@ -370,6 +374,15 @@ class CameraWatcher(threading.Thread):
         # Annotated frame for MJPEG streaming
         self._annotated_frame: Optional[bytes] = None
         self._frame_lock = threading.Lock()
+        self._had_faces = False
+        # Hardware auto-zoom (PTZ)
+        self._auto_zoom_enabled = auto_zoom_enabled
+        self._ptz_host = ptz_host
+        self._ptz_port = ptz_port
+        self._ptz_user = ptz_user
+        self._ptz_pass = ptz_pass
+        self._hw_zoom = None  # HardwareZoomManager, initialized in run()
+        self._person_detector = None  # PersonDetector, initialized in run()
 
     def stop(self):
         self._stop_event.set()
@@ -384,11 +397,12 @@ class CameraWatcher(threading.Thread):
             return self._annotated_frame
 
     def _push_face_events(self, faces: list[dict]):
-        """Send face detection events to CamAI API for browser overlay rendering."""
+        """Send face detection events to CamAI API for browser overlay."""
         try:
+            payload: dict = {"cameraId": self.camera_id, "faces": faces}
             httpx.post(
                 f"{CAM_AI_API_URL}/api/attendance/face-events",
-                json={"cameraId": self.camera_id, "faces": faces},
+                json=payload,
                 headers={"x-attendance-sync": "true"},
                 timeout=5,
             )
@@ -396,8 +410,42 @@ class CameraWatcher(threading.Thread):
             log.debug("Failed to push face events: %s", e)
 
     def run(self):
-        log.info("Starting watcher for camera %s (%s) direction=%s",
-                 self.camera_id, self.stream_url, self.direction)
+        log.info("Starting watcher for camera %s (%s) direction=%s auto_zoom=%s",
+                 self.camera_id, self.stream_url, self.direction, self._auto_zoom_enabled)
+
+        # Initialize hardware auto-zoom (PTZ)
+        if self._auto_zoom_enabled and self._ptz_host:
+            try:
+                from auto_zoom import HardwareZoomManager, test_ptz_connection
+                ptz_url = f"http://{self._ptz_host}:{self._ptz_port}"
+
+                # Try empty password first, then provided password
+                if test_ptz_connection(ptz_url, self._ptz_user, ""):
+                    self._hw_zoom = HardwareZoomManager(
+                        ptz_url, self._ptz_user, "")
+                    log.info("Camera %s: PTZ connected with empty password", self.camera_id)
+                elif self._ptz_pass and test_ptz_connection(ptz_url, self._ptz_user, self._ptz_pass):
+                    self._hw_zoom = HardwareZoomManager(
+                        ptz_url, self._ptz_user, self._ptz_pass)
+                    log.info("Camera %s: PTZ connected with provided password", self.camera_id)
+                else:
+                    log.warning("Camera %s: PTZ connection failed to %s", self.camera_id, ptz_url)
+
+                if self._hw_zoom:
+                    self._hw_zoom.start()  # zoom out to wide angle
+            except Exception as e:
+                log.warning("Camera %s: hardware zoom init failed: %s", self.camera_id, e)
+
+        # Initialize YOLO person detector for zoom triggering (shared across cameras)
+        if self._auto_zoom_enabled and self._hw_zoom:
+            try:
+                from person_detector import PersonDetector
+                # Use singleton: one detector for all camera threads
+                if not hasattr(CameraWatcher, '_shared_person_detector'):
+                    CameraWatcher._shared_person_detector = PersonDetector()
+                self._person_detector = CameraWatcher._shared_person_detector
+            except Exception as e:
+                log.warning("Camera %s: person detector init failed: %s", self.camera_id, e)
 
         # Start background frame grabber
         grabber = FrameGrabber(self.stream_url, self.camera_id)
@@ -418,27 +466,105 @@ class CameraWatcher(threading.Thread):
                 log.info("Camera %s: first frame received (%dx%d)", self.camera_id, frame.shape[1], frame.shape[0])
 
             t0 = time.time()
+            full_frame = frame  # keep full-res for crop-based recognition
             h, w = frame.shape[:2]
 
             # Convert BGR -> RGB for face_recognition
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # Downscale for faster CNN detection, keep scale for bbox mapping
-            max_width = 400
-            if w > max_width:
-                scale = max_width / w
-                small = cv2.resize(rgb, (max_width, int(h * scale)))
+            # --- Three-tier detection for scalability (20+ cameras) ---
+            # Tier 0: YOLO person detection (~35ms at 320px) — zoom trigger when face too small
+            # Tier 1: Fast HOG face detector (~30ms at 500px) — find faces after zoom
+            # Tier 2: CNN face encoding (only AFTER zoom, when face is large) — recognize identity
+            DETECT_WIDTH = 500   # HOG face detection resolution
+            ENCODE_WIDTH = 700   # CNN encoding resolution
+            MIN_ENCODE_FACE_PX = 35  # min face size at DETECT_WIDTH for encoding (~200px original)
+
+            if w > DETECT_WIDTH:
+                det_scale = DETECT_WIDTH / w
+                small = cv2.resize(rgb, (DETECT_WIDTH, int(h * det_scale)))
             else:
-                scale = 1.0
+                det_scale = 1.0
                 small = rgb
 
-            locations = face_recognition.face_locations(small, model="cnn")
-            detect_time = time.time() - t0
+            small_h, small_w = small.shape[:2]
 
-            if not locations:
-                log.debug("Camera %s: no faces (%.1fs)", self.camera_id, detect_time)
-                # No faces — send empty once to clear browser overlays
-                if hasattr(self, '_had_faces') and self._had_faces:
+            # Tier 1: Fast HOG face detection (~30ms)
+            det_t0 = time.time()
+            locations_small = face_recognition.face_locations(small, model="hog")
+            det_ms = (time.time() - det_t0) * 1000
+
+            if not locations_small:
+                # No faces found by HOG — try YOLO person detection for zoom trigger
+                PERSON_MEMORY_SEC = 3.0  # keep using last person location for this many seconds
+                person_locations = []
+                if self._hw_zoom and self._person_detector:
+                    yolo_t0 = time.time()
+                    persons = self._person_detector.detect(frame)
+                    yolo_ms = (time.time() - yolo_t0) * 1000
+
+                    if persons:
+                        # Convert person bbox to estimated HEAD region for auto_zoom
+                        # Head ≈ upper 1/5 of person height, centered 60% of width
+                        # This ensures auto_zoom gets face-like sizes, not body sizes
+                        CLOSE_PERSON_RATIO = 0.30  # if person > 30% of frame height → too close, don't zoom
+
+                        for top, right, bottom, left in persons:
+                            person_h = bottom - top
+                            person_ratio = person_h / h  # relative to original frame
+
+                            if person_ratio > CLOSE_PERSON_RATIO:
+                                # Person is close — don't use for zoom trigger
+                                log.info("Camera %s: person too close (%.0f%% of frame) — skip zoom",
+                                         self.camera_id, person_ratio * 100)
+                                continue
+
+                            person_w = right - left
+                            head_h = person_h // 5
+                            head_w = person_w * 3 // 5
+                            cx = (left + right) // 2
+                            ht = top
+                            hb = top + head_h
+                            hl = cx - head_w // 2
+                            hr = cx + head_w // 2
+                            st = int(ht * det_scale)
+                            sr = int(hr * det_scale)
+                            sb = int(hb * det_scale)
+                            sl = int(hl * det_scale)
+                            person_locations.append((st, sr, sb, sl))
+
+                        if person_locations:
+                            # Save for memory (person detected intermittently)
+                            self._last_person_locations = person_locations
+                            self._last_person_time = time.time()
+
+                            head_sizes = [(sb - st) for st, sr, sb, sl in person_locations]
+                            log.info("Camera %s: no face but %d person(s) by YOLO (%.0fms) head_sizes=%s — zoom trigger",
+                                     self.camera_id, len(person_locations), yolo_ms, head_sizes)
+                            self._hw_zoom.update(person_locations, small_h, small_w)
+                        else:
+                            # All persons filtered out (too close) — treat as "no detection for zoom"
+                            self._hw_zoom.update([], small_h, small_w)
+                    elif (hasattr(self, '_last_person_time')
+                          and time.time() - self._last_person_time < PERSON_MEMORY_SEC):
+                        # Use remembered person location (YOLO detection is intermittent)
+                        self._hw_zoom.update(self._last_person_locations, small_h, small_w)
+                    else:
+                        # Truly no one
+                        if not hasattr(self, '_no_face_log_time') or time.time() - self._no_face_log_time > 10:
+                            self._no_face_log_time = time.time()
+                            zoom_state = self._hw_zoom._state.name if self._hw_zoom else "N/A"
+                            log.info("Camera %s: no faces, no persons (HOG %.0fms, YOLO %.0fms, zoom=%s)",
+                                     self.camera_id, det_ms, yolo_ms, zoom_state)
+                        self._hw_zoom.update([], small_h, small_w)
+                else:
+                    if not hasattr(self, '_no_face_log_time') or time.time() - self._no_face_log_time > 10:
+                        self._no_face_log_time = time.time()
+                        log.info("Camera %s: no faces (HOG %.0fms)", self.camera_id, det_ms)
+                    if self._hw_zoom:
+                        self._hw_zoom.update([], small_h, small_w)
+
+                if self._had_faces:
                     self._push_face_events([])
                     self._had_faces = False
                 elapsed = time.time() - t0
@@ -447,16 +573,89 @@ class CameraWatcher(threading.Thread):
                 time.sleep(POLL_INTERVAL)
                 continue
 
-            # Map locations back to original resolution for encoding
-            if scale != 1.0:
-                locations = [
-                    (int(top / scale), int(right / scale), int(bottom / scale), int(left / scale))
-                    for top, right, bottom, left in locations
+            face_sizes = [(bottom - top) for top, _, bottom, _ in locations_small]
+            self.faces_detected += len(locations_small)
+
+            # --- Hardware zoom: update FIRST, before encoding ---
+            if self._hw_zoom:
+                self._hw_zoom.update(locations_small, small_h, small_w)
+
+            # --- Zoom-first strategy: skip encoding when faces are too small ---
+            # When hw_zoom is enabled and faces are small, don't waste time on
+            # low-quality encoding. Instead, just push bbox overlay and let the
+            # camera zoom in first. Only do encoding when face is large enough
+            # for reliable recognition.
+            # Also skip encoding while camera autofocus is settling (image is blurry).
+            focusing = self._hw_zoom is not None and self._hw_zoom.is_focusing
+            skip_encoding = (
+                self._hw_zoom is not None
+                and (min(face_sizes) < MIN_ENCODE_FACE_PX or focusing)
+            )
+
+            if skip_encoding:
+                reason = "focusing" if focusing else "too small"
+                log.info("Camera %s: detected %d face(s), sizes=%s — %s, waiting",
+                         self.camera_id, len(locations_small), face_sizes, reason)
+                # Push bbox-only overlay (no names) so browser shows face positions
+                face_events = []
+                for top_s, right_s, bottom_s, left_s in locations_small:
+                    top_o = int(top_s / det_scale) if det_scale != 1.0 else top_s
+                    right_o = int(right_s / det_scale) if det_scale != 1.0 else right_s
+                    bottom_o = int(bottom_s / det_scale) if det_scale != 1.0 else bottom_s
+                    left_o = int(left_s / det_scale) if det_scale != 1.0 else left_s
+                    face_events.append({
+                        "bbox": {
+                            "x": round(left_o / w, 4),
+                            "y": round(top_o / h, 4),
+                            "w": round((right_o - left_o) / w, 4),
+                            "h": round((bottom_o - top_o) / h, 4),
+                        },
+                        "name": None,
+                        "confidence": 0.0,
+                    })
+                self._had_faces = True
+                self._push_face_events(face_events)
+                elapsed = time.time() - t0
+                self.fps = 1.0 / max(elapsed + POLL_INTERVAL, 0.001)
+                self.last_frame_time = time.time()
+                time.sleep(POLL_INTERVAL)
+                continue
+
+            # --- Tier 2: Face is large enough — CNN encoding for recognition ---
+            # Re-detect with CNN at higher resolution for precise bbox + encoding
+            if w > ENCODE_WIDTH:
+                enc_scale = ENCODE_WIDTH / w
+                enc_small = cv2.resize(rgb, (ENCODE_WIDTH, int(h * enc_scale)))
+            else:
+                enc_scale = 1.0
+                enc_small = rgb
+
+            locations_enc = face_recognition.face_locations(enc_small, model="cnn")
+            if not locations_enc:
+                # CNN missed what HOG found — use HOG locations scaled to encode res
+                locations_enc = [
+                    (
+                        int(top * (enc_scale / det_scale)),
+                        int(right * (enc_scale / det_scale)),
+                        int(bottom * (enc_scale / det_scale)),
+                        int(left * (enc_scale / det_scale)),
+                    )
+                    for top, right, bottom, left in locations_small
                 ]
 
+            # Map locations to original resolution for encoding on full-res image
+            if enc_scale != 1.0:
+                locations = [
+                    (int(top / enc_scale), int(right / enc_scale), int(bottom / enc_scale), int(left / enc_scale))
+                    for top, right, bottom, left in locations_enc
+                ]
+            else:
+                locations = list(locations_enc)
+
             encodings = face_recognition.face_encodings(rgb, locations)
-            self.faces_detected += len(encodings)
-            log.info("Camera %s: detected %d face(s)", self.camera_id, len(encodings))
+
+            log.info("Camera %s: detected %d face(s), sizes=%s — encoding for recognition",
+                     self.camera_id, len(encodings), face_sizes)
 
             is_search = self.direction == "search"
 
@@ -476,6 +675,7 @@ class CameraWatcher(threading.Thread):
                 sp_names = [p["name"] for p in _search_persons] if _search_persons else []
 
             face_events: list[dict] = []
+            recognized_faces: dict[int, str] = {}  # face_index → name (for zoom tracker)
 
             for i, enc in enumerate(encodings):
                 top, right, bottom, left = locations[i]
@@ -488,8 +688,6 @@ class CameraWatcher(threading.Thread):
                     sp_distances = face_recognition.face_distance(sp_encodings, enc)
                     sp_best_idx = int(np.argmin(sp_distances))
                     sp_best_dist = sp_distances[sp_best_idx]
-                    log.debug("Camera %s: search dist=%.3f (tol=%.2f) for %s",
-                              self.camera_id, sp_best_dist, MATCH_TOLERANCE, sp_names[sp_best_idx])
 
                     if sp_best_dist <= MATCH_TOLERANCE:
                         matched_name = sp_names[sp_best_idx]
@@ -504,13 +702,11 @@ class CameraWatcher(threading.Thread):
                         )
                         self.matches_found += 1
 
-                # 2) Check employees (only for attendance cameras, and only if not already matched as search person)
+                # 2) Check employees (only for attendance cameras)
                 if not matched_name and emp_encodings:
                     emp_distances = face_recognition.face_distance(emp_encodings, enc)
                     emp_best_idx = int(np.argmin(emp_distances))
                     emp_best_dist = emp_distances[emp_best_idx]
-                    log.debug("Camera %s: emp dist=%.3f (tol=%.2f) for %s",
-                              self.camera_id, emp_best_dist, MATCH_TOLERANCE, emp_names[emp_best_idx])
 
                     if emp_best_dist <= MATCH_TOLERANCE:
                         matched_name = emp_names[emp_best_idx]
@@ -526,6 +722,9 @@ class CameraWatcher(threading.Thread):
                             snapshot,
                         )
                         self.matches_found += 1
+
+                if matched_name:
+                    recognized_faces[i] = matched_name
 
                 # Normalized bbox (0-1) for browser overlay
                 face_events.append({
@@ -552,6 +751,10 @@ class CameraWatcher(threading.Thread):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
+        # Cleanup: reset hardware zoom to wide angle
+        if self._hw_zoom:
+            self._hw_zoom.reset()
+
         grabber.stop()
         grabber.join(timeout=3)
         log.info("Watcher stopped for camera %s", self.camera_id)
@@ -570,6 +773,9 @@ def health():
             "fps": round(w.fps, 1),
             "faces_detected": w.faces_detected,
             "matches_found": w.matches_found,
+            "hw_zoom": w._hw_zoom is not None,
+            "hw_zoom_state": w._hw_zoom.state if w._hw_zoom else "off",
+            "hw_zoom_connected": w._hw_zoom.connected if w._hw_zoom else False,
         } for cid, w in _watchers.items()}
 
     return {
@@ -722,7 +928,12 @@ async def sync_search_persons(persons: list[dict]):
 @app.post("/cameras/start")
 async def start_camera(camera_id: str = Form(...),
                        stream_url: str = Form(...),
-                       direction: str = Form("entry")):
+                       direction: str = Form("entry"),
+                       onvif_host: str = Form(""),
+                       onvif_port: int = Form(80),
+                       onvif_user: str = Form(""),
+                       onvif_pass: str = Form(""),
+                       auto_zoom: bool = Form(False)):
     """Start watching a camera for face recognition."""
     if direction not in ("entry", "exit", "search"):
         raise HTTPException(status_code=400, detail="direction must be 'entry', 'exit', or 'search'")
@@ -731,11 +942,19 @@ async def start_camera(camera_id: str = Form(...),
         if camera_id in _watchers and _watchers[camera_id].is_alive():
             return {"status": "already_running", "camera_id": camera_id}
 
-        watcher = CameraWatcher(camera_id, stream_url, direction)
+        watcher = CameraWatcher(
+            camera_id, stream_url, direction,
+            auto_zoom_enabled=auto_zoom,
+            ptz_host=onvif_host,
+            ptz_port=onvif_port,
+            ptz_user=onvif_user,
+            ptz_pass=onvif_pass,
+        )
         watcher.start()
         _watchers[camera_id] = watcher
 
-    return {"status": "started", "camera_id": camera_id, "direction": direction}
+    return {"status": "started", "camera_id": camera_id, "direction": direction,
+            "auto_zoom": auto_zoom, "ptz_host": onvif_host}
 
 
 @app.post("/cameras/stop")
@@ -938,13 +1157,23 @@ async def _startup():
                 cam_id = cam["id"]
                 stream_url = cam["streamUrl"]
                 direction = cam.get("direction", "entry")
+                ptz_host = cam.get("onvifHost", "")
+                ptz_port = cam.get("onvifPort", 80)
+                ptz_user = cam.get("onvifUser", "admin")
+                ptz_pass = cam.get("onvifPass", "")
                 with _watchers_lock:
                     if cam_id in _watchers and _watchers[cam_id].is_alive():
                         continue
-                    watcher = CameraWatcher(cam_id, stream_url, direction)
+                    watcher = CameraWatcher(
+                        cam_id, stream_url, direction,
+                        auto_zoom_enabled=bool(ptz_host),
+                        ptz_host=ptz_host, ptz_port=ptz_port,
+                        ptz_user=ptz_user, ptz_pass=ptz_pass,
+                    )
                     watcher.start()
                     _watchers[cam_id] = watcher
-                log.info("Recovered camera: %s (%s) direction=%s", cam.get("name", "?"), cam_id, direction)
+                log.info("Recovered camera: %s (%s) direction=%s ptz=%s",
+                         cam.get("name", "?"), cam_id, direction, ptz_host or "off")
             if cameras:
                 log.info("Camera recovery: restored %d cameras", len(cameras))
         except Exception as e:

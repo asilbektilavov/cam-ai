@@ -48,10 +48,14 @@ export async function POST(req: NextRequest) {
   const orgId = session.user.organizationId;
   const body = await req.json();
 
-  const { name, location, streamUrl, branchId, venueType, resolution, fps, motionThreshold, captureInterval, purpose } = body;
+  const {
+    name, location, streamUrl, branchId, venueType, resolution, fps,
+    motionThreshold, captureInterval, purpose,
+    onvifHost, onvifPort, onvifUser, onvifPass, hasPtz,
+  } = body;
 
-  if (!name || !location || !streamUrl || !branchId) {
-    return badRequest('Name, location, streamUrl, and branchId are required');
+  if (!name || !streamUrl || !branchId) {
+    return badRequest('Name, streamUrl, and branchId are required');
   }
 
   // Verify branch belongs to org
@@ -60,19 +64,27 @@ export async function POST(req: NextRequest) {
   });
   if (!branch) return badRequest('Invalid branchId');
 
+  // Auto-set venueType based on purpose
+  const effectiveVenueType = venueType || (purpose === 'lpr' ? 'parking' : 'retail');
+
   const camera = await prisma.camera.create({
     data: {
       name,
-      location,
+      location: location || name,
       streamUrl,
       branchId,
-      venueType: venueType || 'retail',
+      venueType: effectiveVenueType,
       purpose: purpose || 'detection',
       resolution: resolution || '1920x1080',
       fps: fps || 30,
       motionThreshold: motionThreshold || 5.0,
       captureInterval: captureInterval || 5,
       organizationId: orgId,
+      ...(onvifHost && { onvifHost }),
+      ...(onvifPort && { onvifPort: Number(onvifPort) }),
+      ...(onvifUser && { onvifUser }),
+      ...(onvifPass && { onvifPass }),
+      ...(hasPtz !== undefined && { hasPtz: Boolean(hasPtz) }),
     },
   });
 

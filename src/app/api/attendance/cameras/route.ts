@@ -13,6 +13,10 @@ export async function GET() {
       name: true,
       streamUrl: true,
       purpose: true,
+      onvifHost: true,
+      onvifPort: true,
+      onvifUser: true,
+      onvifPass: true,
     },
   });
 
@@ -24,6 +28,10 @@ export async function GET() {
       direction: c.purpose === 'attendance_entry' ? 'entry'
         : c.purpose === 'attendance_exit' ? 'exit'
         : 'search',
+      onvifHost: c.onvifHost || '',
+      onvifPort: c.onvifPort || 80,
+      onvifUser: c.onvifUser || 'admin',
+      onvifPass: c.onvifPass || '',
     }))
   );
 }

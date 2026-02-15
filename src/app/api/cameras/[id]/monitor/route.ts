@@ -13,7 +13,12 @@ const PLATE_SERVICE_URL = process.env.PLATE_SERVICE_URL || 'http://localhost:800
 
 async function startExternalCamera(
   serviceUrl: string,
-  camera: { id: string; streamUrl: string; purpose: string },
+  camera: {
+    id: string; streamUrl: string; purpose: string;
+    onvifHost?: string | null; onvifPort?: number | null;
+    onvifUser?: string | null; onvifPass?: string | null;
+    hasPtz?: boolean;
+  },
 ) {
   const form = new URLSearchParams();
   form.append('camera_id', camera.id);
@@ -23,6 +28,14 @@ async function startExternalCamera(
     form.append('direction', camera.purpose === 'attendance_entry' ? 'entry' : 'exit');
   } else if (camera.purpose === 'people_search') {
     form.append('direction', 'search');
+  }
+  // Pass ONVIF config for auto-zoom (motorized varifocal cameras)
+  if (camera.onvifHost && camera.onvifUser) {
+    form.append('onvif_host', camera.onvifHost);
+    form.append('onvif_port', String(camera.onvifPort || 80));
+    form.append('onvif_user', camera.onvifUser);
+    form.append('onvif_pass', camera.onvifPass || '');
+    form.append('auto_zoom', 'true');
   }
 
   const resp = await fetch(`${serviceUrl}/cameras/start`, {
