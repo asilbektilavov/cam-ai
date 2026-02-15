@@ -209,7 +209,7 @@ class HardwareZoomManager:
 
         with self._lock:
             if self._state == HwZoomState.IDLE:
-                self._idle_logic(now, face_sizes, face_positions)
+                self._idle_logic(now, face_sizes, face_positions, edge_proximity)
             elif self._state == HwZoomState.ZOOMING_IN:
                 self._zooming_in_logic(now, face_sizes, face_positions)
             elif self._state == HwZoomState.TRACKING:
@@ -243,7 +243,8 @@ class HardwareZoomManager:
     # ------------------------------------------------------------------
 
     def _idle_logic(self, now: float, face_sizes: list[int],
-                    face_positions: list[tuple[float, float]]):
+                    face_positions: list[tuple[float, float]],
+                    edge_proximity: float = 1.0):
         """IDLE: watch for far faces that need zoom."""
         if not face_sizes:
             self._persist_start = 0.0
@@ -252,7 +253,12 @@ class HardwareZoomManager:
         smallest = min(face_sizes)
         is_small = smallest < FACE_SMALL_PX
 
-        # Zoom if face is small (no edge check — camera only has zoom, no pan)
+        # Don't zoom if face is near frame edge — zooming will push it out (no pan)
+        if is_small and edge_proximity < ZOOM_EDGE_STOP:
+            self._persist_start = 0.0
+            return
+
+        # Zoom if face is small
         if is_small:
             if self._persist_start == 0.0:
                 self._persist_start = now
