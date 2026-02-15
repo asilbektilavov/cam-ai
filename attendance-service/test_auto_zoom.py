@@ -124,7 +124,7 @@ def test_zooming_in_overshoot():
 
 
 def test_returning_interrupted_by_face():
-    """New face during return should re-zoom."""
+    """New face during return should go to TRACKING (with cooldown before re-zoom)."""
     mgr, session = make_mgr()
     mgr._state = HwZoomState.RETURNING
     mgr._is_moving = True
@@ -135,7 +135,8 @@ def test_returning_interrupted_by_face():
     # Small face appears
     face = (130, 290, 170, 250)  # 40px height, center
     mgr.update([face], 300, 500)
-    assert mgr._state == HwZoomState.ZOOMING_IN
+    assert mgr._state == HwZoomState.TRACKING  # waits cooldown before re-zoom
+    assert mgr._zoom_plateau_count == 0  # plateau reset for fresh cycle
 
 
 def test_plateau_stops_rezooming():

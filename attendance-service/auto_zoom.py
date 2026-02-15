@@ -44,6 +44,7 @@ MAX_ZOOM_IN_TIME = 12.0   # safety: max continuous zoom-in time (seconds)
 MAX_RETURN_TIME = 15.0    # safety: max time for full zoom-out return
 SPEED_UPDATE_INTERVAL = 1.5  # seconds between speed adjustments while zooming
 FOCUS_SETTLE_TIME = 2.0      # seconds to wait for autofocus after zoom stops
+REZOOM_COOLDOWN = 4.0        # seconds to wait after zoom stops before allowing re-zoom
 
 # Edge safety: don't zoom if faces are near frame edges
 EDGE_MARGIN = 0.08  # 8% from each edge is "danger zone"
@@ -111,6 +112,9 @@ class HardwareZoomManager:
 
         # Edge retreat timer (for TRACKING state)
         self._edge_retreat_start = 0.0
+
+        # Cooldown after return: wait before re-zooming
+        self._cooldown_until = 0.0
 
         # Connectivity
         self._connected = False
@@ -210,14 +214,21 @@ class HardwareZoomManager:
             face_positions.append((cx, cy))
 
         # Compute edge proximity: minimum distance from any face bbox edge to frame boundary
-        if face_locations and frame_w > 0 and frame_h > 0:
-            min_left = min(left / frame_w for _, _, _, left in face_locations)
-            max_right = max(right / frame_w for _, right, _, _ in face_locations)
-            min_top = min(top / frame_h for top, _, _, _ in face_locations)
-            max_bottom = max(bottom / frame_h for _, _, bottom, _ in face_locations)
+        # Only consider significant faces (>15px) — tiny detections at frame edge are noise
+        MIN_EDGE_FACE_PX = 15
+        significant_faces = [
+            (top, right, bottom, left)
+            for top, right, bottom, left in face_locations
+            if (bottom - top) >= MIN_EDGE_FACE_PX
+        ]
+        if significant_faces and frame_w > 0 and frame_h > 0:
+            min_left = min(left / frame_w for _, _, _, left in significant_faces)
+            max_right = max(right / frame_w for _, right, _, _ in significant_faces)
+            min_top = min(top / frame_h for top, _, _, _ in significant_faces)
+            max_bottom = max(bottom / frame_h for _, _, bottom, _ in significant_faces)
             edge_proximity = min(min_left, 1.0 - max_right, min_top, 1.0 - max_bottom)
         else:
-            edge_proximity = 1.0  # no faces = no edge concern
+            edge_proximity = 1.0  # no significant faces = no edge concern
 
         if face_locations:
             self._last_face_time = now
@@ -263,6 +274,14 @@ class HardwareZoomManager:
                     edge_proximity: float = 1.0):
         """IDLE: watch for far faces that need zoom."""
         if not face_sizes:
+            self._persist_start = 0.0
+            return
+
+        # Cooldown after return or zoom stop: wait before re-zooming
+        if now < self._cooldown_until:
+            self._persist_start = 0.0
+            return
+        if self._zoom_stopped_time > 0 and (now - self._zoom_stopped_time) < REZOOM_COOLDOWN:
             self._persist_start = 0.0
             return
 
@@ -347,8 +366,9 @@ class HardwareZoomManager:
         # Face reached target → stop
         if smallest >= FACE_TARGET_PX:
             self._stop()
+            self._zoom_plateau_count = 0  # success: reset plateau
             self._state = HwZoomState.TRACKING
-            log.info("ZOOMING_IN → TRACKING (target reached, face=%dpx)", smallest)
+            log.info("ZOOMING_IN → TRACKING (target reached, face=%dpx, plateau reset)", smallest)
             return
 
         # Adjust speed dynamically
@@ -399,8 +419,19 @@ class HardwareZoomManager:
         if smallest < FACE_SMALL_PX and edge_proximity < ZOOM_EDGE_STOP:
             return  # hold position
 
-        # Face too small again → zoom in more (unless plateau reached)
-        if smallest < FACE_SMALL_PX and self._zoom_plateau_count < 2:
+        # Face too small again → zoom in more (unless plateau or cooldown)
+        if smallest < FACE_SMALL_PX and self._zoom_plateau_count >= 2:
+            log.debug("TRACKING: face small (%dpx) but plateau=%d, skipping zoom",
+                      smallest, self._zoom_plateau_count)
+            return
+
+        # Cooldown: wait after zoom motor stopped before re-zooming
+        if smallest < FACE_SMALL_PX and self._zoom_stopped_time > 0:
+            elapsed_since_stop = now - self._zoom_stopped_time
+            if elapsed_since_stop < REZOOM_COOLDOWN:
+                return  # wait for cooldown
+
+        if smallest < FACE_SMALL_PX:
             speed = self._calc_zoom_in_speed(smallest)
             self._start_zoom_in(speed)
             self._zoom_start_time = now
@@ -443,19 +474,15 @@ class HardwareZoomManager:
 
     def _returning_logic(self, now: float, face_sizes: list[int]):
         """RETURNING: zooming out fully to wide angle."""
-        # If new faces appeared during return, check if we should re-zoom
+        # If new faces appeared during return, stop zoom-out and go to TRACKING
+        # (TRACKING will wait REZOOM_COOLDOWN before re-zooming)
         if face_sizes:
             smallest = min(face_sizes)
-            self._stop()
-            if smallest < FACE_SMALL_PX:
-                speed = self._calc_zoom_in_speed(smallest)
-                self._start_zoom_in(speed)
-                self._zoom_start_time = now
-                self._state = HwZoomState.ZOOMING_IN
-                log.info("RETURNING → ZOOMING_IN (new face %dpx)", smallest)
-            else:
-                self._state = HwZoomState.TRACKING
-                log.info("RETURNING → TRACKING (face appeared %dpx)", smallest)
+            self._stop()  # sets _zoom_stopped_time → cooldown starts
+            self._zoom_plateau_count = 0  # fresh cycle after partial return
+            self._state = HwZoomState.TRACKING
+            log.info("RETURNING → TRACKING (face %dpx, plateau reset, cooldown %.0fs)",
+                     smallest, REZOOM_COOLDOWN)
             return
 
         # Safety: max return time
@@ -463,7 +490,8 @@ class HardwareZoomManager:
             self._stop()
             self._state = HwZoomState.IDLE
             self._zoom_plateau_count = 0  # reset plateau on full return
-            log.info("RETURNING → IDLE (timeout)")
+            self._cooldown_until = now + EDGE_SETTLE_TIME  # 4s cooldown before re-zoom
+            log.info("RETURNING → IDLE (timeout, cooldown %.0fs)", EDGE_SETTLE_TIME)
             return
 
         # If no faces for a long time, assume we've returned to wide
@@ -471,7 +499,8 @@ class HardwareZoomManager:
             self._stop()
             self._state = HwZoomState.IDLE
             self._zoom_plateau_count = 0  # reset plateau on full return
-            log.info("RETURNING → IDLE (long timeout)")
+            self._cooldown_until = now + EDGE_SETTLE_TIME  # 4s cooldown before re-zoom
+            log.info("RETURNING → IDLE (long timeout, cooldown %.0fs)", EDGE_SETTLE_TIME)
 
     # ------------------------------------------------------------------
     # Helpers
