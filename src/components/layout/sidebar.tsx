@@ -18,9 +18,7 @@ import {
   BookOpen,
   HardDrive,
   LayoutGrid,
-  Car,
   Stethoscope,
-  SearchCode,
   UserCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -34,10 +32,8 @@ const navItems = [
   { href: '/cameras', label: 'Камеры', icon: Camera },
   { href: '/wall', label: 'Видеостена', icon: LayoutGrid },
   { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
-  { href: '/lpr', label: 'Номера авто', icon: Car },
   { href: '/attendance', label: 'Посещаемость', icon: UserCheck },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
-  { href: '/object-search', label: 'Поиск объектов', icon: SearchCode },
   { href: '/storage', label: 'Хранилище', icon: HardDrive },
   { href: '/diagnostics', label: 'Диагностика', icon: Stethoscope },
   { href: '/integrations', label: 'Интеграции', icon: Plug },

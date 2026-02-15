@@ -114,6 +114,9 @@ export default function AttendancePage() {
   // Detail expand
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [employeeRecords, setEmployeeRecords] = useState<AttendanceRecord[]>([]);
+
+  // Snapshot viewer
+  const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   // ---------- Fetch ----------
@@ -406,18 +409,33 @@ export default function AttendancePage() {
                       key={r.id}
                       className="flex items-center gap-3 py-3"
                     >
+                      {/* Snapshot thumbnail */}
                       <div
                         className={cn(
-                          'rounded-full p-1.5',
-                          r.direction === 'check_in'
-                            ? 'bg-green-500/10 text-green-500'
-                            : 'bg-orange-500/10 text-orange-500'
+                          'h-10 w-10 rounded-md bg-muted shrink-0 overflow-hidden',
+                          r.snapshotPath && 'cursor-pointer hover:ring-2 hover:ring-primary transition-shadow'
                         )}
+                        onClick={() => r.snapshotPath && setSnapshotUrl(`/api/attendance/snapshot?path=${encodeURIComponent(r.snapshotPath)}`)}
                       >
-                        {r.direction === 'check_in' ? (
-                          <LogIn className="h-4 w-4" />
+                        {r.snapshotPath ? (
+                          <img
+                            src={`/api/attendance/snapshot?path=${encodeURIComponent(r.snapshotPath)}`}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
                         ) : (
-                          <LogOut className="h-4 w-4" />
+                          <div className={cn(
+                            'h-full w-full flex items-center justify-center',
+                            r.direction === 'check_in'
+                              ? 'bg-green-500/10 text-green-500'
+                              : 'bg-orange-500/10 text-orange-500'
+                          )}>
+                            {r.direction === 'check_in' ? (
+                              <LogIn className="h-4 w-4" />
+                            ) : (
+                              <LogOut className="h-4 w-4" />
+                            )}
+                          </div>
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -551,26 +569,40 @@ export default function AttendancePage() {
                           Нет записей посещаемости
                         </p>
                       ) : (
-                        <div className="space-y-2 max-h-60 overflow-y-auto">
+                        <div className="space-y-2 max-h-80 overflow-y-auto">
                           {employeeRecords.slice(0, 20).map((r) => (
                             <div
                               key={r.id}
                               className="flex items-center gap-2 text-sm"
                             >
-                              <div
-                                className={cn(
-                                  'rounded-full p-1',
-                                  r.direction === 'check_in'
-                                    ? 'text-green-500'
-                                    : 'text-orange-500'
-                                )}
-                              >
-                                {r.direction === 'check_in' ? (
-                                  <LogIn className="h-3 w-3" />
-                                ) : (
-                                  <LogOut className="h-3 w-3" />
-                                )}
-                              </div>
+                              {/* Snapshot mini */}
+                              {r.snapshotPath ? (
+                                <div
+                                  className="h-8 w-8 rounded bg-muted shrink-0 overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary transition-shadow"
+                                  onClick={() => setSnapshotUrl(`/api/attendance/snapshot?path=${encodeURIComponent(r.snapshotPath!)}`)}
+                                >
+                                  <img
+                                    src={`/api/attendance/snapshot?path=${encodeURIComponent(r.snapshotPath)}`}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                  />
+                                </div>
+                              ) : (
+                                <div
+                                  className={cn(
+                                    'rounded-full p-1',
+                                    r.direction === 'check_in'
+                                      ? 'text-green-500'
+                                      : 'text-orange-500'
+                                  )}
+                                >
+                                  {r.direction === 'check_in' ? (
+                                    <LogIn className="h-3 w-3" />
+                                  ) : (
+                                    <LogOut className="h-3 w-3" />
+                                  )}
+                                </div>
+                              )}
                               <span className="text-muted-foreground">
                                 {new Date(r.timestamp).toLocaleDateString(
                                   'ru-RU'
@@ -705,6 +737,21 @@ export default function AttendancePage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Snapshot Viewer */}
+      {snapshotUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center cursor-pointer"
+          onClick={() => setSnapshotUrl(null)}
+        >
+          <img
+            src={snapshotUrl}
+            alt="Снапшот"
+            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }
