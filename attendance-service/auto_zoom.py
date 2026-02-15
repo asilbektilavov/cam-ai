@@ -47,6 +47,9 @@ FOCUS_SETTLE_TIME = 2.0      # seconds to wait for autofocus after zoom stops
 
 # Edge safety: don't zoom if faces are near frame edges
 EDGE_MARGIN = 0.08  # 8% from each edge is "danger zone"
+ZOOM_EDGE_STOP = 0.08     # stop zooming if face bbox within 8% of frame edge
+ZOOM_EDGE_RETREAT = 0.04  # zoom out if face bbox within 4% of frame edge
+EDGE_SETTLE_TIME = 4.0    # seconds to wait before retreating when face at edge
 
 
 class HwZoomState(Enum):
@@ -105,6 +108,9 @@ class HardwareZoomManager:
         # Zoom plateau detection: if face doesn't grow, camera hit max zoom
         self._zoom_start_face_size = 0   # face size when zoom started
         self._zoom_plateau_count = 0     # consecutive zoom cycles without growth
+
+        # Edge retreat timer (for TRACKING state)
+        self._edge_retreat_start = 0.0
 
         # Connectivity
         self._connected = False
@@ -203,6 +209,16 @@ class HardwareZoomManager:
             cy = (top + bottom) / 2.0 / frame_h
             face_positions.append((cx, cy))
 
+        # Compute edge proximity: minimum distance from any face bbox edge to frame boundary
+        if face_locations and frame_w > 0 and frame_h > 0:
+            min_left = min(left / frame_w for _, _, _, left in face_locations)
+            max_right = max(right / frame_w for _, right, _, _ in face_locations)
+            min_top = min(top / frame_h for top, _, _, _ in face_locations)
+            max_bottom = max(bottom / frame_h for _, _, bottom, _ in face_locations)
+            edge_proximity = min(min_left, 1.0 - max_right, min_top, 1.0 - max_bottom)
+        else:
+            edge_proximity = 1.0  # no faces = no edge concern
+
         if face_locations:
             self._last_face_time = now
             self._last_face_sizes = face_sizes
@@ -211,9 +227,9 @@ class HardwareZoomManager:
             if self._state == HwZoomState.IDLE:
                 self._idle_logic(now, face_sizes, face_positions, edge_proximity)
             elif self._state == HwZoomState.ZOOMING_IN:
-                self._zooming_in_logic(now, face_sizes, face_positions)
+                self._zooming_in_logic(now, face_sizes, face_positions, edge_proximity)
             elif self._state == HwZoomState.TRACKING:
-                self._tracking_logic(now, face_sizes, face_positions)
+                self._tracking_logic(now, face_sizes, face_positions, edge_proximity)
             elif self._state == HwZoomState.ZOOMING_OUT:
                 self._zooming_out_logic(now, face_sizes)
             elif self._state == HwZoomState.RETURNING:
@@ -277,7 +293,8 @@ class HardwareZoomManager:
             self._persist_start = 0.0
 
     def _zooming_in_logic(self, now: float, face_sizes: list[int],
-                          face_positions: list[tuple[float, float]]):
+                          face_positions: list[tuple[float, float]],
+                          edge_proximity: float = 1.0):
         """ZOOMING_IN: actively zooming, monitor face size growth."""
         # Lost all faces
         if now - self._last_face_time > NO_FACE_TIMEOUT:
@@ -309,6 +326,15 @@ class HardwareZoomManager:
 
         smallest = min(face_sizes)
 
+        # Face near frame edge → stop zoom (no pan available, zooming will push face out)
+        if edge_proximity < ZOOM_EDGE_STOP:
+            self._stop()
+            self._zoom_plateau_count += 1  # count as plateau to prevent re-zoom
+            self._state = HwZoomState.TRACKING
+            log.info("ZOOMING_IN → TRACKING (face near edge %.2f < %.2f, plateau=%d)",
+                     edge_proximity, ZOOM_EDGE_STOP, self._zoom_plateau_count)
+            return
+
         # Face too large → overshoot, zoom out (check before target-reached)
         if max(face_sizes) > FACE_LARGE_PX:
             self._stop()
@@ -335,12 +361,14 @@ class HardwareZoomManager:
                           self._current_speed, new_speed, smallest)
 
     def _tracking_logic(self, now: float, face_sizes: list[int],
-                        face_positions: list[tuple[float, float]]):
+                        face_positions: list[tuple[float, float]],
+                        edge_proximity: float = 1.0):
         """TRACKING: at target zoom level, make fine adjustments."""
         # Lost all faces → return to wide
         if now - self._last_face_time > NO_FACE_TIMEOUT:
             self._start_zoom_out(5)
             self._zoom_start_time = now
+            self._edge_retreat_start = 0.0
             self._state = HwZoomState.RETURNING
             log.info("TRACKING → RETURNING (faces lost)")
             return
@@ -350,6 +378,26 @@ class HardwareZoomManager:
 
         smallest = min(face_sizes)
         largest = max(face_sizes)
+
+        # Face at frame edge → zoom out after settle time (face might walk back)
+        if edge_proximity < ZOOM_EDGE_RETREAT:
+            if self._edge_retreat_start == 0.0:
+                self._edge_retreat_start = now
+                log.debug("TRACKING: face at edge (%.2f), starting settle timer", edge_proximity)
+            elif now - self._edge_retreat_start >= EDGE_SETTLE_TIME:
+                self._start_zoom_out(3)
+                self._zoom_start_time = now
+                self._edge_retreat_start = 0.0
+                self._state = HwZoomState.ZOOMING_OUT
+                log.info("TRACKING → ZOOMING_OUT (face at edge %.2f for %.0fs)",
+                         edge_proximity, EDGE_SETTLE_TIME)
+                return
+        else:
+            self._edge_retreat_start = 0.0
+
+        # Face too small but near edge → don't zoom in (would push face out)
+        if smallest < FACE_SMALL_PX and edge_proximity < ZOOM_EDGE_STOP:
+            return  # hold position
 
         # Face too small again → zoom in more (unless plateau reached)
         if smallest < FACE_SMALL_PX and self._zoom_plateau_count < 2:

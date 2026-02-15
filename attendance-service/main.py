@@ -507,7 +507,7 @@ class CameraWatcher(threading.Thread):
                         # Convert person bbox to estimated HEAD region for auto_zoom
                         # Head ≈ upper 1/5 of person height, centered 60% of width
                         # This ensures auto_zoom gets face-like sizes, not body sizes
-                        CLOSE_PERSON_RATIO = 0.30  # if person > 30% of frame height → too close, don't zoom
+                        CLOSE_PERSON_RATIO = 0.70  # if person > 70% of frame height → too close, don't zoom
 
                         for top, right, bottom, left in persons:
                             person_h = bottom - top
