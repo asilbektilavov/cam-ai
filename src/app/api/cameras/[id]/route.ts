@@ -5,9 +5,11 @@ import { checkPermission, RBACError } from '@/lib/rbac';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
 import { streamManager } from '@/lib/services/stream-manager';
 import { go2rtcManager } from '@/lib/services/go2rtc-manager';
+import { reconcileAttendanceCameras } from '@/lib/services/attendance-reconciler';
 
 const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
 const DETECTION_SERVICE_URL = process.env.DETECTION_SERVICE_URL || 'http://localhost:8001';
+const PLATE_SERVICE_URL = process.env.PLATE_SERVICE_URL || 'http://localhost:8003';
 
 export async function GET(
   _req: NextRequest,
@@ -152,6 +154,8 @@ export async function PATCH(
     } catch (e) {
       console.warn('[CameraUpdate] Failed to switch services on purpose change:', e);
     }
+    // Reconcile attendance-service after purpose change
+    void reconcileAttendanceCameras();
   }
 
   return NextResponse.json(camera);
@@ -176,14 +180,49 @@ export async function DELETE(
   const { id } = await params;
   const orgId = session.user.organizationId;
 
-  const deleted = await prisma.camera.deleteMany({
+  // Read camera before deleting to know which service to stop
+  const camera = await prisma.camera.findFirst({
     where: { id, organizationId: orgId },
+    select: { id: true, purpose: true, isMonitoring: true },
   });
-  if (deleted.count === 0) return notFound('Camera not found');
+  if (!camera) return notFound('Camera not found');
 
-  // Stop monitoring and streaming for deleted camera
+  // Stop external services for this camera
+  if (camera.isMonitoring) {
+    const stopForm = new URLSearchParams();
+    stopForm.append('camera_id', id);
+
+    if (camera.purpose.startsWith('attendance_') || camera.purpose === 'people_search') {
+      await fetch(`${ATTENDANCE_SERVICE_URL}/cameras/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: stopForm.toString(),
+      }).catch(() => {});
+    } else if (camera.purpose === 'lpr') {
+      await fetch(`${PLATE_SERVICE_URL}/cameras/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ camera_id: id }),
+      }).catch(() => {});
+    } else {
+      await fetch(`${DETECTION_SERVICE_URL}/cameras/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: stopForm.toString(),
+      }).catch(() => {});
+    }
+    void go2rtcManager.removeStream(id);
+  }
+
+  // Delete from DB
+  await prisma.camera.delete({ where: { id } });
+
+  // Stop monitoring and streaming
   await cameraMonitor.stopMonitoring(id).catch(() => {});
   await streamManager.stopStream(id).catch(() => {});
+
+  // Reconcile attendance-service to clean up any stale watchers
+  void reconcileAttendanceCameras();
 
   return NextResponse.json({ success: true });
 }

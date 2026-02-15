@@ -5,6 +5,7 @@ import { cameraMonitor } from '@/lib/services/camera-monitor';
 import { go2rtcManager } from '@/lib/services/go2rtc-manager';
 import { plateServiceManager } from '@/lib/services/plate-service-manager';
 import { checkPermission, RBACError } from '@/lib/rbac';
+import { reconcileAttendanceCameras } from '@/lib/services/attendance-reconciler';
 
 const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
 const DETECTION_SERVICE_URL = process.env.DETECTION_SERVICE_URL || 'http://localhost:8001';
@@ -259,6 +260,9 @@ export async function DELETE(
     // Stop CameraMonitor (motion/Gemini)
     await cameraMonitor.stopMonitoring(id);
   }
+
+  // Reconcile attendance-service to clean up any stale watchers
+  void reconcileAttendanceCameras();
 
   return NextResponse.json({ success: true, monitoring: false });
 }
