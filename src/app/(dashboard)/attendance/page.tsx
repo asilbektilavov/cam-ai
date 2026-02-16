@@ -150,12 +150,16 @@ export default function AttendancePage() {
     }
   }, []);
 
+  // Only show loading spinner on first load, not on tab re-visits
+  const [initialLoaded, setInitialLoaded] = useState(false);
+
   useEffect(() => {
-    setLoading(true);
-    Promise.all([fetchRecords(), fetchEmployees(), fetchCameras()]).finally(() =>
-      setLoading(false)
-    );
-  }, [fetchRecords, fetchEmployees, fetchCameras]);
+    if (!initialLoaded) setLoading(true);
+    Promise.all([fetchRecords(), fetchEmployees(), fetchCameras()]).finally(() => {
+      setLoading(false);
+      setInitialLoaded(true);
+    });
+  }, [fetchRecords, fetchEmployees, fetchCameras]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- Handlers ----------
 
@@ -246,7 +250,7 @@ export default function AttendancePage() {
 
   // ---------- Render ----------
 
-  if (loading) {
+  if (loading && !initialLoaded) {
     return (
       <div className="flex h-[60vh] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
