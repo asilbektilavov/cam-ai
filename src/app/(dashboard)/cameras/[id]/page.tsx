@@ -563,8 +563,8 @@ export default function CameraDetailPage() {
         </div>
       </div>
 
-      {/* Main content: Video + PTZ */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+      {/* Main content: Video + PTZ (hide PTZ sidebar for attendance cameras — auto-zoom manages it) */}
+      <div className={cn("grid gap-6", !isFaceMode && "lg:grid-cols-[1fr_280px]")}>
         {/* Video Area */}
         <div className="space-y-4">
           {/* Video Player */}
@@ -876,34 +876,36 @@ export default function CameraDetailPage() {
           )}
         </div>
 
-        {/* PTZ Sidebar */}
-        <div className="space-y-4">
-          <PtzControls
-            cameraId={cameraId}
-            hasPtz={camera.hasPtz}
-          />
+        {/* PTZ Sidebar — hidden for attendance cameras (auto-zoom manages PTZ) */}
+        {!isFaceMode && (
+          <div className="space-y-4">
+            <PtzControls
+              cameraId={cameraId}
+              hasPtz={camera.hasPtz}
+            />
 
-          {/* Quick Links */}
-          <Card>
-            <CardHeader className="pb-3 px-4 pt-4">
-              <CardTitle className="text-sm">Быстрые ссылки</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 space-y-2">
-              <Button variant="outline" size="sm" className="w-full justify-start" asChild>
-                <Link href={`/archive?cameraId=${cameraId}`}>
-                  <Archive className="h-4 w-4 mr-2" />
-                  Видеоархив
-                </Link>
-              </Button>
-              <Button variant="outline" size="sm" className="w-full justify-start" asChild>
-                <Link href="/storage">
-                  <Square className="h-4 w-4 mr-2" />
-                  Хранилище
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
+            {/* Quick Links */}
+            <Card>
+              <CardHeader className="pb-3 px-4 pt-4">
+                <CardTitle className="text-sm">Быстрые ссылки</CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-4 space-y-2">
+                <Button variant="outline" size="sm" className="w-full justify-start" asChild>
+                  <Link href={`/archive?cameraId=${cameraId}`}>
+                    <Archive className="h-4 w-4 mr-2" />
+                    Видеоархив
+                  </Link>
+                </Button>
+                <Button variant="outline" size="sm" className="w-full justify-start" asChild>
+                  <Link href="/storage">
+                    <Square className="h-4 w-4 mr-2" />
+                    Хранилище
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
 
       {/* Export Dialog */}

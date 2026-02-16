@@ -37,20 +37,20 @@ FACE_SMALL_PX = 80       # face < 80px → far, need zoom in
 FACE_TARGET_PX = 80      # stop zooming when face reaches 80px (achievable by zoom)
 FACE_LARGE_PX = 180      # face > 180px → too close, zoom out
 
-# Timing
-PERSIST_SECONDS = 1.0     # face must be visible 1s before zoom starts
-NO_FACE_TIMEOUT = 5.0     # return to wide angle after 5s without any face/person
-MAX_ZOOM_IN_TIME = 12.0   # safety: max continuous zoom-in time (seconds)
-MAX_RETURN_TIME = 15.0    # safety: max time for full zoom-out return
-SPEED_UPDATE_INTERVAL = 1.5  # seconds between speed adjustments while zooming
-FOCUS_SETTLE_TIME = 2.0      # seconds to wait for autofocus after zoom stops
-REZOOM_COOLDOWN = 4.0        # seconds to wait after zoom stops before allowing re-zoom
+# Timing — all minimized for fastest possible response
+PERSIST_SECONDS = 0.0     # instant trigger — no waiting
+NO_FACE_TIMEOUT = 2.0     # return to wide after 2s without face
+MAX_ZOOM_IN_TIME = 12.0   # safety: max continuous zoom-in time
+MAX_RETURN_TIME = 10.0    # safety: max time for full zoom-out return
+SPEED_UPDATE_INTERVAL = 0.3  # speed adjustment interval (irrelevant at fixed speed)
+FOCUS_SETTLE_TIME = 0.3      # minimal autofocus settle
+REZOOM_COOLDOWN = 0.5        # near-instant re-zoom after stop
 
 # Edge safety: don't zoom if faces are near frame edges
 EDGE_MARGIN = 0.08  # 8% from each edge is "danger zone"
 ZOOM_EDGE_STOP = 0.08     # stop zooming if face bbox within 8% of frame edge
 ZOOM_EDGE_RETREAT = 0.04  # zoom out if face bbox within 4% of frame edge
-EDGE_SETTLE_TIME = 4.0    # seconds to wait before retreating when face at edge
+EDGE_SETTLE_TIME = 2.0    # seconds to wait before retreating when face at edge
 
 
 class HwZoomState(Enum):
@@ -318,7 +318,7 @@ class HardwareZoomManager:
         # Lost all faces
         if now - self._last_face_time > NO_FACE_TIMEOUT:
             self._stop()
-            self._start_zoom_out(6)
+            self._start_zoom_out(7)
             self._zoom_start_time = now
             self._state = HwZoomState.RETURNING
             log.info("ZOOMING_IN → RETURNING (faces lost)")
@@ -357,7 +357,7 @@ class HardwareZoomManager:
         # Face too large → overshoot, zoom out (check before target-reached)
         if max(face_sizes) > FACE_LARGE_PX:
             self._stop()
-            self._start_zoom_out(2)
+            self._start_zoom_out(7)
             self._zoom_start_time = now
             self._state = HwZoomState.ZOOMING_OUT
             log.info("ZOOMING_IN → ZOOMING_OUT (overshoot, face=%dpx)", max(face_sizes))
@@ -386,7 +386,7 @@ class HardwareZoomManager:
         """TRACKING: at target zoom level, make fine adjustments."""
         # Lost all faces → return to wide
         if now - self._last_face_time > NO_FACE_TIMEOUT:
-            self._start_zoom_out(5)
+            self._start_zoom_out(7)
             self._zoom_start_time = now
             self._edge_retreat_start = 0.0
             self._state = HwZoomState.RETURNING
@@ -405,7 +405,7 @@ class HardwareZoomManager:
                 self._edge_retreat_start = now
                 log.debug("TRACKING: face at edge (%.2f), starting settle timer", edge_proximity)
             elif now - self._edge_retreat_start >= EDGE_SETTLE_TIME:
-                self._start_zoom_out(3)
+                self._start_zoom_out(7)
                 self._zoom_start_time = now
                 self._edge_retreat_start = 0.0
                 self._state = HwZoomState.ZOOMING_OUT
@@ -442,7 +442,7 @@ class HardwareZoomManager:
 
         # Face too large → zoom out a bit
         if largest > FACE_LARGE_PX:
-            self._start_zoom_out(2)
+            self._start_zoom_out(7)
             self._zoom_start_time = now
             self._state = HwZoomState.ZOOMING_OUT
             log.info("TRACKING → ZOOMING_OUT (face too large %dpx)", largest)
@@ -507,18 +507,11 @@ class HardwareZoomManager:
     # ------------------------------------------------------------------
 
     def _calc_zoom_in_speed(self, face_px: int) -> int:
-        """Calculate zoom-in speed (1-7) based on how small the face is."""
-        if face_px < 30:
-            return 7     # very far → max speed
-        elif face_px < 50:
-            return 6
-        elif face_px < 80:
-            return 5
-        elif face_px < 100:
-            return 4
-        elif face_px < FACE_SMALL_PX:
-            return 3     # getting close to target → medium
-        return 1         # fine adjustment
+        """Calculate zoom-in speed.
+        Camera H4P-50POX-S speed scale: 1=slowest, 7=fastest.
+        Web UI slider goes 1-7, maps to Param2 in PTZ API.
+        """
+        return 7  # maximum speed on this camera
 
     def _faces_safe_for_zoom(self, face_positions: list[tuple[float, float]]) -> bool:
         """Check if all faces are safely within the frame (not near edges)."""
@@ -565,7 +558,7 @@ def test_ptz_connection(
         session.auth = (user, password)
         resp = session.put(
             f"{camera_http_url.rstrip('/')}/PTZ/1/ZoomIn",
-            data="Param1=1&Param2=1",
+            data="Param1=1&Param2=7",
             headers={"If-Modified-Since": "0"},
             timeout=5,
         )

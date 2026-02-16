@@ -67,5 +67,8 @@ detection-service/venv/
 plate-service/venv/
 plate-service/models/*.pt
 
+# uploaded screenshots (plate detections, face snapshots, etc.)
+public/uploads/
+
 # claude
 .claude/
