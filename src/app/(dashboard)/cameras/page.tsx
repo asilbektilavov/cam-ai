@@ -24,6 +24,7 @@ import {
   LogOut as LogOutIcon,
   ScanFace,
   Car,
+  GitCommitHorizontal,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -85,6 +86,7 @@ const PURPOSE_LABELS: Record<string, string> = {
   attendance_exit: 'Выход',
   people_search: 'Поиск людей',
   lpr: 'Номера',
+  line_crossing: 'Пересечение линии',
 };
 
 export default function CamerasPage() {
@@ -480,6 +482,7 @@ export default function CamerasPage() {
                     <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
                     <SelectItem value="people_search">Поиск людей</SelectItem>
                     <SelectItem value="lpr">Распознавание номеров</SelectItem>
+                    <SelectItem value="line_crossing">Пересечение линии</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -659,6 +662,7 @@ export default function CamerasPage() {
                   <SelectItem value="attendance_exit">Посещаемость — выход</SelectItem>
                   <SelectItem value="people_search">Поиск людей</SelectItem>
                   <SelectItem value="lpr">Распознавание номеров (LPR)</SelectItem>
+                  <SelectItem value="line_crossing">Пересечение линии</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -998,6 +1002,8 @@ export default function CamerasPage() {
                           <><ScanFace className="h-3 w-3 mr-0.5" />Поиск</>
                         ) : camera.purpose === 'lpr' ? (
                           <><Car className="h-3 w-3 mr-0.5" />Номера</>
+                        ) : camera.purpose === 'line_crossing' ? (
+                          <><GitCommitHorizontal className="h-3 w-3 mr-0.5" />Линия</>
                         ) : (
                           <><LogOutIcon className="h-3 w-3 mr-0.5" />Выход</>
                         )}

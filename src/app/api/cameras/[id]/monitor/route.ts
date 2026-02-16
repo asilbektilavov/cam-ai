@@ -10,6 +10,7 @@ import { reconcileAttendanceCameras } from '@/lib/services/attendance-reconciler
 const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
 const DETECTION_SERVICE_URL = process.env.DETECTION_SERVICE_URL || 'http://localhost:8001';
 const PLATE_SERVICE_URL = process.env.PLATE_SERVICE_URL || 'http://localhost:8003';
+const LINE_CROSSING_SERVICE_URL = process.env.LINE_CROSSING_SERVICE_URL || 'http://localhost:8004';
 
 async function startExternalCamera(
   serviceUrl: string,
@@ -200,6 +201,41 @@ export async function POST(
         { status: 502 }
       );
     }
+  } else if (camera.purpose === 'line_crossing') {
+    // Line crossing camera — register go2rtc stream + send to line-crossing-service
+    try {
+      void go2rtcManager.addStream(id, camera.streamUrl);
+      // Parse tripwire config
+      let tripwire = null;
+      if (camera.tripwireLine) {
+        try {
+          tripwire = typeof camera.tripwireLine === 'string'
+            ? JSON.parse(camera.tripwireLine)
+            : camera.tripwireLine;
+        } catch { /* ignore */ }
+      }
+      if (tripwire?.enabled) {
+        await fetch(`${LINE_CROSSING_SERVICE_URL}/cameras/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cameraId: id,
+            streamUrl: camera.streamUrl,
+            tripwireLine: tripwire,
+            direction: 'entry',
+          }),
+        });
+      }
+      await prisma.camera.update({
+        where: { id },
+        data: { isMonitoring: true, status: 'online' },
+      });
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : 'Line crossing service unavailable' },
+        { status: 502 }
+      );
+    }
   } else {
     // Detection camera — send to autonomous detection-service + register go2rtc + start CameraMonitor for motion/Gemini
     try {
@@ -257,6 +293,21 @@ export async function DELETE(
       await stopPlateCamera(id);
     } catch {
       // Plate service may be down
+    }
+    void go2rtcManager.removeStream(id);
+    await prisma.camera.update({
+      where: { id },
+      data: { isMonitoring: false, status: 'offline' },
+    });
+  } else if (camera.purpose === 'line_crossing') {
+    try {
+      await fetch(`${LINE_CROSSING_SERVICE_URL}/cameras/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cameraId: id }),
+      });
+    } catch {
+      // Service may be down
     }
     void go2rtcManager.removeStream(id);
     await prisma.camera.update({

@@ -10,6 +10,7 @@ import { reconcileAttendanceCameras } from '@/lib/services/attendance-reconciler
 const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
 const DETECTION_SERVICE_URL = process.env.DETECTION_SERVICE_URL || 'http://localhost:8001';
 const PLATE_SERVICE_URL = process.env.PLATE_SERVICE_URL || 'http://localhost:8003';
+const LINE_CROSSING_SERVICE_URL = process.env.LINE_CROSSING_SERVICE_URL || 'http://localhost:8004';
 
 export async function GET(
   _req: NextRequest,
@@ -134,8 +135,15 @@ export async function PATCH(
     try {
       // Stop old service
       const wasAttendance = existing.purpose.startsWith('attendance_');
+      const wasLineCrossing = existing.purpose === 'line_crossing';
       if (wasAttendance) {
         await stopService(ATTENDANCE_SERVICE_URL, id);
+      } else if (wasLineCrossing) {
+        await fetch(`${LINE_CROSSING_SERVICE_URL}/cameras/stop`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cameraId: id }),
+        }).catch(() => {});
       } else {
         await stopService(DETECTION_SERVICE_URL, id);
         await cameraMonitor.stopMonitoring(id).catch(() => {});
@@ -143,9 +151,13 @@ export async function PATCH(
 
       // Start new service
       const isNowAttendance = camera.purpose.startsWith('attendance_');
+      const isNowLineCrossing = camera.purpose === 'line_crossing';
       if (isNowAttendance) {
         void go2rtcManager.addStream(id, camera.streamUrl);
         await startService(ATTENDANCE_SERVICE_URL, camera);
+      } else if (isNowLineCrossing) {
+        void go2rtcManager.addStream(id, camera.streamUrl);
+        // Line crossing service is started via tripwire config endpoint
       } else {
         void go2rtcManager.addStream(id, camera.streamUrl);
         await startService(DETECTION_SERVICE_URL, camera).catch(() => {});
@@ -197,6 +209,12 @@ export async function DELETE(
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: stopForm.toString(),
+      }).catch(() => {});
+    } else if (camera.purpose === 'line_crossing') {
+      await fetch(`${LINE_CROSSING_SERVICE_URL}/cameras/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cameraId: id }),
       }).catch(() => {});
     } else if (camera.purpose === 'lpr') {
       await fetch(`${PLATE_SERVICE_URL}/cameras/stop`, {

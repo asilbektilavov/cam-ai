@@ -24,6 +24,7 @@ import {
   Box,
   Flame,
   Filter,
+  Pencil,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -48,6 +49,7 @@ import { useBrowserPlateDetection } from '@/hooks/use-browser-plate-detection';
 import { PtzControls } from '@/components/ptz-controls';
 import { ExportDialog } from '@/components/export-dialog';
 import HeatmapOverlay from '@/components/heatmap-overlay';
+import { TripwireOverlay, type TripwireLine } from '@/components/tripwire-overlay';
 import PeopleCounterWidget from '@/components/people-counter-widget';
 import { apiGet, apiPost, apiPatch } from '@/lib/api-client';
 import { toast } from 'sonner';
@@ -74,6 +76,7 @@ interface CameraDetail {
   onvifPass: string | null;
   hasPtz: boolean;
   maxPeopleCapacity: number | null;
+  tripwireLine: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -111,6 +114,13 @@ export default function CameraDetailPage() {
   const [faceDetections, setFaceDetections] = useState<Detection[]>([]);
   const [plateDetections, setPlateDetections] = useState<Detection[]>([]);
   const [plateServiceGpu, setPlateServiceGpu] = useState<boolean | null>(null);
+  const [tripwireLine, setTripwireLine] = useState<TripwireLine | null>(null);
+  const [tripwireEditing, setTripwireEditing] = useState(false);
+  const [lineCrossingEvents, setLineCrossingEvents] = useState<Array<{
+    type: string; bbox: { x: number; y: number; w: number; h: number };
+    trackId?: number; crossed?: boolean; name?: string | null; confidence?: number;
+  }>>([]);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
 
   // Browser-side detection via ONNX Runtime Web
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -137,8 +147,9 @@ export default function CameraDetailPage() {
   const isAttendance = camera?.purpose?.startsWith('attendance_') ?? false;
   const isPeopleSearch = camera?.purpose === 'people_search';
   const isLpr = camera?.purpose === 'lpr';
+  const isLineCrossing = camera?.purpose === 'line_crossing';
   const isFaceMode = isAttendance || isPeopleSearch;
-  const isDetectionMode = !isFaceMode && !isLpr;
+  const isDetectionMode = !isFaceMode && !isLpr && !isLineCrossing;
 
   // Browser ONNX detection: purely visual, independent from server detection-service
   // Uses setTimeout loop to avoid blocking video rendering
@@ -375,6 +386,42 @@ export default function CameraDetailPage() {
     };
   }, [isLpr, camera?.isMonitoring, cameraId]);
 
+  // Load tripwire config and poll line-crossing events
+  useEffect(() => {
+    if (!isLineCrossing) return;
+    fetch(`/api/cameras/${cameraId}/tripwire`)
+      .then(r => r.json())
+      .then(data => { if (data.tripwireLine) setTripwireLine(data.tripwireLine); })
+      .catch(() => {});
+  }, [isLineCrossing, cameraId]);
+
+  useEffect(() => {
+    if (!isLineCrossing || !camera?.isMonitoring) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/line-crossing/events?cameraId=${cameraId}`);
+        if (!active) return;
+        const data = await res.json();
+        if (Array.isArray(data.events)) setLineCrossingEvents(data.events);
+      } catch {}
+    };
+    poll();
+    const interval = setInterval(poll, 500);
+    return () => { active = false; clearInterval(interval); };
+  }, [isLineCrossing, camera?.isMonitoring, cameraId]);
+
+  const handleTripwireChange = useCallback(async (line: TripwireLine) => {
+    setTripwireLine(line);
+    try {
+      await fetch(`/api/cameras/${cameraId}/tripwire`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tripwireLine: line }),
+      });
+    } catch {}
+  }, [cameraId]);
+
   // Check plate-service GPU status (once)
   useEffect(() => {
     if (!isLpr || !camera?.isMonitoring) return;
@@ -564,11 +611,11 @@ export default function CameraDetailPage() {
       </div>
 
       {/* Main content: Video + PTZ (hide PTZ sidebar for attendance cameras — auto-zoom manages it) */}
-      <div className={cn("grid gap-6", !isFaceMode && "lg:grid-cols-[1fr_280px]")}>
+      <div className={cn("grid gap-6", !isFaceMode && !isLineCrossing && "lg:grid-cols-[1fr_280px]")}>
         {/* Video Area */}
         <div className="space-y-4">
           {/* Video Player */}
-          <div className="relative aspect-video rounded-lg overflow-hidden bg-gradient-to-br from-gray-800 to-gray-900">
+          <div ref={videoContainerRef} className="relative aspect-video rounded-lg overflow-hidden bg-gradient-to-br from-gray-800 to-gray-900">
             {camera.isStreaming || camera.isMonitoring ? (
               <>
                 <Go2rtcInlinePlayer
@@ -581,6 +628,15 @@ export default function CameraDetailPage() {
                   detections={isFaceMode ? mergedFaceDetections : isLpr ? mergedPlateDetections : isDetectionMode ? filteredDetections : []}
                   visible={isFaceMode || isLpr || (isDetectionMode && selectedClasses.size > 0)}
                 />
+                {isLineCrossing && (
+                  <TripwireOverlay
+                    containerRef={videoContainerRef}
+                    line={tripwireLine}
+                    onLineChange={handleTripwireChange}
+                    editable={tripwireEditing}
+                    events={lineCrossingEvents}
+                  />
+                )}
                 {/* AI detection badge — for detection cameras */}
                 {isDetectionMode && selectedClasses.size > 0 && (
                   <div className="absolute bottom-3 left-3 z-20">
@@ -651,6 +707,31 @@ export default function CameraDetailPage() {
                         OCR {plateServiceGpu ? 'GPU ⚡' : 'CPU'}
                       </Badge>
                     )}
+                  </div>
+                )}
+                {/* Line crossing mode badge + edit button */}
+                {isLineCrossing && (
+                  <div className="absolute bottom-3 left-3 z-20 flex gap-1">
+                    <Badge variant="secondary" className="bg-black/60 text-amber-400 border-0 text-[10px] px-1.5 py-0.5 gap-1">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-400" />
+                      </span>
+                      Line Crossing
+                    </Badge>
+                  </div>
+                )}
+                {isLineCrossing && (
+                  <div className="absolute top-3 right-3 z-30">
+                    <Button
+                      variant={tripwireEditing ? 'default' : 'secondary'}
+                      size="sm"
+                      className={cn("h-8", tripwireEditing && "bg-amber-500 hover:bg-amber-600")}
+                      onClick={() => setTripwireEditing(!tripwireEditing)}
+                    >
+                      <Pencil className="h-3.5 w-3.5 mr-1" />
+                      {tripwireEditing ? 'Готово' : 'Нарисовать линию'}
+                    </Button>
                   </div>
                 )}
               </>

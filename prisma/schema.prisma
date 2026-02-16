@@ -68,7 +68,7 @@ model Camera {
   branchId        String
   branch          Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
   venueType       String            @default("retail")
-  purpose         String            @default("detection") // detection | attendance_entry | attendance_exit
+  purpose         String            @default("detection") // detection | attendance_entry | attendance_exit | line_crossing
   resolution      String            @default("1920x1080")
   fps             Int               @default(30)
   isMonitoring    Boolean           @default(false)
@@ -94,6 +94,7 @@ model Camera {
   detectionZones  DetectionZone[]
   plateDetections PlateDetection[]
   privacyMasks    String?           // JSON array of mask zones
+  tripwireLine    String?           // JSON: {x1,y1,x2,y2,enabled} normalized 0-1 coords
 }
 
 model AnalysisSession {
