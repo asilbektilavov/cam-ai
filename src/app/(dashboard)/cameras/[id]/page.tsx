@@ -331,7 +331,7 @@ export default function CameraDetailPage() {
         const res = await fetch(`/api/attendance/face-events?cameraId=${cameraId}`);
         if (!active) return;
         const data = await res.json();
-        if (Array.isArray(data.detections) && data.detections.length > 0) {
+        if (Array.isArray(data.detections)) {
           setFaceDetections(data.detections as Detection[]);
         }
       } catch {
