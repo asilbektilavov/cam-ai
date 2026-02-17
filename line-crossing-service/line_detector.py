@@ -31,41 +31,6 @@ POLL_INTERVAL = 0.3        # seconds between frames (~3fps)
 COOLDOWN_SECONDS = 120     # per (person, camera) cooldown
 
 
-def _crossed_line(prev: list[float], curr: list[float],
-                  line: dict, cross_direction: str = "forward") -> bool:
-    """Check if movement from prev to curr crosses the tripwire line.
-
-    Uses cross product sign change to detect line crossing.
-    Only one direction at a time: 'forward' or 'backward'.
-
-    Args:
-        prev: [cx, cy] previous centroid (normalized 0-1)
-        curr: [cx, cy] current centroid (normalized 0-1)
-        line: {x1, y1, x2, y2} line endpoints (normalized 0-1)
-        cross_direction: 'forward' (from arrow side) or 'backward' (from opposite side)
-    """
-    lx1, ly1 = line["x1"], line["y1"]
-    lx2, ly2 = line["x2"], line["y2"]
-
-    dx = lx2 - lx1
-    dy = ly2 - ly1
-
-    # Cross products
-    s1 = dx * (prev[1] - ly1) - dy * (prev[0] - lx1)
-    s2 = dx * (curr[1] - ly1) - dy * (curr[0] - lx1)
-
-    # No crossing if same side
-    if (s1 > 0) == (s2 > 0):
-        return False
-
-    # Direction filtering
-    # Arrow shows WHERE the person comes FROM (origin side)
-    if cross_direction == "backward":
-        return s1 < 0 and s2 > 0  # from opposite side
-
-    # 'forward' (default)
-    return s1 > 0 and s2 < 0  # from arrow side
-
 
 class LineCrossingDetector(threading.Thread):
     """Watches a camera for body line crossings and triggers face recognition.
@@ -92,7 +57,7 @@ class LineCrossingDetector(threading.Thread):
         self.on_event = on_event  # callback for event reporting
 
         self._stop_event = threading.Event()
-        self._tracker = CentroidTracker(max_disappeared=15, max_distance=0.15)
+        self._tracker = CentroidTracker(max_disappeared=30, max_distance=0.35)
         self._yolo = None  # lazy init
         self._cooldowns: dict[tuple[str, str], float] = {}
 
@@ -107,6 +72,11 @@ class LineCrossingDetector(threading.Thread):
         # Cache recognized faces per track_id for overlay persistence (5 seconds)
         self._recognized_cache: dict[int, dict] = {}  # track_id -> {name, confidence, face_bbox, ts}
         self._RECOGNITION_DISPLAY_SECONDS = 5
+
+        # Initial-side tracking: remember which side of the line each track started on
+        # Much more robust than frame-to-frame crossing detection
+        self._track_initial_side: dict[int, float] = {}  # track_id -> initial cross product sign
+        self._CROSS_THRESHOLD = 0.005  # min cross product to register/trigger (avoid jitter)
 
     def stop(self):
         self._stop_event.set()
@@ -306,15 +276,26 @@ class LineCrossingDetector(threading.Thread):
             # 2. Update tracker
             tracked = self._tracker.update(bodies)
 
-            # 3. Check line crossings
+            # 3. Check line crossings using initial-side approach
+            # Instead of frame-to-frame crossing detection, we remember which side
+            # of the line each track started on, and detect when it ends up on the other side.
+            # This is much more robust — survives tracking jitter and slow movement.
             line_type = self.tripwire.get("lineType", "free")
             cross_dir = self.tripwire.get("crossDirection", "forward")
+            lx1, ly1 = self.tripwire["x1"], self.tripwire["y1"]
+            lx2, ly2 = self.tripwire["x2"], self.tripwire["y2"]
+            dx_line = lx2 - lx1
+            dy_line = ly2 - ly1
+
+            # Clean up stale track IDs from initial-side cache
+            active_ids = set(self._tracker.objects.keys())
+            for tid in list(self._track_initial_side.keys()):
+                if tid not in active_ids:
+                    del self._track_initial_side[tid]
+
             overlay_events = []
             for track_id, info in tracked.items():
-                centroid = info["centroid"]
-                prev_centroid = info["prev_centroid"]
                 bbox = info["bbox"]
-                prev_bbox = info.get("prev_bbox", bbox)
 
                 # Check recognition cache for this track
                 now = time.time()
@@ -350,43 +331,66 @@ class LineCrossingDetector(threading.Thread):
                         "confidence": cached["confidence"],
                     })
 
-                # Compute crossing check points based on line type
+                # Compute check point based on line type
                 if line_type == "vertical":
-                    # Vertical line: check body bbox edge (trailing side)
-                    # Arrow shows origin: forward (left arrow) = person comes FROM left → moves right → check LEFT edge (trailing)
-                    # backward (right arrow) = person comes FROM right → moves left → check RIGHT edge (trailing)
                     bbox_cy = (bbox[1] + bbox[3]) / 2
-                    prev_cy = (prev_bbox[1] + prev_bbox[3]) / 2
                     if cross_dir == "forward":
-                        check_prev = [prev_bbox[0], prev_cy]  # left edge (trailing as person moves right)
-                        check_curr = [bbox[0], bbox_cy]
-                    elif cross_dir == "backward":
-                        check_prev = [prev_bbox[2], prev_cy]  # right edge (trailing as person moves left)
-                        check_curr = [bbox[2], bbox_cy]
+                        check_curr = [bbox[0], bbox_cy]  # left edge
                     else:
-                        # both — use center x
-                        check_prev = prev_centroid
-                        check_curr = centroid
+                        check_curr = [bbox[2], bbox_cy]  # right edge
                 else:
-                    # Free line: use lower-body centroid (default)
-                    check_prev = prev_centroid
-                    check_curr = centroid
+                    # Free line: use bottom-center of bbox (feet level)
+                    # Bbox center (torso) stays at y≈0.5 and never reaches
+                    # a horizontal line drawn at the floor level (y≈0.8+).
+                    # Feet position actually crosses the line as person walks.
+                    check_curr = [(bbox[0] + bbox[2]) / 2, bbox[3]]
 
-                # Debug: log check points vs line
-                log.debug("Camera %s: track#%d type=%s dir=%s check_prev=(%.3f,%.3f) check_curr=(%.3f,%.3f) line_x=%.3f",
-                         self.camera_id, track_id, line_type, cross_dir,
-                         check_prev[0], check_prev[1], check_curr[0], check_curr[1],
-                         self.tripwire["x1"])
+                # Cross product: which side of the line is the check point on?
+                s_curr = dx_line * (check_curr[1] - ly1) - dy_line * (check_curr[0] - lx1)
 
-                # Check if this body crossed the line
-                if not _crossed_line(check_prev, check_curr, self.tripwire, cross_dir):
+                # Store initial side or check for crossing
+                if track_id not in self._track_initial_side:
+                    if abs(s_curr) > self._CROSS_THRESHOLD:
+                        self._track_initial_side[track_id] = s_curr
+                        log.debug("Camera %s: track#%d initial side=%.4f point=(%.3f,%.3f)",
+                                  self.camera_id, track_id, s_curr, check_curr[0], check_curr[1])
                     continue
 
+                s_init = self._track_initial_side[track_id]
+
+                # Log position every frame to track movement
+                log.debug("Camera %s: track#%d s_init=%.4f s_curr=%.4f point=(%.3f,%.3f)",
+                          self.camera_id, track_id, s_init, s_curr, check_curr[0], check_curr[1])
+
+                # Still on the same side? Skip.
+                if (s_init > 0 and s_curr > 0) or (s_init < 0 and s_curr < 0):
+                    continue
+                # Too close to line? Skip (avoid jitter).
+                if abs(s_curr) < self._CROSS_THRESHOLD:
+                    continue
+
+                # Sign changed — line was crossed! Check direction.
+                crossed = False
+                if cross_dir == "backward":
+                    crossed = (s_init < 0 and s_curr > 0)
+                else:  # forward
+                    crossed = (s_init > 0 and s_curr < 0)
+
+                if not crossed:
+                    # Crossed in wrong direction — update initial side
+                    log.debug("Camera %s: track#%d crossed WRONG direction (s_init=%.4f s_curr=%.4f), updating initial side",
+                              self.camera_id, track_id, s_init, s_curr)
+                    self._track_initial_side[track_id] = s_curr
+                    continue
+
+                # Remove from initial side dict to prevent re-triggering
+                del self._track_initial_side[track_id]
+
+                log.info("Camera %s: track#%d CROSSED LINE (s_init=%.4f → s_curr=%.4f) point=(%.3f,%.3f)",
+                         self.camera_id, track_id, s_init, s_curr,
+                         check_curr[0], check_curr[1])
+
                 self.crossings_detected += 1
-                log.info("Camera %s: body #%d crossed line! prev=(%.2f,%.2f) curr=(%.2f,%.2f)",
-                         self.camera_id, track_id,
-                         prev_centroid[0], prev_centroid[1],
-                         centroid[0], centroid[1])
 
                 # 4. Face recognition in body region
                 result = self.face_recognizer.recognize_in_region(
