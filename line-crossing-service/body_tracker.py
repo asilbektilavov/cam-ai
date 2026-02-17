@@ -66,9 +66,11 @@ class CentroidTracker:
                     self._deregister(obj_id)
             return {}
 
-        # Compute centroids for new detections
+        # Compute tracking points for new detections
+        # Use lower body point (4/6 from top = 2nd sixth from bottom)
+        # This represents the leg area — more natural for tripwire crossing
         new_centroids = np.array([
-            [(d[0] + d[2]) / 2, (d[1] + d[3]) / 2] for d in detections
+            [(d[0] + d[2]) / 2, d[1] + (d[3] - d[1]) * 4 / 6] for d in detections
         ])
 
         if len(self.objects) == 0:
@@ -107,6 +109,7 @@ class CentroidTracker:
                 "centroid": new_centroids[col].tolist(),
                 "prev_centroid": self.prev_objects[obj_id].tolist(),
                 "bbox": detections[col],
+                "prev_bbox": self.bboxes[obj_id],  # previous bbox for edge-based crossing
             }
 
             used_rows.add(row)

@@ -169,7 +169,7 @@ export default function CameraDetailPage() {
     fps: faceFps,
     loading: faceLoading,
   } = useBrowserFaceDetection(videoRef, {
-    enabled: isFaceMode && (camera?.isStreaming || camera?.isMonitoring || false),
+    enabled: (isFaceMode || isLineCrossing) && (camera?.isStreaming || camera?.isMonitoring || false),
   });
 
   // Browser-side plate detection for LPR cameras (fast visual bbox)
@@ -635,6 +635,7 @@ export default function CameraDetailPage() {
                     onLineChange={handleTripwireChange}
                     editable={tripwireEditing}
                     events={lineCrossingEvents}
+                    browserFaces={browserFaces.map(f => ({ bbox: f.bbox }))}
                   />
                 )}
                 {/* AI detection badge — for detection cameras */}
@@ -957,8 +958,8 @@ export default function CameraDetailPage() {
           )}
         </div>
 
-        {/* PTZ Sidebar — hidden for attendance cameras (auto-zoom manages PTZ) */}
-        {!isFaceMode && (
+        {/* PTZ Sidebar — hidden for attendance and line-crossing cameras */}
+        {!isFaceMode && !isLineCrossing && (
           <div className="space-y-4">
             <PtzControls
               cameraId={cameraId}

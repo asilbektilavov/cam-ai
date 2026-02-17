@@ -32,15 +32,17 @@ COOLDOWN_SECONDS = 120     # per (person, camera) cooldown
 
 
 def _crossed_line(prev: list[float], curr: list[float],
-                  line: dict) -> bool:
+                  line: dict, cross_direction: str = "forward") -> bool:
     """Check if movement from prev to curr crosses the tripwire line.
 
     Uses cross product sign change to detect line crossing.
+    Only one direction at a time: 'forward' or 'backward'.
 
     Args:
         prev: [cx, cy] previous centroid (normalized 0-1)
         curr: [cx, cy] current centroid (normalized 0-1)
         line: {x1, y1, x2, y2} line endpoints (normalized 0-1)
+        cross_direction: 'forward' (from arrow side) or 'backward' (from opposite side)
     """
     lx1, ly1 = line["x1"], line["y1"]
     lx2, ly2 = line["x2"], line["y2"]
@@ -52,8 +54,17 @@ def _crossed_line(prev: list[float], curr: list[float],
     s1 = dx * (prev[1] - ly1) - dy * (prev[0] - lx1)
     s2 = dx * (curr[1] - ly1) - dy * (curr[0] - lx1)
 
-    # Different signs = crossed the line
-    return (s1 > 0) != (s2 > 0)
+    # No crossing if same side
+    if (s1 > 0) == (s2 > 0):
+        return False
+
+    # Direction filtering
+    # Arrow shows WHERE the person comes FROM (origin side)
+    if cross_direction == "backward":
+        return s1 < 0 and s2 > 0  # from opposite side
+
+    # 'forward' (default)
+    return s1 > 0 and s2 < 0  # from arrow side
 
 
 class LineCrossingDetector(threading.Thread):
@@ -266,11 +277,14 @@ class LineCrossingDetector(threading.Thread):
             tracked = self._tracker.update(bodies)
 
             # 3. Check line crossings
+            line_type = self.tripwire.get("lineType", "free")
+            cross_dir = self.tripwire.get("crossDirection", "forward")
             overlay_events = []
             for track_id, info in tracked.items():
                 centroid = info["centroid"]
                 prev_centroid = info["prev_centroid"]
                 bbox = info["bbox"]
+                prev_bbox = info.get("prev_bbox", bbox)
 
                 # Always add body to overlay
                 overlay_events.append({
@@ -287,8 +301,30 @@ class LineCrossingDetector(threading.Thread):
                     "confidence": 0.0,
                 })
 
+                # Compute crossing check points based on line type
+                if line_type == "vertical":
+                    # Vertical line: check body bbox edge (trailing side)
+                    # Arrow shows origin: forward (left arrow) = person comes FROM left → moves right → check LEFT edge (trailing)
+                    # backward (right arrow) = person comes FROM right → moves left → check RIGHT edge (trailing)
+                    bbox_cy = (bbox[1] + bbox[3]) / 2
+                    prev_cy = (prev_bbox[1] + prev_bbox[3]) / 2
+                    if cross_dir == "forward":
+                        check_prev = [prev_bbox[0], prev_cy]  # left edge (trailing as person moves right)
+                        check_curr = [bbox[0], bbox_cy]
+                    elif cross_dir == "backward":
+                        check_prev = [prev_bbox[2], prev_cy]  # right edge (trailing as person moves left)
+                        check_curr = [bbox[2], bbox_cy]
+                    else:
+                        # both — use center x
+                        check_prev = prev_centroid
+                        check_curr = centroid
+                else:
+                    # Free line: use lower-body centroid (default)
+                    check_prev = prev_centroid
+                    check_curr = centroid
+
                 # Check if this body crossed the line
-                if not _crossed_line(prev_centroid, centroid, self.tripwire):
+                if not _crossed_line(check_prev, check_curr, self.tripwire, cross_dir):
                     continue
 
                 self.crossings_detected += 1

@@ -864,6 +864,7 @@ export default function CamerasPage() {
                       <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
                       <SelectItem value="people_search">Поиск людей</SelectItem>
                       <SelectItem value="lpr">Распознавание номеров</SelectItem>
+                      <SelectItem value="line_crossing">Пересечение линии</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
