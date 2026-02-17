@@ -191,21 +191,47 @@ class LineCrossingDetector(threading.Thread):
             log.debug("Failed to push overlay events: %s", e)
 
     def _report_attendance(self, employee_id: str, employee_name: str,
-                           confidence: float, frame: np.ndarray):
-        """Report attendance event to CamAI API."""
+                           confidence: float, frame: np.ndarray,
+                           body_bbox: tuple = None, face_bbox: tuple = None):
+        """Report attendance event to CamAI API with annotated snapshot."""
         import httpx
         import base64
 
         self._set_cooldown(employee_id)
 
-        # Create snapshot
+        # Create annotated snapshot with green bboxes and name
         h, w = frame.shape[:2]
-        scale = min(320 / max(h, w), 1.0)
+        annotated = frame.copy()
+        green = (0, 200, 0)  # BGR green
+
+        if body_bbox:
+            bx1 = int(body_bbox[0] * w)
+            by1 = int(body_bbox[1] * h)
+            bx2 = int(body_bbox[2] * w)
+            by2 = int(body_bbox[3] * h)
+            cv2.rectangle(annotated, (bx1, by1), (bx2, by2), green, 3)
+
+        if face_bbox:
+            fx1 = int(face_bbox[0] * w)
+            fy1 = int(face_bbox[1] * h)
+            fx2 = int(face_bbox[2] * w)
+            fy2 = int(face_bbox[3] * h)
+            cv2.rectangle(annotated, (fx1, fy1), (fx2, fy2), green, 2)
+            # Name label above face
+            label = f"{employee_name} {round(confidence * 100)}%"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = max(0.6, min(h, w) / 1500)
+            thickness = max(1, int(font_scale * 2))
+            (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness)
+            cv2.rectangle(annotated, (fx1, fy1 - th - 8), (fx1 + tw + 4, fy1), green, -1)
+            cv2.putText(annotated, label, (fx1 + 2, fy1 - 4), font, font_scale, (0, 0, 0), thickness)
+
+        scale = min(640 / max(h, w), 1.0)
         if scale < 1.0:
-            small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+            small = cv2.resize(annotated, (int(w * scale), int(h * scale)))
         else:
-            small = frame
-        _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            small = annotated
+        _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
         snapshot_b64 = base64.b64encode(buf.tobytes()).decode()
 
         direction_str = "check_in" if self.direction == "entry" else "check_out"
@@ -319,6 +345,7 @@ class LineCrossingDetector(threading.Thread):
                     overlay_events.append({
                         "type": "face",
                         "bbox": fb,
+                        "crossed": True,
                         "name": cached["name"],
                         "confidence": cached["confidence"],
                     })
@@ -398,13 +425,17 @@ class LineCrossingDetector(threading.Thread):
                         overlay_events.append({
                             "type": "face",
                             "bbox": face_bbox_overlay,
+                            "crossed": True,
                             "name": emp_name,
                             "confidence": round(confidence, 4),
                         })
 
                     if self._check_cooldown(emp_id):
                         self.faces_recognized += 1
-                        self._report_attendance(emp_id, emp_name, confidence, frame)
+                        self._report_attendance(
+                            emp_id, emp_name, confidence, frame,
+                            body_bbox=bbox, face_bbox=result.get("face_bbox"),
+                        )
                     else:
                         log.debug("Camera %s: %s in cooldown, skipping", self.camera_id, emp_name)
                 else:
