@@ -77,15 +77,30 @@ _detectors_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 
 
-def _download_and_encode_photo(photo_url: str) -> Optional[np.ndarray]:
-    """Download employee photo and extract face encoding."""
+def _download_and_encode_photo(photo_path: str) -> Optional[np.ndarray]:
+    """Load employee photo and extract face encoding.
+
+    Supports both local file paths (data/...) and HTTP URLs.
+    """
     try:
-        full_url = photo_url if photo_url.startswith("http") else f"{CAM_AI_API_URL}{photo_url}"
-        resp = httpx.get(full_url, timeout=10)
-        if resp.status_code != 200:
-            return None
-        nparr = np.frombuffer(resp.content, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # Try local file first (relative to project root)
+        local_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), photo_path)
+        if os.path.isfile(local_path):
+            img = cv2.imread(local_path)
+        elif photo_path.startswith("http"):
+            resp = httpx.get(photo_path, timeout=10)
+            if resp.status_code != 200:
+                return None
+            nparr = np.frombuffer(resp.content, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        else:
+            full_url = f"{CAM_AI_API_URL}/{photo_path.lstrip('/')}"
+            resp = httpx.get(full_url, timeout=10)
+            if resp.status_code != 200:
+                return None
+            nparr = np.frombuffer(resp.content, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
         if img is None:
             return None
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -94,7 +109,7 @@ def _download_and_encode_photo(photo_url: str) -> Optional[np.ndarray]:
             return None
         return encodings[0]
     except Exception as e:
-        log.warning("Failed to encode photo %s: %s", photo_url, e)
+        log.warning("Failed to encode photo %s: %s", photo_path, e)
         return None
 
 
@@ -248,7 +263,7 @@ def _recover_cameras():
         try:
             emp_resp = httpx.get(
                 f"{CAM_AI_API_URL}/api/attendance/employees",
-                headers={**({"x-api-key": API_KEY} if API_KEY else {})},
+                headers={"x-attendance-sync": "true"},
                 timeout=10,
             )
             if emp_resp.status_code == 200:

@@ -99,9 +99,13 @@ class FaceRecognizer:
         else:
             top_c, right_c, bottom_c, left_c = top_s, right_s, bottom_s, left_s
 
-        # Get encoding from the crop at original resolution
-        face_loc_orig = [(top_c, right_c, bottom_c, left_c)]
-        encodings = face_recognition.face_encodings(crop, face_loc_orig)
+        # Crop just the face region for encoding (more reliable than passing face_locations)
+        face_crop = crop[top_c:bottom_c, left_c:right_c]
+        if face_crop.size == 0:
+            return None
+        # Ensure uint8 + contiguous for dlib compatibility
+        face_crop = np.ascontiguousarray(face_crop, dtype=np.uint8)
+        encodings = face_recognition.face_encodings(face_crop)
         if not encodings:
             return None
 

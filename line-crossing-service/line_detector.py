@@ -104,6 +104,10 @@ class LineCrossingDetector(threading.Thread):
         self._crossing_events: list[dict] = []  # recent events for overlay
         self._events_lock = threading.Lock()
 
+        # Cache recognized faces per track_id for overlay persistence (5 seconds)
+        self._recognized_cache: dict[int, dict] = {}  # track_id -> {name, confidence, face_bbox, ts}
+        self._RECOGNITION_DISPLAY_SECONDS = 5
+
     def stop(self):
         self._stop_event.set()
 
@@ -286,8 +290,15 @@ class LineCrossingDetector(threading.Thread):
                 bbox = info["bbox"]
                 prev_bbox = info.get("prev_bbox", bbox)
 
-                # Always add body to overlay
-                overlay_events.append({
+                # Check recognition cache for this track
+                now = time.time()
+                cached = self._recognized_cache.get(track_id)
+                if cached and (now - cached["ts"]) > self._RECOGNITION_DISPLAY_SECONDS:
+                    del self._recognized_cache[track_id]
+                    cached = None
+
+                # Add body to overlay (with cached recognition if available)
+                body_event = {
                     "type": "body",
                     "bbox": {
                         "x": round(bbox[0], 4),
@@ -296,10 +307,21 @@ class LineCrossingDetector(threading.Thread):
                         "h": round(bbox[3] - bbox[1], 4),
                     },
                     "trackId": track_id,
-                    "crossed": False,
-                    "name": None,
-                    "confidence": 0.0,
-                })
+                    "crossed": cached is not None,
+                    "name": cached["name"] if cached else None,
+                    "confidence": cached["confidence"] if cached else 0.0,
+                }
+                overlay_events.append(body_event)
+
+                # Add cached face bbox if available
+                if cached and cached.get("face_bbox"):
+                    fb = cached["face_bbox"]
+                    overlay_events.append({
+                        "type": "face",
+                        "bbox": fb,
+                        "name": cached["name"],
+                        "confidence": cached["confidence"],
+                    })
 
                 # Compute crossing check points based on line type
                 if line_type == "vertical":
@@ -349,21 +371,33 @@ class LineCrossingDetector(threading.Thread):
                     emp_name = result["name"]
                     confidence = result["confidence"]
 
-                    # Update overlay
-                    overlay_events[-1]["crossed"] = True
-                    overlay_events[-1]["name"] = emp_name
-                    overlay_events[-1]["confidence"] = round(confidence, 4)
-
+                    face_bbox_overlay = None
                     if result.get("face_bbox"):
                         fb = result["face_bbox"]
+                        face_bbox_overlay = {
+                            "x": round(fb[0], 4),
+                            "y": round(fb[1], 4),
+                            "w": round(fb[2] - fb[0], 4),
+                            "h": round(fb[3] - fb[1], 4),
+                        }
+
+                    # Cache recognition for overlay persistence
+                    self._recognized_cache[track_id] = {
+                        "name": emp_name,
+                        "confidence": round(confidence, 4),
+                        "face_bbox": face_bbox_overlay,
+                        "ts": time.time(),
+                    }
+
+                    # Update current frame overlay
+                    body_event["crossed"] = True
+                    body_event["name"] = emp_name
+                    body_event["confidence"] = round(confidence, 4)
+
+                    if face_bbox_overlay:
                         overlay_events.append({
                             "type": "face",
-                            "bbox": {
-                                "x": round(fb[0], 4),
-                                "y": round(fb[1], 4),
-                                "w": round(fb[2] - fb[0], 4),
-                                "h": round(fb[3] - fb[1], 4),
-                            },
+                            "bbox": face_bbox_overlay,
                             "name": emp_name,
                             "confidence": round(confidence, 4),
                         })
@@ -375,7 +409,14 @@ class LineCrossingDetector(threading.Thread):
                         log.debug("Camera %s: %s in cooldown, skipping", self.camera_id, emp_name)
                 else:
                     log.info("Camera %s: body crossed line but no face match", self.camera_id)
-                    overlay_events[-1]["crossed"] = True
+                    # Cache "crossed but unknown" for display
+                    self._recognized_cache[track_id] = {
+                        "name": None,
+                        "confidence": 0.0,
+                        "face_bbox": None,
+                        "ts": time.time(),
+                    }
+                    body_event["crossed"] = True
 
             # Push overlay events
             with self._events_lock:
