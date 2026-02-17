@@ -29,9 +29,9 @@ export async function GET() {
       return {
         id: c.id,
         name: c.name,
-        streamUrl: c.streamUrl,
+        streamUrl: `rtsp://localhost:8554/${c.id}`, // go2rtc proxy to avoid RTSP session limits
         tripwireLine: tripwire,
-        direction: 'entry', // line_crossing defaults to entry; can be configured per camera
+        direction: 'entry',
       };
     })
   );

@@ -323,6 +323,12 @@ class LineCrossingDetector(threading.Thread):
                     check_prev = prev_centroid
                     check_curr = centroid
 
+                # Debug: log check points vs line
+                log.debug("Camera %s: track#%d type=%s dir=%s check_prev=(%.3f,%.3f) check_curr=(%.3f,%.3f) line_x=%.3f",
+                         self.camera_id, track_id, line_type, cross_dir,
+                         check_prev[0], check_prev[1], check_curr[0], check_curr[1],
+                         self.tripwire["x1"])
+
                 # Check if this body crossed the line
                 if not _crossed_line(check_prev, check_curr, self.tripwire, cross_dir):
                     continue

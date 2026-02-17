@@ -99,7 +99,8 @@ class CentroidTracker:
                 continue
 
             obj_id = obj_ids[row]
-            # Save previous centroid before updating
+            # Save previous state before updating
+            old_bbox = self.bboxes.get(obj_id, detections[col])
             self.prev_objects[obj_id] = self.objects[obj_id].copy()
             self.objects[obj_id] = new_centroids[col]
             self.bboxes[obj_id] = detections[col]
@@ -109,7 +110,7 @@ class CentroidTracker:
                 "centroid": new_centroids[col].tolist(),
                 "prev_centroid": self.prev_objects[obj_id].tolist(),
                 "bbox": detections[col],
-                "prev_bbox": self.bboxes[obj_id],  # previous bbox for edge-based crossing
+                "prev_bbox": old_bbox,
             }
 
             used_rows.add(row)

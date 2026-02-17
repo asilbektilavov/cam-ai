@@ -72,12 +72,13 @@ export async function PATCH(
     try {
       const serviceUrl = process.env.LINE_CROSSING_SERVICE_URL || 'http://localhost:8004';
       if (tripwireLine?.enabled) {
+        const go2rtcStreamUrl = `rtsp://localhost:8554/${id}`;
         await fetch(`${serviceUrl}/cameras/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             cameraId: id,
-            streamUrl: camera.streamUrl,
+            streamUrl: go2rtcStreamUrl,
             tripwireLine,
             direction: 'entry',
           }),

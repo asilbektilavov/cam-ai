@@ -215,12 +215,14 @@ export async function POST(
         } catch { /* ignore */ }
       }
       if (tripwire?.enabled) {
+        // Use go2rtc RTSP proxy to avoid multiple RTSP sessions to camera
+        const go2rtcStreamUrl = `rtsp://localhost:8554/${id}`;
         await fetch(`${LINE_CROSSING_SERVICE_URL}/cameras/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             cameraId: id,
-            streamUrl: camera.streamUrl,
+            streamUrl: go2rtcStreamUrl,
             tripwireLine: tripwire,
             direction: 'entry',
           }),
