@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 
 export type CrossDirection = 'forward' | 'backward';
 export type LineType = 'free' | 'vertical';
+export type SnapshotQuality = 'low' | 'medium' | 'high' | 'full';
 
 export interface TripwireLine {
   x1: number; // 0-1 normalized
@@ -13,6 +14,7 @@ export interface TripwireLine {
   enabled: boolean;
   crossDirection?: CrossDirection; // 'forward' = arrow direction, 'backward' = against arrow
   lineType?: LineType; // 'free' = any angle (default), 'vertical' = strict vertical
+  snapshotQuality?: SnapshotQuality; // screenshot quality: low=360p, medium=480p, high=720p, full=1080p
 }
 
 export interface LineCrossingEvent {

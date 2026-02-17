@@ -49,7 +49,7 @@ import { useBrowserPlateDetection } from '@/hooks/use-browser-plate-detection';
 import { PtzControls } from '@/components/ptz-controls';
 import { ExportDialog } from '@/components/export-dialog';
 import HeatmapOverlay from '@/components/heatmap-overlay';
-import { TripwireOverlay, type TripwireLine } from '@/components/tripwire-overlay';
+import { TripwireOverlay, type TripwireLine, type SnapshotQuality } from '@/components/tripwire-overlay';
 import PeopleCounterWidget from '@/components/people-counter-widget';
 import { apiGet, apiPost, apiPatch } from '@/lib/api-client';
 import { toast } from 'sonner';
@@ -723,7 +723,7 @@ export default function CameraDetailPage() {
                   </div>
                 )}
                 {isLineCrossing && (
-                  <div className="absolute top-3 right-3 z-30">
+                  <div className="absolute top-3 right-3 z-30 flex flex-col items-end gap-1.5">
                     <Button
                       variant={tripwireEditing ? 'default' : 'secondary'}
                       size="sm"
@@ -733,6 +733,21 @@ export default function CameraDetailPage() {
                       <Pencil className="h-3.5 w-3.5 mr-1" />
                       {tripwireEditing ? 'Готово' : 'Нарисовать линию'}
                     </Button>
+                    {tripwireLine?.enabled && (
+                      <select
+                        className="h-7 text-[11px] bg-black/70 text-white border border-white/20 rounded px-1.5 cursor-pointer backdrop-blur-sm"
+                        value={tripwireLine.snapshotQuality || 'medium'}
+                        onChange={(e) => {
+                          const q = e.target.value as SnapshotQuality;
+                          handleTripwireChange({ ...tripwireLine, snapshotQuality: q });
+                        }}
+                      >
+                        <option value="low">Скриншот: 360p</option>
+                        <option value="medium">Скриншот: 480p</option>
+                        <option value="high">Скриншот: 720p</option>
+                        <option value="full">Скриншот: 1080p</option>
+                      </select>
+                    )}
                   </div>
                 )}
               </>

@@ -30,6 +30,14 @@ PERSON_CLASS_ID = 0        # COCO class 0 = person
 POLL_INTERVAL = 0.3        # seconds between frames (~3fps)
 COOLDOWN_SECONDS = 120     # per (person, camera) cooldown
 
+# Snapshot quality → max dimension in pixels
+QUALITY_MAP = {
+    "low": 360,
+    "medium": 480,
+    "high": 720,
+    "full": 1080,
+}
+
 
 
 class LineCrossingDetector(threading.Thread):
@@ -196,12 +204,15 @@ class LineCrossingDetector(threading.Thread):
             cv2.rectangle(annotated, (fx1, fy1 - th - 8), (fx1 + tw + 4, fy1), green, -1)
             cv2.putText(annotated, label, (fx1 + 2, fy1 - 4), font, font_scale, (0, 0, 0), thickness)
 
-        scale = min(640 / max(h, w), 1.0)
+        quality = self.tripwire.get("snapshotQuality", "medium")
+        max_dim = QUALITY_MAP.get(quality, 480)
+        scale = min(max_dim / max(h, w), 1.0)
         if scale < 1.0:
             small = cv2.resize(annotated, (int(w * scale), int(h * scale)))
         else:
             small = annotated
-        _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        jpeg_quality = 90 if quality in ("high", "full") else 80
+        _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         snapshot_b64 = base64.b64encode(buf.tobytes()).decode()
 
         direction_str = "check_in" if self.direction == "entry" else "check_out"
