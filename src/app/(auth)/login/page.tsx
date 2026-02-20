@@ -205,15 +205,6 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <button
-            type="button"
-            onClick={() => { setEmail('admin@demo.com'); setPassword('admin123'); }}
-            className="mt-6 w-full p-3 rounded-lg bg-muted/50 text-center hover:bg-muted transition-colors cursor-pointer"
-          >
-            <p className="text-xs text-muted-foreground">
-              Демо: admin@demo.com / admin123
-            </p>
-          </button>
         </CardContent>
       </Card>
     </div>
