@@ -35,7 +35,7 @@ esac
 
 INSTALL_DIR="/opt/camai"
 REPO_URL="https://github.com/asilbektilavov/cam-ai.git"
-BRANCH="main"
+BRANCH="${CAMAI_BRANCH:-line-crossing}"
 COMPOSE_FILE="docker-compose.prod.yml"
 
 echo ""
