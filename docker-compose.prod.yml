@@ -37,7 +37,6 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - YOLO_SERVICE_URL=http://detector:8001
       - ATTENDANCE_SERVICE_URL=http://attendance:8002
-      - PLATE_SERVICE_URL=http://plate:8003
       # go2rtc runs on host network — reach it via host gateway
       - GO2RTC_URL=http://host.docker.internal:1984
     volumes:
@@ -82,20 +81,6 @@ services:
       - POLL_INTERVAL=0.5
       - MATCH_TOLERANCE=0.45
       - COOLDOWN_SECONDS=300
-
-  plate:
-    build: ./plate-service
-    container_name: camai-plate
-    restart: unless-stopped
-    depends_on:
-      cam-ai:
-        condition: service_healthy
-    network_mode: host
-    environment:
-      - CAM_AI_API_URL=http://127.0.0.1:3000
-      - PLATE_API_KEY=${PLATE_API_KEY:-}
-      - POLL_INTERVAL=1.0
-      - COOLDOWN_SECONDS=120
 
   go2rtc:
     image: alexxit/go2rtc:latest
