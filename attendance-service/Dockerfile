@@ -5,7 +5,7 @@ WORKDIR /app
 # Install system deps for dlib/face_recognition + OpenCV
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake \
-    libgl1-mesa-glx libglib2.0-0 \
+    libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -17,7 +17,7 @@ WORKDIR /app
 
 # Runtime deps for OpenCV + dlib
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx libglib2.0-0 \
+    libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
