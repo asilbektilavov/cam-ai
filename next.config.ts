@@ -12,11 +12,6 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   output: "standalone",
   serverExternalPackages: ['sharp'],
-  experimental: {
-    turbo: {
-      unstable_exclude: ['attendance-service/venv/**', 'detection-service/venv/**', 'plate-service/venv/**'],
-    },
-  },
   headers: async () => [
     {
       source: '/:path*',
