@@ -57,7 +57,7 @@ export default function LoginPage() {
       }
 
       toast.success('Добро пожаловать!');
-      window.location.href = '/select-venue';
+      window.location.href = '/dashboard';
     } catch {
       toast.error('Ошибка сервера. Попробуйте позже.');
       setLoading(false);
@@ -67,7 +67,7 @@ export default function LoginPage() {
   const handleOAuthSignIn = async (provider: string) => {
     setOauthLoading(provider);
     try {
-      await signIn(provider, { callbackUrl: '/select-venue' });
+      await signIn(provider, { callbackUrl: '/dashboard' });
     } catch {
       toast.error('Ошибка авторизации. Попробуйте позже.');
       setOauthLoading(null);

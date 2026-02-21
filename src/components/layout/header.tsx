@@ -248,9 +248,6 @@ export function Header() {
               <DropdownMenuItem onClick={() => router.push('/settings')} className="cursor-pointer">
                 Настройки
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push('/select-venue')} className="cursor-pointer">
-                Сменить тип заведения
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive cursor-pointer"

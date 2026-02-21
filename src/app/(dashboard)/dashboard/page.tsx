@@ -140,8 +140,7 @@ export default function DashboardPage() {
     if (!hydrated) return;
     setMounted(true);
     if (!selectedVenue) {
-      router.push('/select-venue');
-      return;
+      useAppStore.getState().setSelectedVenue('retail');
     }
     fetchData();
   }, [hydrated, selectedVenue, selectedBranchId, router, fetchData]);
@@ -207,9 +206,6 @@ export default function DashboardPage() {
             {venueConfig?.label} — обзор аналитики в реальном времени
           </p>
         </div>
-        <Button variant="outline" onClick={() => router.push('/select-venue')}>
-          Сменить тип заведения
-        </Button>
       </div>
 
       {/* Stats Grid */}

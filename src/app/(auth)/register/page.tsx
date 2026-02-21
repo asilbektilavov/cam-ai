@@ -69,7 +69,7 @@ export default function RegisterPage() {
         router.push('/login');
       } else {
         toast.success('Аккаунт создан!');
-        router.push('/select-venue');
+        router.push('/dashboard');
       }
     } catch {
       toast.error('Ошибка сети');
