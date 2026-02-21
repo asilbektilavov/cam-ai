@@ -6,6 +6,7 @@ import { checkPermission, RBACError } from '@/lib/rbac';
 import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 interface DiscoverResult {
   ip: string;

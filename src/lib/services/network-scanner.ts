@@ -24,10 +24,10 @@ const CAMERA_PORTS = [
 ];
 
 const SCAN_TIMEOUT = 1000;
-const MAX_CONCURRENT = 50;
+const MAX_CONCURRENT = 100;
 
 // Virtual/tunnel interface prefixes to skip
-const SKIP_PREFIXES = ['docker', 'veth', 'br-', 'utun', 'awdl', 'llw', 'ap', 'bridge', 'gif', 'stf', 'anpi'];
+const SKIP_PREFIXES = ['docker', 'veth', 'br-', 'utun', 'awdl', 'llw', 'ap', 'bridge', 'gif', 'stf', 'anpi', 'tailscale', 'dummy'];
 
 function getAllSubnets(): string[] {
   const interfaces = os.networkInterfaces();
