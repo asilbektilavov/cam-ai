@@ -118,7 +118,7 @@ export function Go2rtcInlinePlayer({
     if (!streamReady || !scriptLoaded || !containerRef.current) return;
 
     const container = containerRef.current;
-    const initialMode = protocol === 'http' ? 'mjpeg' : 'webrtc,mse,mp4,mjpeg';
+    const initialMode = protocol === 'http' ? 'mjpeg' : 'mse,webrtc,mp4,mjpeg';
 
     // Track the working mode — once MJPEG (or any mode) works, skip the fallback chain on reconnect
     let workingMode = initialMode;
