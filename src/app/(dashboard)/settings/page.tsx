@@ -666,7 +666,7 @@ export default function SettingsPage() {
                         <Camera className="h-5 w-5 text-muted-foreground" />
                         <div>
                           <p className="text-sm font-medium">Автозапись</p>
-                          <p className="text-sm text-muted-foreground">Автоматическая запись при детекции</p>
+                          <p className="text-sm text-muted-foreground">Записывать видео при запуске мониторинга</p>
                         </div>
                       </div>
                       <Switch checked={autoRecord} onCheckedChange={setAutoRecord} />

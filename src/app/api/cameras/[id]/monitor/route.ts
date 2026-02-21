@@ -4,6 +4,7 @@ import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
 import { go2rtcManager } from '@/lib/services/go2rtc-manager';
 import { plateServiceManager } from '@/lib/services/plate-service-manager';
+import { streamManager } from '@/lib/services/stream-manager';
 import { checkPermission, RBACError } from '@/lib/rbac';
 import { reconcileAttendanceCameras } from '@/lib/services/attendance-reconciler';
 
@@ -159,6 +160,13 @@ export async function POST(
   });
   if (!camera) return notFound('Camera not found');
 
+  // Check autoRecord setting
+  const userSettings = await prisma.userSettings.findUnique({
+    where: { userId: session.user.id },
+    select: { autoRecord: true },
+  });
+  const shouldRecord = userSettings?.autoRecord ?? true;
+
   if (camera.purpose.startsWith('attendance_') || camera.purpose === 'people_search') {
     // Attendance / People Search camera — register go2rtc stream + send to attendance-service
     try {
@@ -252,6 +260,14 @@ export async function POST(
     }
   }
 
+  // Start recording if autoRecord is enabled (best-effort, don't block monitoring)
+  if (shouldRecord) {
+    const go2rtcStreamUrl = `rtsp://localhost:8554/${id}`;
+    streamManager.startStream(id, go2rtcStreamUrl).catch(err => {
+      console.warn(`[Monitor] Auto-record failed for ${id}:`, err instanceof Error ? err.message : err);
+    });
+  }
+
   return NextResponse.json({ success: true, monitoring: true });
 }
 
@@ -326,6 +342,11 @@ export async function DELETE(
     // Stop CameraMonitor (motion/Gemini)
     await cameraMonitor.stopMonitoring(id);
   }
+
+  // Stop recording if active
+  await streamManager.stopStream(id).catch(err => {
+    console.warn(`[Monitor] Failed to stop recording for ${id}:`, err instanceof Error ? err.message : err);
+  });
 
   // Reconcile attendance-service to clean up any stale watchers
   void reconcileAttendanceCameras();

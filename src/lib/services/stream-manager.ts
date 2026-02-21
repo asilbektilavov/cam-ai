@@ -20,6 +20,7 @@ interface StreamProcess {
   liveDir: string;
   recordDir: string;
   stopping: boolean;
+  streamUrl: string;
 }
 
 export interface StreamInfo {
@@ -69,8 +70,9 @@ class StreamManager {
   // Public API
   // -----------------------------------------------------------------------
 
-  /** Start live HLS streaming + archive recording for a camera. */
-  async startStream(cameraId: string): Promise<StreamInfo> {
+  /** Start live HLS streaming + archive recording for a camera.
+   *  @param streamUrlOverride — optional RTSP proxy URL (e.g. go2rtc) to avoid extra RTSP sessions */
+  async startStream(cameraId: string, streamUrlOverride?: string): Promise<StreamInfo> {
     // Already streaming — return existing info
     if (this.streams.has(cameraId)) {
       const existing = this.streams.get(cameraId)!;
@@ -110,8 +112,9 @@ class StreamManager {
       },
     });
 
-    // Build ffmpeg args
-    const ffmpegArgs = this.buildFfmpegArgs(camera.streamUrl, liveDir, recordDir);
+    // Build ffmpeg args — use override URL (e.g. go2rtc RTSP proxy) to avoid extra RTSP sessions
+    const effectiveStreamUrl = streamUrlOverride || camera.streamUrl;
+    const ffmpegArgs = this.buildFfmpegArgs(effectiveStreamUrl, liveDir, recordDir);
 
     // Spawn ffmpeg
     const proc = spawn('ffmpeg', ffmpegArgs, {
@@ -130,12 +133,13 @@ class StreamManager {
       liveDir,
       recordDir,
       stopping: false,
+      streamUrl: effectiveStreamUrl,
     };
 
     this.streams.set(cameraId, streamProc);
 
     // Attach lifecycle handlers
-    this.attachProcessHandlers(streamProc, camera.streamUrl);
+    this.attachProcessHandlers(streamProc);
 
     // Update camera status in DB
     await prisma.camera.update({
@@ -330,9 +334,8 @@ class StreamManager {
 
   private attachProcessHandlers(
     streamProc: StreamProcess,
-    streamUrl: string
   ): void {
-    const { process: proc, cameraId } = streamProc;
+    const { process: proc, cameraId, streamUrl } = streamProc;
 
     // Collect stderr for diagnostics
     let stderrBuffer = '';
@@ -377,7 +380,7 @@ class StreamManager {
   private async handleProcessExit(
     streamProc: StreamProcess,
     exitCode: number,
-    streamUrl: string,
+    _streamUrl: string,
     reason: string
   ): Promise<void> {
     const { cameraId } = streamProc;
@@ -425,15 +428,14 @@ class StreamManager {
     );
 
     streamProc.restartTimer = setTimeout(() => {
-      void this.restartProcess(streamProc, streamUrl);
+      void this.restartProcess(streamProc);
     }, delay);
   }
 
   private async restartProcess(
     streamProc: StreamProcess,
-    streamUrl: string
   ): Promise<void> {
-    const { cameraId, liveDir } = streamProc;
+    const { cameraId, liveDir, streamUrl } = streamProc;
 
     // Check if we were stopped while waiting for restart
     if (streamProc.stopping || this.shuttingDown) return;
@@ -471,7 +473,7 @@ class StreamManager {
     streamProc.process = proc;
     streamProc.pid = proc.pid;
 
-    this.attachProcessHandlers(streamProc, streamUrl);
+    this.attachProcessHandlers(streamProc);
 
     console.log(
       `[StreamManager] Restarted stream for camera ${cameraId} (PID: ${proc.pid})`
