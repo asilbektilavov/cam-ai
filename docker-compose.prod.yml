@@ -7,6 +7,8 @@ services:
       POSTGRES_DB: camai
       POSTGRES_USER: camai
       POSTGRES_PASSWORD: ${DB_PASSWORD:-camai_secret_2024}
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,24 +23,17 @@ services:
       dockerfile: Dockerfile
     container_name: camai-app
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - "3000:3000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    network_mode: host
     environment:
-      - DATABASE_URL=postgresql://camai:${DB_PASSWORD:-camai_secret_2024}@db:5432/camai
+      - DATABASE_URL=postgresql://camai:${DB_PASSWORD:-camai_secret_2024}@127.0.0.1:5432/camai
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-change-me-to-random-string}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - NEXTAUTH_TRUST_HOST=true
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - YOLO_SERVICE_URL=http://detector:8001
-      - ATTENDANCE_SERVICE_URL=http://attendance:8002
-      # go2rtc runs on host network — reach it via host gateway
-      - GO2RTC_URL=http://host.docker.internal:1984
+      - YOLO_SERVICE_URL=http://127.0.0.1:8001
+      - ATTENDANCE_SERVICE_URL=http://127.0.0.1:8002
+      - GO2RTC_URL=http://127.0.0.1:1984
     volumes:
       - cam-ai-data:/app/data
       - uploads:/app/public/uploads
@@ -53,10 +48,8 @@ services:
     build: ./detection-service
     container_name: camai-detector
     restart: unless-stopped
-    expose:
-      - "8001"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    ports:
+      - "8001:8001"
     environment:
       - YOLO_CONFIDENCE=0.65
     healthcheck:
@@ -71,9 +64,6 @@ services:
     build: ./attendance-service
     container_name: camai-attendance
     restart: unless-stopped
-    depends_on:
-      cam-ai:
-        condition: service_healthy
     network_mode: host
     environment:
       - CAM_AI_API_URL=http://127.0.0.1:3000
@@ -101,12 +91,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      cam-ai:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health-nginx"]
       interval: 30s
