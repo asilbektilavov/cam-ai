@@ -1,8 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-
-const GO2RTC_URL = process.env.NEXT_PUBLIC_GO2RTC_URL || 'http://localhost:1984';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 interface Go2rtcPlayerProps {
   streamName: string;
@@ -21,6 +19,14 @@ export function Go2rtcPlayer({
   className = '',
   protocol = 'rtsp',
 }: Go2rtcPlayerProps) {
+  const go2rtcUrl = useMemo(() => {
+    const host = window.location.hostname;
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return `http://${host}:1984`;
+    }
+    return 'http://localhost:1984';
+  }, []);
+
   const [streamReady, setStreamReady] = useState(false);
   const [go2rtcDown, setGo2rtcDown] = useState(false);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -28,7 +34,7 @@ export function Go2rtcPlayer({
 
   const checkStream = useCallback(async () => {
     try {
-      const res = await fetch(`${GO2RTC_URL}/api/streams?src=${encodeURIComponent(streamName)}`, {
+      const res = await fetch(`${go2rtcUrl}/api/streams?src=${encodeURIComponent(streamName)}`, {
         signal: AbortSignal.timeout(3000),
       });
       if (!mountedRef.current) return;
@@ -51,7 +57,7 @@ export function Go2rtcPlayer({
       setGo2rtcDown(true);
       retryRef.current = setTimeout(checkStream, 3000);
     }
-  }, [streamName]);
+  }, [streamName, go2rtcUrl]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -104,7 +110,7 @@ export function Go2rtcPlayer({
 
   return (
     <iframe
-      src={`${GO2RTC_URL}/stream.html?src=${encodeURIComponent(streamName)}&mode=${mode}`}
+      src={`${go2rtcUrl}/stream.html?src=${encodeURIComponent(streamName)}&mode=${mode}`}
       className={className}
       style={{
         border: 'none',

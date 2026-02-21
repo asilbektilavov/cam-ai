@@ -1,8 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-
-const GO2RTC_URL = process.env.NEXT_PUBLIC_GO2RTC_URL || 'http://localhost:1984';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 interface Go2rtcInlinePlayerProps {
   streamName: string;
@@ -32,6 +30,14 @@ export function Go2rtcInlinePlayer({
   protocol = 'rtsp',
   onVideoRef,
 }: Go2rtcInlinePlayerProps) {
+  const go2rtcUrl = useMemo(() => {
+    const host = window.location.hostname;
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return `http://${host}:1984`;
+    }
+    return 'http://localhost:1984';
+  }, []);
+
   const [streamReady, setStreamReady] = useState(false);
   const [go2rtcDown, setGo2rtcDown] = useState(false);
   const [scriptLoaded, setScriptLoaded] = useState(
@@ -79,7 +85,7 @@ export function Go2rtcInlinePlayer({
   const checkStream = useCallback(async () => {
     try {
       const res = await fetch(
-        `${GO2RTC_URL}/api/streams?src=${encodeURIComponent(streamName)}`,
+        `${go2rtcUrl}/api/streams?src=${encodeURIComponent(streamName)}`,
         { signal: AbortSignal.timeout(3000) },
       );
       if (!mountedRef.current) return;
@@ -100,7 +106,7 @@ export function Go2rtcInlinePlayer({
       setGo2rtcDown(true);
       retryRef.current = setTimeout(checkStream, 3000);
     }
-  }, [streamName]);
+  }, [streamName, go2rtcUrl]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -126,7 +132,7 @@ export function Go2rtcInlinePlayer({
     let lastFrameTime = 0;
 
     const buildWsUrl = (m: string) =>
-      `${GO2RTC_URL}/api/ws?src=${encodeURIComponent(streamName)}&mode=${m}`;
+      `${go2rtcUrl}/api/ws?src=${encodeURIComponent(streamName)}&mode=${m}`;
 
     // Clear any leftover elements
     container.innerHTML = '';
@@ -226,7 +232,7 @@ export function Go2rtcInlinePlayer({
       }
       videoRtcRef.current = null;
     };
-  }, [streamReady, scriptLoaded, streamName, protocol]);
+  }, [streamReady, scriptLoaded, streamName, protocol, go2rtcUrl]);
 
   if (!streamReady || !scriptLoaded) {
     return (

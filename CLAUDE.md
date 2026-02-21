@@ -159,3 +159,4 @@ Camera purposes: `detection` (YOLO objects), `attendance_entry`/`attendance_exit
 - The app uses route groups: `(auth)` for public auth pages, `(dashboard)` for protected pages
 - Russian language is used for UI text (target audience)
 - **Singletons**: Always use `process[KEY]` pattern for module-level singletons that need to survive Turbopack HMR
+- **go2rtc URL**: NEVER use module-level `const URL = process.env.NEXT_PUBLIC_* || 'fallback'` for browser-side URLs. Next.js replaces `NEXT_PUBLIC_*` at build time, and the minifier eliminates the dynamic fallback. Instead, compute the URL inside the React component via `useMemo()` using `window.location.hostname`. This ensures the URL adapts when accessing the app from a remote machine (e.g., `192.168.0.176:3000` → `192.168.0.176:1984`)
