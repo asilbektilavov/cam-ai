@@ -27,6 +27,10 @@ import {
   Webhook,
   LayoutDashboard,
   BarChart3,
+  Shield,
+  Laptop,
+  Network,
+  Settings,
   type LucideIcon,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -49,17 +53,19 @@ interface OnboardingStep {
 const steps: OnboardingStep[] = [
   { id: 'welcome', title: 'Добро пожаловать', subtitle: 'Знакомство с DSS', icon: Rocket, iconColor: 'text-blue-500', iconBg: 'bg-blue-500/10' },
   { id: 'requirements', title: 'Системные требования', subtitle: 'Что нужно для работы', icon: Server, iconColor: 'text-orange-500', iconBg: 'bg-orange-500/10' },
-  { id: 'installation', title: 'Установка', subtitle: 'Запуск DSS на сервере', icon: Terminal, iconColor: 'text-green-500', iconBg: 'bg-green-500/10' },
+  { id: 'server-setup', title: 'Установка на сервер', subtitle: 'Для мастера / администратора', icon: Terminal, iconColor: 'text-green-500', iconBg: 'bg-green-500/10' },
+  { id: 'remote-access', title: 'Удалённый доступ', subtitle: 'Подключение к серверу', icon: Globe, iconColor: 'text-indigo-500', iconBg: 'bg-indigo-500/10' },
   { id: 'cameras', title: 'Подключение камер', subtitle: 'Настройка видеопотоков', icon: Camera, iconColor: 'text-purple-500', iconBg: 'bg-purple-500/10' },
   { id: 'features', title: 'Умные функции', subtitle: 'ИИ-аналитика для бизнеса', icon: Brain, iconColor: 'text-cyan-500', iconBg: 'bg-cyan-500/10' },
   { id: 'notifications', title: 'Уведомления', subtitle: 'Telegram, вебхуки, интеграции', icon: Bell, iconColor: 'text-yellow-500', iconBg: 'bg-yellow-500/10' },
+  { id: 'management', title: 'Управление системой', subtitle: 'Обслуживание и обновления', icon: Settings, iconColor: 'text-rose-500', iconBg: 'bg-rose-500/10' },
   { id: 'done', title: 'Готово!', subtitle: 'Вы готовы к работе', icon: PartyPopper, iconColor: 'text-emerald-500', iconBg: 'bg-emerald-500/10' },
 ];
 
 function CodeBlock({ code }: { code: string }) {
   return (
     <div className="relative group">
-      <pre className="rounded-lg bg-muted/50 border p-4 font-mono text-sm overflow-x-auto">
+      <pre className="rounded-lg bg-muted/50 border p-4 font-mono text-sm overflow-x-auto whitespace-pre-wrap break-all">
         {code}
       </pre>
       <Button
@@ -80,9 +86,9 @@ function CodeBlock({ code }: { code: string }) {
 function CmdItem({ label, cmd }: { label: string; cmd: string }) {
   return (
     <div className="flex items-center justify-between rounded-lg border px-3 py-2">
-      <div>
+      <div className="min-w-0 flex-1">
         <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="text-sm font-mono">{cmd}</p>
+        <p className="text-sm font-mono truncate">{cmd}</p>
       </div>
       <Button
         variant="ghost"
@@ -103,10 +109,12 @@ function CmdItem({ label, cmd }: { label: string; cmd: string }) {
 
 function StepWelcome() {
   const features = [
-    { icon: Camera, title: 'Подключение камер', desc: 'Поддержка Hikvision, Dahua, Trassir и IP Webcam' },
-    { icon: Brain, title: 'ИИ-анализ', desc: 'Распознавание людей, очередей, подозрительного поведения' },
-    { icon: Bell, title: 'Уведомления', desc: 'Мгновенные оповещения в Telegram и по вебхуку' },
-    { icon: BarChart3, title: 'Аналитика', desc: 'Детальная статистика и отчёты для бизнеса' },
+    { icon: Camera, title: 'Подключение камер', desc: 'Поддержка Hikvision, Dahua, Trassir, DSS и IP Webcam' },
+    { icon: Brain, title: 'ИИ-анализ', desc: 'Распознавание людей, лиц, номеров, очередей' },
+    { icon: Bell, title: 'Уведомления', desc: 'Мгновенные оповещения в Telegram, email и по вебхуку' },
+    { icon: BarChart3, title: 'Аналитика', desc: 'Детальная статистика, тепловые карты, отчёты' },
+    { icon: ScanFace, title: 'Распознавание лиц', desc: 'Учёт посещаемости, поиск людей по фото' },
+    { icon: Shield, title: 'Безопасность', desc: 'Детекция падений, оставленных предметов, вандализма' },
   ];
 
   return (
@@ -115,12 +123,12 @@ function StepWelcome() {
         <img src="/logo.png" alt="DSS" className="mx-auto mb-6 h-16 w-16 rounded-2xl" />
         <h2 className="text-2xl font-bold mb-3">Добро пожаловать в DSS</h2>
         <p className="text-muted-foreground max-w-lg mx-auto">
-          Digital Security Systems — это ИИ-платформа для видеонаблюдения, которая превращает ваши камеры
+          Digital Security Systems — ИИ-платформа для видеонаблюдения, которая превращает ваши камеры
           в интеллектуальную систему безопасности и аналитики.
         </p>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {features.map((f) => (
           <div key={f.title} className="flex items-start gap-3 rounded-lg border p-4">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
@@ -133,32 +141,41 @@ function StepWelcome() {
           </div>
         ))}
       </div>
+
+      <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+        <p className="text-sm font-medium mb-1">Как устроена эта инструкция</p>
+        <p className="text-sm text-muted-foreground">
+          Шаги 3-4 предназначены для <strong>мастера</strong> (установка сервера и настройка удалённого доступа).
+          Шаги 5-8 — для <strong>пользователя</strong> (подключение камер, настройка функций, уведомления).
+        </p>
+      </div>
     </div>
   );
 }
 
 function StepRequirements() {
   const hardware = [
-    { icon: Cpu, label: 'Процессор', value: 'Intel i5 / AMD Ryzen 5 или выше' },
+    { icon: Cpu, label: 'Процессор', value: 'ARM64 (Orange Pi, Raspberry Pi 5) или x86_64' },
     { icon: HardDrive, label: 'Оперативная память', value: '8 ГБ RAM (рекомендуется 16 ГБ)' },
-    { icon: HardDrive, label: 'Диск', value: 'SSD 256 ГБ+' },
-    { icon: Monitor, label: 'ОС', value: 'Ubuntu 22.04+ / Debian 12+' },
+    { icon: HardDrive, label: 'Диск', value: 'SSD 256 ГБ+ (для записей видео)' },
+    { icon: Monitor, label: 'ОС', value: 'Ubuntu 22.04+ / Debian 12+ / Armbian' },
   ];
 
   const network = [
-    { icon: Wifi, text: 'Мини-ПК и камеры должны быть в одной локальной сети' },
-    { icon: Wifi, text: 'Рекомендуется проводное подключение (Ethernet)' },
-    { icon: Globe, text: 'Доступ в интернет для ИИ-анализа (Gemini API)' },
+    { icon: Wifi, text: 'Сервер и камеры должны быть в одной локальной сети (один роутер)' },
+    { icon: Wifi, text: 'Рекомендуется проводное подключение (Ethernet) для стабильности' },
+    { icon: Globe, text: 'Доступ в интернет — для ИИ-анализа и удалённого доступа' },
+    { icon: Network, text: 'Для удалённого доступа — статический IP или Tailscale VPN' },
   ];
 
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground">
-        DSS разворачивается на мини-ПК в вашей локальной сети через Docker.
+        DSS устанавливается на мини-ПК (Orange Pi, Raspberry Pi и т.д.) или обычный ПК в локальной сети заказчика.
       </p>
 
       <div>
-        <h3 className="font-semibold mb-3">Мини-ПК (минимальные характеристики)</h3>
+        <h3 className="font-semibold mb-3">Сервер (минимальные характеристики)</h3>
         <div className="grid sm:grid-cols-2 gap-3">
           {hardware.map((item) => (
             <div key={item.label} className="flex items-start gap-3 rounded-lg border p-3">
@@ -187,68 +204,178 @@ function StepRequirements() {
       </div>
 
       <div>
-        <h3 className="font-semibold mb-3">Программное обеспечение</h3>
-        <div className="rounded-lg border p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary">Docker</Badge>
-            <span className="text-sm text-muted-foreground">v20.10+ с Docker Compose</span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Docker будет установлен автоматически при запуске install.sh, если не найден.
-          </p>
+        <h3 className="font-semibold mb-3">Что нужно от заказчика</h3>
+        <div className="rounded-lg border p-4 space-y-2 text-sm">
+          <p>1. IP-камеры с RTSP-доступом (логин, пароль, IP-адрес)</p>
+          <p>2. Доступ к роутеру для определения IP-адресов камер</p>
+          <p>3. Ethernet-кабель для подключения сервера к роутеру</p>
+          <p>4. Стабильное электропитание (желательно через ИБП)</p>
         </div>
       </div>
     </div>
   );
 }
 
-function StepInstallation() {
+function StepServerSetup() {
   return (
     <div className="space-y-6">
-      <p className="text-muted-foreground">
-        Выполните следующие команды на мини-ПК для установки DSS.
-      </p>
-
-      <div>
-        <h3 className="font-semibold mb-2 flex items-center gap-2">
-          <Badge className="h-6 w-6 p-0 flex items-center justify-center rounded-full">1</Badge>
-          Скачайте DSS
-        </h3>
-        <CodeBlock code="git clone https://github.com/asilbektilavov/cam-ai.git && cd cam-ai" />
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-2 flex items-center gap-2">
-          <Badge className="h-6 w-6 p-0 flex items-center justify-center rounded-full">2</Badge>
-          Запустите установщик
-        </h3>
-        <CodeBlock code="chmod +x install.sh && ./install.sh" />
-        <p className="text-xs text-muted-foreground mt-2">
-          Скрипт проверит Docker, запросит Gemini API ключ и запустит сервис.
+      <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-4">
+        <p className="text-sm font-medium flex items-center gap-2">
+          <Terminal className="h-4 w-4 text-orange-500" />
+          Эта секция для мастера / администратора
+        </p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Все команды выполняются на сервере (мини-ПК) через SSH или напрямую с клавиатуры.
         </p>
       </div>
 
       <div>
         <h3 className="font-semibold mb-2 flex items-center gap-2">
+          <Badge className="h-6 w-6 p-0 flex items-center justify-center rounded-full">1</Badge>
+          Подключитесь к серверу по SSH
+        </h3>
+        <p className="text-xs text-muted-foreground mb-2">
+          Если работаете напрямую с клавиатуры — пропустите этот шаг.
+        </p>
+        <CodeBlock code="ssh user@IP-адрес-сервера" />
+        <p className="text-xs text-muted-foreground mt-2">
+          Пример: <code className="bg-muted px-1 py-0.5 rounded">ssh orangepi@192.168.1.100</code>
+        </p>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-2 flex items-center gap-2">
+          <Badge className="h-6 w-6 p-0 flex items-center justify-center rounded-full">2</Badge>
+          Скачайте DSS
+        </h3>
+        <CodeBlock code="sudo -i
+cd /opt
+git clone https://github.com/asilbektilavov/cam-ai.git camai
+cd camai" />
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-2 flex items-center gap-2">
           <Badge className="h-6 w-6 p-0 flex items-center justify-center rounded-full">3</Badge>
+          Запустите установщик
+        </h3>
+        <CodeBlock code="chmod +x scripts/install.sh && ./scripts/install.sh" />
+        <p className="text-xs text-muted-foreground mt-2">
+          Скрипт автоматически установит Docker, PostgreSQL, go2rtc и запустит все сервисы.
+          В процессе попросит ввести Gemini API ключ (для ИИ-анализа).
+        </p>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-2 flex items-center gap-2">
+          <Badge className="h-6 w-6 p-0 flex items-center justify-center rounded-full">4</Badge>
+          Проверьте что всё работает
+        </h3>
+        <CodeBlock code="docker compose -f docker-compose.prod.yml ps" />
+        <p className="text-xs text-muted-foreground mt-2">
+          Контейнер <code className="bg-muted px-1 py-0.5 rounded">camai-app</code> должен быть в статусе <code className="bg-muted px-1 py-0.5 rounded">Up (healthy)</code>.
+        </p>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-2 flex items-center gap-2">
+          <Badge className="h-6 w-6 p-0 flex items-center justify-center rounded-full">5</Badge>
           Откройте в браузере
         </h3>
-        <CodeBlock code="http://localhost:3000" />
+        <CodeBlock code="http://IP-адрес-сервера:3000" />
         <p className="text-xs text-muted-foreground mt-2">
-          Зарегистрируйте первый аккаунт — он станет администратором.
+          Пример: <code className="bg-muted px-1 py-0.5 rounded">http://192.168.1.100:3000</code>.
+          Первый зарегистрированный аккаунт получает права администратора.
         </p>
       </div>
 
       <Separator />
 
       <div>
-        <h3 className="font-semibold mb-3">Полезные команды</h3>
-        <div className="grid sm:grid-cols-2 gap-2">
-          <CmdItem label="Остановить" cmd="docker compose down" />
-          <CmdItem label="Запустить" cmd="docker compose up -d" />
-          <CmdItem label="Посмотреть логи" cmd="docker compose logs -f" />
-          <CmdItem label="Обновить" cmd="./update.sh" />
+        <h3 className="font-semibold mb-2">Привязка к оборудованию</h3>
+        <p className="text-sm text-muted-foreground">
+          При первом запуске система автоматически привязывается к серверу по аппаратному ключу (<code className="bg-muted px-1 py-0.5 rounded">machine-id</code>).
+          Перенос на другой сервер потребует повторной активации.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function StepRemoteAccess() {
+  return (
+    <div className="space-y-6">
+      <p className="text-muted-foreground">
+        После установки на сервер заказчик может получить доступ к DSS удалённо — из любой точки мира.
+      </p>
+
+      <div>
+        <h3 className="font-semibold mb-3 flex items-center gap-2">
+          <Wifi className="h-5 w-5 text-blue-500" />
+          Вариант 1: Локальная сеть (без интернета)
+        </h3>
+        <div className="rounded-lg border p-4 space-y-3 text-sm">
+          <p>Если вы в той же сети (офис, магазин), просто откройте в браузере:</p>
+          <CodeBlock code="http://IP-адрес-сервера:3000" />
+          <p className="text-xs text-muted-foreground">
+            IP-адрес сервера можно узнать командой <code className="bg-muted px-1 py-0.5 rounded">hostname -I</code> на сервере,
+            или в списке устройств роутера.
+          </p>
         </div>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-3 flex items-center gap-2">
+          <Globe className="h-5 w-5 text-green-500" />
+          Вариант 2: Tailscale VPN (рекомендуется)
+        </h3>
+        <div className="rounded-lg border p-4 space-y-3 text-sm">
+          <p><strong>На сервере (мастер делает один раз):</strong></p>
+          <CodeBlock code={`curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up`} />
+          <p className="text-xs text-muted-foreground">
+            Авторизуйтесь через ссылку в терминале. Запомните Tailscale IP сервера (формат: <code className="bg-muted px-1 py-0.5 rounded">100.x.x.x</code>).
+          </p>
+
+          <Separator />
+
+          <p><strong>На устройстве клиента (ПК, телефон):</strong></p>
+          <div className="space-y-1">
+            <p>1. Установите <a href="https://tailscale.com/download" target="_blank" rel="noopener" className="text-primary underline">Tailscale</a> на свой ПК или телефон</p>
+            <p>2. Войдите в тот же Tailscale-аккаунт</p>
+            <p>3. Откройте в браузере:</p>
+          </div>
+          <CodeBlock code="http://100.x.x.x:3000" />
+          <p className="text-xs text-muted-foreground">
+            Tailscale создаёт зашифрованный VPN-туннель. Работает из любой сети — дом, кафе, мобильный интернет.
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-3 flex items-center gap-2">
+          <Network className="h-5 w-5 text-orange-500" />
+          Вариант 3: Проброс порта (для опытных)
+        </h3>
+        <div className="rounded-lg border p-4 space-y-2 text-sm">
+          <p>1. В настройках роутера пробросьте внешний порт (напр. 8443) на <code className="bg-muted px-1 py-0.5 rounded">IP-сервера:3000</code></p>
+          <p>2. Узнайте внешний IP: <code className="bg-muted px-1 py-0.5 rounded">curl ifconfig.me</code></p>
+          <p>3. Доступ: <code className="bg-muted px-1 py-0.5 rounded">http://внешний-IP:8443</code></p>
+          <p className="text-xs text-muted-foreground mt-2">
+            Рекомендуется настроить HTTPS (Let&apos;s Encrypt + nginx) при использовании проброса порта.
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-green-500/30 bg-green-500/5 p-4">
+        <p className="text-sm font-medium flex items-center gap-2">
+          <Laptop className="h-4 w-4 text-green-500" />
+          PWA — установка как приложение
+        </p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Откройте DSS в Chrome на телефоне или ПК → меню → «Установить приложение».
+          DSS будет работать как отдельное приложение с иконкой на рабочем столе.
+        </p>
       </div>
     </div>
   );
@@ -256,6 +383,12 @@ function StepInstallation() {
 
 function StepCameras() {
   const brands = [
+    {
+      brand: 'DSS',
+      url: 'rtsp://admin:password@192.168.1.55:554/stream2',
+      note: 'stream1 = основной поток, stream2 = субпоток',
+      color: 'text-emerald-400',
+    },
     {
       brand: 'Hikvision',
       url: 'rtsp://admin:password@192.168.1.64:554/Streaming/Channels/101',
@@ -283,19 +416,30 @@ function StepCameras() {
       </p>
 
       <div>
+        <h3 className="font-semibold mb-3">Как добавить камеру</h3>
+        <div className="rounded-lg border p-4 space-y-2 text-sm">
+          <p>1. Перейдите на страницу «Камеры» в боковом меню</p>
+          <p>2. Нажмите «Добавить камеру»</p>
+          <p>3. Введите название, RTSP URL, логин и пароль камеры</p>
+          <p>4. Выберите назначение камеры (детекция, посещаемость, распознавание номеров)</p>
+          <p>5. Нажмите «Проверить подключение» → «Сохранить»</p>
+        </div>
+      </div>
+
+      <div>
         <h3 className="font-semibold mb-3">Как узнать IP-адрес камеры</h3>
         <div className="rounded-lg border p-4 space-y-2 text-sm">
-          <p>1. Откройте веб-интерфейс роутера (обычно 192.168.1.1)</p>
+          <p>1. Откройте веб-интерфейс роутера (обычно <code className="bg-muted px-1 py-0.5 rounded">192.168.1.1</code>)</p>
           <p>2. Найдите список подключённых устройств (DHCP Clients)</p>
-          <p>3. Найдите камеру по имени (Hikvision, Dahua и т.д.)</p>
+          <p>3. Найдите камеру по имени производителя</p>
           <p className="text-muted-foreground text-xs mt-2">
-            Альтернатива: используйте утилиту <code className="bg-muted px-1 py-0.5 rounded">nmap -sP 192.168.1.0/24</code> для сканирования сети.
+            Или используйте сканер: <code className="bg-muted px-1 py-0.5 rounded">nmap -sP 192.168.1.0/24</code>
           </p>
         </div>
       </div>
 
       <div>
-        <h3 className="font-semibold mb-3">Шаблоны RTSP URL</h3>
+        <h3 className="font-semibold mb-3">Шаблоны RTSP URL по производителям</h3>
         <div className="space-y-3">
           {brands.map((item) => (
             <div key={item.brand} className="rounded-lg border p-4">
@@ -318,15 +462,21 @@ function StepCameras() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
-        <p className="text-sm font-medium flex items-center gap-2">
-          <Camera className="h-4 w-4 text-blue-500" />
-          Проверка подключения
-        </p>
-        <p className="text-sm text-muted-foreground mt-1">
-          После добавления камеры нажмите кнопку проверки подключения для тестирования потока.
-          Перейдите на страницу «Камеры» для добавления.
-        </p>
+      <div>
+        <h3 className="font-semibold mb-3">Назначения камер</h3>
+        <div className="grid sm:grid-cols-2 gap-3">
+          {[
+            { label: 'Детекция объектов', desc: 'Подсчёт людей, тепловые карты, очереди', color: 'text-blue-500' },
+            { label: 'Посещаемость (вход)', desc: 'Распознавание лиц при входе', color: 'text-green-500' },
+            { label: 'Посещаемость (выход)', desc: 'Фиксация ухода сотрудников', color: 'text-orange-500' },
+            { label: 'Распознавание номеров', desc: 'LPR — детекция автомобильных номеров', color: 'text-purple-500' },
+          ].map((item) => (
+            <div key={item.label} className="rounded-lg border p-3">
+              <p className={cn('text-sm font-medium', item.color)}>{item.label}</p>
+              <p className="text-xs text-muted-foreground mt-1">{item.desc}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -351,23 +501,37 @@ function StepFeatures() {
     {
       icon: Timer,
       title: 'Детекция праздношатания',
-      description: 'Обнаружение людей, которые находятся в одной зоне слишком долго. Для безопасности территории.',
+      description: 'Обнаружение людей, которые находятся в одной зоне слишком долго.',
       color: 'text-orange-500',
       bg: 'bg-orange-500/10',
     },
     {
       icon: Monitor,
       title: 'Контроль рабочей зоны',
-      description: 'Уведомление если рабочее место пустует дольше заданного времени. Для контроля присутствия.',
+      description: 'Уведомление если рабочее место пустует дольше заданного времени.',
       color: 'text-purple-500',
       bg: 'bg-purple-500/10',
+    },
+    {
+      icon: Shield,
+      title: 'Детекция падений',
+      description: 'Автоматическое обнаружение падения человека и мгновенное оповещение.',
+      color: 'text-cyan-500',
+      bg: 'bg-cyan-500/10',
+    },
+    {
+      icon: Camera,
+      title: 'Оставленные предметы',
+      description: 'Обнаружение бесхозных сумок и предметов, оставленных без присмотра.',
+      color: 'text-yellow-500',
+      bg: 'bg-yellow-500/10',
     },
   ];
 
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground">
-        DSS предлагает 4 умные функции для каждой камеры. Включите нужные в настройках камеры.
+        DSS предлагает умные функции для каждой камеры. Включите нужные в настройках камеры.
       </p>
 
       <div className="grid sm:grid-cols-2 gap-4">
@@ -432,11 +596,12 @@ function StepNotifications() {
 
       <div>
         <h3 className="font-semibold mb-3">Другие интеграции</h3>
-        <div className="grid sm:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-2 gap-3">
           {[
-            { label: 'Email (SMTP)', desc: 'Отправка на почту' },
-            { label: 'SMS', desc: 'SMS-уведомления' },
-            { label: 'Slack', desc: 'Уведомления в Slack' },
+            { label: 'Email (SMTP)', desc: 'Уведомления на электронную почту' },
+            { label: 'Slack', desc: 'Уведомления в Slack-канал' },
+            { label: 'Google Drive', desc: 'Бэкап видеозаписей в облако' },
+            { label: 'Автоматизации', desc: 'Настройка правил: если → то' },
           ].map((item) => (
             <div key={item.label} className="rounded-lg border p-3 text-center">
               <p className="text-sm font-medium">{item.label}</p>
@@ -451,6 +616,89 @@ function StepNotifications() {
           Все интеграции настраиваются на странице «Интеграции» в боковом меню.
           Каждую умную функцию можно привязать к своей интеграции.
         </p>
+      </div>
+    </div>
+  );
+}
+
+function StepManagement() {
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-4">
+        <p className="text-sm font-medium flex items-center gap-2">
+          <Terminal className="h-4 w-4 text-orange-500" />
+          Эта секция для мастера / администратора
+        </p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Команды для обслуживания сервера. Выполняются по SSH.
+        </p>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-3">Основные команды</h3>
+        <div className="grid sm:grid-cols-2 gap-2">
+          <CmdItem label="Статус сервиса" cmd="docker compose -f docker-compose.prod.yml ps" />
+          <CmdItem label="Логи приложения" cmd="docker logs camai-app --tail 50" />
+          <CmdItem label="Логи в реальном времени" cmd="docker logs camai-app -f" />
+          <CmdItem label="Перезапуск" cmd="docker compose -f docker-compose.prod.yml restart cam-ai" />
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-3">Обновление системы</h3>
+        <p className="text-sm text-muted-foreground mb-2">
+          Для обновления DSS до последней версии выполните:
+        </p>
+        <CodeBlock code={`cd /opt/camai
+git fetch origin && git reset --hard origin/main
+docker compose -f docker-compose.prod.yml build cam-ai
+docker compose -f docker-compose.prod.yml up -d cam-ai`} />
+        <p className="text-xs text-muted-foreground mt-2">
+          Обновление занимает 3-10 минут в зависимости от скорости интернета и мощности сервера.
+          Данные (записи, настройки, камеры) сохраняются.
+        </p>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-3">Хранилище и записи</h3>
+        <div className="rounded-lg border p-4 space-y-2 text-sm">
+          <p>Записи хранятся в папке <code className="bg-muted px-1 py-0.5 rounded">/opt/camai/data/recordings/</code></p>
+          <p>Автоматическая очистка при заполнении SSD на 85% (удаляются самые старые записи)</p>
+          <p>Если подключён Google Drive — записи сначала загружаются в облако, затем удаляются локально</p>
+          <p>Настройка хранилища: страница «Хранилище» в боковом меню</p>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-3">Резервное копирование</h3>
+        <div className="rounded-lg border p-4 space-y-2 text-sm">
+          <p><strong>База данных:</strong></p>
+          <CodeBlock code="docker exec camai-postgres pg_dump -U camai camai > backup.sql" />
+          <p className="text-xs text-muted-foreground mt-1">
+            Восстановление: <code className="bg-muted px-1 py-0.5 rounded">cat backup.sql | docker exec -i camai-postgres psql -U camai camai</code>
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-3">Диагностика</h3>
+        <div className="rounded-lg border p-4 space-y-2 text-sm">
+          <p>Страница «Диагностика» в боковом меню показывает:</p>
+          <div className="grid sm:grid-cols-2 gap-1 text-xs text-muted-foreground mt-1">
+            <p>• Загрузка CPU и RAM</p>
+            <p>• Свободное место на диске</p>
+            <p>• Статус камер и сервисов</p>
+            <p>• Здоровье базы данных</p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-3">Полная остановка / запуск</h3>
+        <div className="grid sm:grid-cols-2 gap-2">
+          <CmdItem label="Остановить всё" cmd="docker compose -f docker-compose.prod.yml down" />
+          <CmdItem label="Запустить всё" cmd="docker compose -f docker-compose.prod.yml up -d" />
+        </div>
       </div>
     </div>
   );
@@ -505,11 +753,13 @@ export default function OnboardingPage() {
     switch (currentStep) {
       case 0: return <StepWelcome />;
       case 1: return <StepRequirements />;
-      case 2: return <StepInstallation />;
-      case 3: return <StepCameras />;
-      case 4: return <StepFeatures />;
-      case 5: return <StepNotifications />;
-      case 6: return <StepDone onNavigate={(path) => router.push(path)} />;
+      case 2: return <StepServerSetup />;
+      case 3: return <StepRemoteAccess />;
+      case 4: return <StepCameras />;
+      case 5: return <StepFeatures />;
+      case 6: return <StepNotifications />;
+      case 7: return <StepManagement />;
+      case 8: return <StepDone onNavigate={(path) => router.push(path)} />;
       default: return null;
     }
   }
@@ -560,7 +810,7 @@ export default function OnboardingPage() {
             {index < steps.length - 1 && (
               <div
                 className={cn(
-                  'h-0.5 w-4 sm:w-8 rounded-full hidden sm:block',
+                  'h-0.5 w-4 sm:w-6 rounded-full hidden sm:block',
                   index < currentStep ? 'bg-green-500' : 'bg-muted'
                 )}
               />
