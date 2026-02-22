@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import {
   ShoppingBag,
   UtensilsCrossed,
@@ -8,7 +9,6 @@ import {
   Building2,
   Landmark,
   Car,
-  Video,
   ArrowRight,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -94,9 +94,7 @@ export default function SelectVenuePage() {
         {/* Header */}
         <div className="text-center mb-12">
           <div className="flex justify-center mb-6">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600">
-              <Video className="h-8 w-8 text-white" />
-            </div>
+            <Image src="/logo.png" alt="DSS" width={56} height={56} className="rounded-2xl" />
           </div>
           <h1 className="text-3xl font-bold mb-3">Выберите тип заведения</h1>
           <p className="text-muted-foreground max-w-md mx-auto">

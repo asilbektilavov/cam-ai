@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import {
@@ -12,7 +13,6 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  Video,
   X,
   ScanFace,
   BookOpen,
@@ -66,9 +66,7 @@ export function Sidebar() {
         {/* Logo */}
         <div className="flex h-16 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-purple-600">
-              <Video className="h-5 w-5 text-white" />
-            </div>
+            <Image src="/logo.png" alt="DSS" width={36} height={36} className="shrink-0 rounded-lg" />
             {sidebarOpen && (
               <span className="text-lg font-bold tracking-tight">CamAI</span>
             )}

@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { signIn } from 'next-auth/react';
-import { Video, Eye, EyeOff, Chrome, Github, ShieldCheck } from 'lucide-react';
+import Image from 'next/image';
+import { Eye, EyeOff, Chrome, Github, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -86,9 +87,7 @@ export default function LoginPage() {
       <Card className="w-full max-w-md relative z-10">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-purple-600">
-              <Video className="h-7 w-7 text-white" />
-            </div>
+            <Image src="/logo.png" alt="DSS" width={48} height={48} className="rounded-xl" />
           </div>
           <CardTitle className="text-2xl">Вход в CamAI</CardTitle>
           <CardDescription>
