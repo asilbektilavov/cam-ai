@@ -152,6 +152,48 @@ Camera purposes: `detection` (YOLO objects), `attendance_entry`/`attendance_exit
 - `src/app/api/lpr/cameras/route.ts` — camera recovery for plate-service
 - `src/app/(dashboard)/lpr/page.tsx` — LPR Journal, Database, Stats
 
+## Remote Deployment (Orange Pi)
+
+### Подключение
+```bash
+# Через mDNS (прямой кабель Mac → Orange Pi)
+sshpass -p 'Orange314zd@' ssh -o PubkeyAuthentication=no orangepi@orangepi6plus.local
+
+# Через Tailscale (из любой сети, если Orange Pi онлайн)
+sshpass -p 'Orange314zd@' ssh -o PubkeyAuthentication=no orangepi@100.68.51.49
+```
+- **User**: `orangepi`, **Password**: `Orange314zd@`, **sudo**: тот же пароль
+- **Deploy dir**: `/opt/camai`
+- **Tailscale IP**: `100.68.51.49`
+
+### Обновление на сервере
+```bash
+# 1. Подключиться
+sshpass -p 'Orange314zd@' ssh -o PubkeyAuthentication=no orangepi@orangepi6plus.local
+
+# 2. На сервере: обновить код + пересобрать
+sudo -i
+cd /opt/camai
+git fetch origin && git reset --hard origin/line-crossing
+docker compose -f docker-compose.prod.yml build cam-ai
+docker compose -f docker-compose.prod.yml up -d cam-ai
+docker logs camai-app --tail 30
+```
+
+### Удалённая сборка через SSH (одной командой с Mac)
+```bash
+sshpass -p 'Orange314zd@' ssh -o PubkeyAuthentication=no orangepi@orangepi6plus.local \
+  "echo 'Orange314zd@' | sudo -S bash -c 'cd /opt/camai && git fetch origin && git reset --hard origin/line-crossing && docker compose -f docker-compose.prod.yml build cam-ai && docker compose -f docker-compose.prod.yml up -d cam-ai'"
+```
+
+### Copy Protection (3 уровня)
+При старте контейнера (`docker-entrypoint.sh`):
+1. **Integrity Check** — SHA-256 верификация 599 файлов (защита от подмены)
+2. **Hardware Guard** — привязка к `/etc/machine-id` через AES-256-GCM (защита от копирования)
+3. **Code Obfuscation** — javascript-obfuscator для server.js, chunks, API routes (защита от реверса)
+
+Файлы: `protection/hardware-guard.js`, `protection/integrity-check.js`, `protection/integrity-build.js`
+
 ## Development Notes
 - All UI components are from shadcn/ui (in `src/components/ui/`)
 - Use `cn()` from `@/lib/utils` for conditional class names
