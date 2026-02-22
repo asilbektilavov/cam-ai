@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
 
   const todayISO = new Date().toISOString().split('T')[0];
 
-  const systemPrompt = `Ты — ИИ-ассистент системы видеонаблюдения CamAI. Отвечай на русском языке.
+  const systemPrompt = `Ты — ИИ-ассистент системы видеонаблюдения Digital Security Systems (DSS). Отвечай на русском языке.
 
 У пользователя есть следующие камеры:
 ${cameraList || 'Камеры не найдены.'}

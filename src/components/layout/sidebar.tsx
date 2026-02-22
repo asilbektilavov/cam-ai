@@ -68,7 +68,7 @@ export function Sidebar() {
           <div className="flex items-center gap-3">
             <Image src="/logo.png" alt="DSS" width={36} height={36} className="shrink-0 rounded-lg" />
             {sidebarOpen && (
-              <span className="text-lg font-bold tracking-tight">CamAI</span>
+              <span className="text-lg font-bold tracking-tight">DSS</span>
             )}
           </div>
           <Button

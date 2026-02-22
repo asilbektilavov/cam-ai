@@ -27,7 +27,6 @@ import {
   Webhook,
   LayoutDashboard,
   BarChart3,
-  Video,
   type LucideIcon,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -48,9 +47,9 @@ interface OnboardingStep {
 }
 
 const steps: OnboardingStep[] = [
-  { id: 'welcome', title: 'Добро пожаловать', subtitle: 'Знакомство с CamAI', icon: Rocket, iconColor: 'text-blue-500', iconBg: 'bg-blue-500/10' },
+  { id: 'welcome', title: 'Добро пожаловать', subtitle: 'Знакомство с DSS', icon: Rocket, iconColor: 'text-blue-500', iconBg: 'bg-blue-500/10' },
   { id: 'requirements', title: 'Системные требования', subtitle: 'Что нужно для работы', icon: Server, iconColor: 'text-orange-500', iconBg: 'bg-orange-500/10' },
-  { id: 'installation', title: 'Установка', subtitle: 'Запуск CamAI на сервере', icon: Terminal, iconColor: 'text-green-500', iconBg: 'bg-green-500/10' },
+  { id: 'installation', title: 'Установка', subtitle: 'Запуск DSS на сервере', icon: Terminal, iconColor: 'text-green-500', iconBg: 'bg-green-500/10' },
   { id: 'cameras', title: 'Подключение камер', subtitle: 'Настройка видеопотоков', icon: Camera, iconColor: 'text-purple-500', iconBg: 'bg-purple-500/10' },
   { id: 'features', title: 'Умные функции', subtitle: 'ИИ-аналитика для бизнеса', icon: Brain, iconColor: 'text-cyan-500', iconBg: 'bg-cyan-500/10' },
   { id: 'notifications', title: 'Уведомления', subtitle: 'Telegram, вебхуки, интеграции', icon: Bell, iconColor: 'text-yellow-500', iconBg: 'bg-yellow-500/10' },
@@ -113,12 +112,10 @@ function StepWelcome() {
   return (
     <div className="space-y-8">
       <div className="text-center py-6">
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600">
-          <Video className="h-8 w-8 text-white" />
-        </div>
-        <h2 className="text-2xl font-bold mb-3">Добро пожаловать в CamAI</h2>
+        <img src="/logo.png" alt="DSS" className="mx-auto mb-6 h-16 w-16 rounded-2xl" />
+        <h2 className="text-2xl font-bold mb-3">Добро пожаловать в DSS</h2>
         <p className="text-muted-foreground max-w-lg mx-auto">
-          CamAI — это ИИ-платформа для видеонаблюдения, которая превращает ваши камеры
+          Digital Security Systems — это ИИ-платформа для видеонаблюдения, которая превращает ваши камеры
           в интеллектуальную систему безопасности и аналитики.
         </p>
       </div>
@@ -157,7 +154,7 @@ function StepRequirements() {
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground">
-        CamAI разворачивается на мини-ПК в вашей локальной сети через Docker.
+        DSS разворачивается на мини-ПК в вашей локальной сети через Docker.
       </p>
 
       <div>
@@ -209,13 +206,13 @@ function StepInstallation() {
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground">
-        Выполните следующие команды на мини-ПК для установки CamAI.
+        Выполните следующие команды на мини-ПК для установки DSS.
       </p>
 
       <div>
         <h3 className="font-semibold mb-2 flex items-center gap-2">
           <Badge className="h-6 w-6 p-0 flex items-center justify-center rounded-full">1</Badge>
-          Скачайте CamAI
+          Скачайте DSS
         </h3>
         <CodeBlock code="git clone https://github.com/asilbektilavov/cam-ai.git && cd cam-ai" />
       </div>
@@ -282,7 +279,7 @@ function StepCameras() {
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground">
-        CamAI поддерживает IP-камеры по протоколу RTSP и приложение IP Webcam для Android.
+        DSS поддерживает IP-камеры по протоколу RTSP и приложение IP Webcam для Android.
       </p>
 
       <div>
@@ -370,7 +367,7 @@ function StepFeatures() {
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground">
-        CamAI предлагает 4 умные функции для каждой камеры. Включите нужные в настройках камеры.
+        DSS предлагает 4 умные функции для каждой камеры. Включите нужные в настройках камеры.
       </p>
 
       <div className="grid sm:grid-cols-2 gap-4">
@@ -428,7 +425,7 @@ function StepNotifications() {
           Webhook
         </h3>
         <div className="rounded-lg border p-4 text-sm space-y-2">
-          <p>Для интеграции с вашими системами используйте вебхуки. CamAI отправляет POST-запрос на указанный URL при каждом событии.</p>
+          <p>Для интеграции с вашими системами используйте вебхуки. DSS отправляет POST-запрос на указанный URL при каждом событии.</p>
           <p className="text-muted-foreground text-xs">Поддерживается JSON формат с типом события, камерой и сообщением.</p>
         </div>
       </div>
@@ -473,7 +470,7 @@ function StepDone({ onNavigate }: { onNavigate: (path: string) => void }) {
       </div>
       <h2 className="text-2xl font-bold mb-3">Всё готово!</h2>
       <p className="text-muted-foreground max-w-lg mx-auto mb-8">
-        Вы изучили основы работы с CamAI. Теперь добавьте камеры,
+        Вы изучили основы работы с DSS. Теперь добавьте камеры,
         включите умные функции и настройте уведомления.
       </p>
 

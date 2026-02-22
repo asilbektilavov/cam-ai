@@ -185,16 +185,16 @@ async function sendEmail(
         <p style="margin:0 0 12px;"><strong>Описание:</strong><br/>${alert.message}</p>
         <p style="margin:0;color:#6b7280;font-size:13px;">${time}</p>
       </div>
-      <p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:16px;">CamAI — Система видеоаналитики</p>
+      <p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:16px;">DSS — Система видеоаналитики</p>
     </div>
   `;
 
   const recipientList = recipients.split(',').map((e: string) => e.trim()).filter(Boolean);
 
   await transporter.sendMail({
-    from: `"${fromName || 'CamAI'}" <${smtpUser || 'noreply@camai.local'}>`,
+    from: `"${fromName || 'DSS'}" <${smtpUser || 'noreply@camai.local'}>`,
     to: recipientList.join(', '),
-    subject: `[CamAI] ${featureLabel} — ${alert.cameraName}`,
+    subject: `[DSS] ${featureLabel} — ${alert.cameraName}`,
     text: message,
     html,
   });

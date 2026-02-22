@@ -89,7 +89,7 @@ export default function LoginPage() {
           <div className="flex justify-center mb-4">
             <Image src="/logo.png" alt="DSS" width={48} height={48} className="rounded-xl" />
           </div>
-          <CardTitle className="text-2xl">Вход в CamAI</CardTitle>
+          <CardTitle className="text-2xl">Вход в DSS</CardTitle>
           <CardDescription>
             Введите данные для доступа к платформе
           </CardDescription>

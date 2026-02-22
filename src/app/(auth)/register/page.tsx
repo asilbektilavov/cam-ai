@@ -92,7 +92,7 @@ export default function RegisterPage() {
           </div>
           <CardTitle className="text-2xl">Регистрация</CardTitle>
           <CardDescription>
-            Создайте аккаунт для доступа к CamAI
+            Создайте аккаунт для доступа к DSS
           </CardDescription>
         </CardHeader>
         <CardContent>

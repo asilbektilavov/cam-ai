@@ -473,7 +473,7 @@ export default function IntegrationsPage() {
                 Аккаунт: <span className="font-medium text-foreground">{gdStatus.email}</span>
               </p>
               <p className="text-xs text-muted-foreground">
-                Записи автоматически загружаются в папку CamAI перед удалением. Автоочистка Drive при заполнении на 90%.
+                Записи автоматически загружаются в папку DSS перед удалением. Автоочистка Drive при заполнении на 90%.
               </p>
               <div className="flex gap-2 pt-1">
                 <Button variant="outline" size="sm" onClick={handleGdTest} disabled={gdTesting} className="gap-1.5">
@@ -490,7 +490,7 @@ export default function IntegrationsPage() {
             // State 2: Credentials saved, not connected — one button
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Нажмите кнопку для авторизации через Google-аккаунт. Записи будут автоматически сохраняться в папку CamAI.
+                Нажмите кнопку для авторизации через Google-аккаунт. Записи будут автоматически сохраняться в папку DSS.
               </p>
               <Button onClick={handleGdConnect} disabled={gdConnecting} className="gap-2">
                 {gdConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}

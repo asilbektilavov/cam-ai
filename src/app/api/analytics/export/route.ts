@@ -110,7 +110,7 @@ export async function GET(request: Request) {
   if (format === 'xlsx') {
     const ExcelJS = (await import('exceljs')).default;
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'CamAI';
+    workbook.creator = 'DSS';
     workbook.created = new Date();
 
     const sheet = workbook.addWorksheet('Аналитика');
@@ -210,7 +210,7 @@ export async function GET(request: Request) {
 
     // Title
     doc.setFontSize(18);
-    doc.text('CamAI — Отчёт аналитики', 14, 20);
+    doc.text('DSS — Отчёт аналитики', 14, 20);
 
     doc.setFontSize(10);
     doc.text(`Период: ${period} | Экспорт: ${new Date().toLocaleString('ru-RU')} | Всего событий: ${events.length}`, 14, 28);

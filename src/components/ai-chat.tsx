@@ -331,7 +331,7 @@ export function AiChat({ className }: { className?: string }) {
                 <Sparkles className="size-4" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold">CamAI Ассистент</h3>
+                <h3 className="text-sm font-semibold">DSS Ассистент</h3>
                 <p className="text-xs text-white/70">ИИ-помощник</p>
               </div>
             </div>

@@ -1,6 +1,6 @@
 {
-  "name": "CamAI - Видеонаблюдение с ИИ",
-  "short_name": "CamAI",
+  "name": "Digital Security Systems",
+  "short_name": "DSS",
   "description": "Интеллектуальное видеонаблюдение и аналитика",
   "start_url": "/dashboard",
   "display": "standalone",

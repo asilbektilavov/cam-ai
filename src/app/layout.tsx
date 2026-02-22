@@ -23,13 +23,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'CamAI — Аналитика видеонаблюдения с ИИ',
+  title: 'Digital Security Systems — Аналитика видеонаблюдения с ИИ',
   description: 'Платформа интеллектуального анализа видеонаблюдения с использованием искусственного интеллекта',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'CamAI',
+    title: 'DSS',
   },
   icons: {
     icon: '/icons/icon-192x192.png',

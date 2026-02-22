@@ -95,7 +95,7 @@ export async function POST() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: `✅ CamAI подключён!\n\nВы будете получать уведомления о событиях с камер видеонаблюдения.`,
+        text: `✅ DSS подключён!\n\nВы будете получать уведомления о событиях с камер видеонаблюдения.`,
       }),
     });
 

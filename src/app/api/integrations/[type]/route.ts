@@ -91,7 +91,7 @@ export async function POST(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: '✅ Тестовое сообщение от CamAI\n\nУведомления работают корректно.',
+              text: '✅ Тестовое сообщение от DSS\n\nУведомления работают корректно.',
             }),
           });
           const msgData = await msgRes.json();

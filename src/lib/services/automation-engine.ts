@@ -399,9 +399,9 @@ class AutomationEngine {
     const recipientList = recipients.split(',').map((e: string) => e.trim()).filter(Boolean);
 
     await transporter.sendMail({
-      from: `"${fromName || 'CamAI'}" <${smtpUser || 'noreply@camai.local'}>`,
+      from: `"${fromName || 'DSS'}" <${smtpUser || 'noreply@camai.local'}>`,
       to: recipientList.join(', '),
-      subject: `[CamAI Автоматизация] ${event.type}`,
+      subject: `[DSS Автоматизация] ${event.type}`,
       text: message,
     });
   }

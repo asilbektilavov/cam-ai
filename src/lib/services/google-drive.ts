@@ -9,7 +9,7 @@ import path from 'path';
 // ---------------------------------------------------------------------------
 
 const DATA_DIR = path.join(process.cwd(), 'data');
-const ROOT_FOLDER_NAME = 'CamAI';
+const ROOT_FOLDER_NAME = 'DSS';
 const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
 // Drive cleanup thresholds
@@ -261,7 +261,7 @@ async function ensureFolder(
 
 /**
  * Upload a single recording's segment files to Google Drive.
- * Structure: CamAI/{cameraName}/{date}/{hour}/file.ts
+ * Structure: DSS/{cameraName}/{date}/{hour}/file.ts
  */
 export async function uploadRecording(orgId: string, recordingId: string): Promise<number> {
   const drive = await getDriveClient(orgId);
@@ -287,7 +287,7 @@ export async function uploadRecording(orgId: string, recordingId: string): Promi
 
   if (files.length === 0) return 0;
 
-  // Build folder path: CamAI / CameraName / 2026-02-22 / 10
+  // Build folder path: DSS / CameraName / 2026-02-22 / 10
   const parts = recording.segmentDir.split('/'); // recordings/camId/date/hour
   const date = parts[2] || 'unknown-date';
   const hour = parts[3] || '00';
@@ -324,7 +324,7 @@ export async function uploadRecording(orgId: string, recordingId: string): Promi
   }
 
   console.log(
-    `[GoogleDrive] Uploaded ${uploadedCount} file(s) for recording ${recordingId} → CamAI/${recording.camera.name}/${date}/${hour}`
+    `[GoogleDrive] Uploaded ${uploadedCount} file(s) for recording ${recordingId} → DSS/${recording.camera.name}/${date}/${hour}`
   );
 
   return uploadedCount;
@@ -335,7 +335,7 @@ export async function uploadRecording(orgId: string, recordingId: string): Promi
 // ---------------------------------------------------------------------------
 
 /**
- * Delete oldest files from CamAI folder when Drive usage >= threshold.
+ * Delete oldest files from DSS folder when Drive usage >= threshold.
  * Uses hysteresis: starts at 90%, stops at 85%.
  */
 export async function cleanupDriveByUsage(orgId: string): Promise<number> {
@@ -358,7 +358,7 @@ export async function cleanupDriveByUsage(orgId: string): Promise<number> {
       `[GoogleDrive] Drive usage ${percent.toFixed(1)}% >= ${DRIVE_CLEANUP_THRESHOLD}%. Starting cleanup...`
     );
 
-    // Find CamAI root folder
+    // Find DSS root folder
     const rootRes = await drive.files.list({
       q: `name='${ROOT_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`,
       fields: 'files(id)',
@@ -372,7 +372,7 @@ export async function cleanupDriveByUsage(orgId: string): Promise<number> {
     const bytesToFree = usage - (limit * DRIVE_CLEANUP_TARGET) / 100;
     let freedBytes = 0;
 
-    // List all files in CamAI tree, oldest first
+    // List all files in DSS tree, oldest first
     let pageToken: string | undefined;
     const filesToDelete: { id: string; size: number }[] = [];
 
