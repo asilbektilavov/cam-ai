@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthSession, unauthorized } from '@/lib/api-utils';
+import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
 import { storageManager } from '@/lib/services/storage-manager';
 import { checkPermission, RBACError } from '@/lib/rbac';
+import { prisma } from '@/lib/prisma';
+import bcrypt from 'bcryptjs';
 
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
@@ -64,12 +66,23 @@ export async function DELETE(req: NextRequest) {
     throw e;
   }
 
-  const orgId = session.user.organizationId;
-  const url = new URL(req.url);
-  const retentionDaysParam = url.searchParams.get('retentionDays');
-  const retentionDays = retentionDaysParam
-    ? parseInt(retentionDaysParam, 10)
-    : undefined;
+  // Read password + retentionDays from body
+  const body = await req.json().catch(() => ({}));
+  const { password, retentionDays } = body as {
+    password?: string;
+    retentionDays?: number;
+  };
+
+  if (!password) return badRequest('Введите пароль');
+
+  // Verify password
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+  });
+  if (!user) return unauthorized();
+
+  const isValid = await bcrypt.compare(password, user.passwordHash);
+  if (!isValid) return badRequest('Неверный пароль');
 
   if (retentionDays !== undefined && (isNaN(retentionDays) || retentionDays < 0)) {
     return NextResponse.json(
@@ -77,6 +90,8 @@ export async function DELETE(req: NextRequest) {
       { status: 400 }
     );
   }
+
+  const orgId = session.user.organizationId;
 
   try {
     const deleted = await storageManager.cleanup(orgId, retentionDays);

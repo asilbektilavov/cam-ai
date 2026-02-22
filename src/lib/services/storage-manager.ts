@@ -208,6 +208,73 @@ class StorageManager {
   }
 
   // -----------------------------------------------------------------------
+  // Disk-based cleanup (auto-delete when SSD fills up)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Delete oldest completed recordings when disk usage exceeds the threshold.
+   * Uses hysteresis: starts deleting at `threshold`%, stops at `threshold - 5`%.
+   */
+  async cleanupByDiskUsage(threshold: number = 85): Promise<number> {
+    const disk = this.getDiskUsage();
+    if (disk.total === 0 || disk.percent < threshold) {
+      return 0;
+    }
+
+    const targetPercent = threshold - 5; // hysteresis: stop at 80%
+    let deletedCount = 0;
+
+    console.log(
+      `[StorageManager] Disk usage ${disk.percent}% >= ${threshold}%. Starting cleanup (target: <${targetPercent}%)...`
+    );
+
+    // Delete in batches of 10 oldest completed recordings
+    while (true) {
+      const currentDisk = this.getDiskUsage();
+      if (currentDisk.total === 0 || currentDisk.percent < targetPercent) {
+        break;
+      }
+
+      const batch = await prisma.recording.findMany({
+        where: { status: { not: 'recording' } },
+        orderBy: { startedAt: 'asc' },
+        take: 10,
+        select: { id: true, segmentDir: true },
+      });
+
+      if (batch.length === 0) {
+        console.log('[StorageManager] No more recordings to delete');
+        break;
+      }
+
+      for (const recording of batch) {
+        try {
+          const fullDir = path.join(DATA_DIR, recording.segmentDir);
+          await this.removeSegmentDir(fullDir);
+          await prisma.recording.delete({ where: { id: recording.id } });
+          deletedCount++;
+        } catch (err) {
+          console.error(
+            `[StorageManager] Error deleting recording ${recording.id}:`,
+            err
+          );
+        }
+      }
+    }
+
+    if (deletedCount > 0) {
+      // Clean up empty dirs after bulk deletion
+      await this.cleanupEmptyDirs(RECORDINGS_DIR);
+      const finalDisk = this.getDiskUsage();
+      console.log(
+        `[StorageManager] Disk cleanup done: deleted ${deletedCount} recording(s). Disk now at ${finalDisk.percent}%`
+      );
+    }
+
+    return deletedCount;
+  }
+
+  // -----------------------------------------------------------------------
   // Disk usage
   // -----------------------------------------------------------------------
 
@@ -268,27 +335,25 @@ class StorageManager {
   // Auto-cleanup cron
   // -----------------------------------------------------------------------
 
-  /** Start automatic periodic cleanup. */
-  startAutoCleanup(intervalHours: number = 6): void {
+  /** Start automatic periodic cleanup (disk-based, every 30 minutes). */
+  startAutoCleanup(): void {
     if (this.cleanupInterval) {
       console.log('[StorageManager] Auto-cleanup already running');
       return;
     }
 
-    const intervalMs = intervalHours * 60 * 60 * 1000;
+    const intervalMs = 30 * 60 * 1000; // 30 minutes
 
-    console.log(
-      `[StorageManager] Starting auto-cleanup every ${intervalHours} hour(s)`
-    );
+    console.log('[StorageManager] Starting auto-cleanup every 30 minutes (disk threshold: 85%)');
 
     // Run immediately on start
-    void this.cleanupAll().catch((err) =>
+    void this.cleanupByDiskUsage().catch((err) =>
       console.error('[StorageManager] Auto-cleanup error:', err)
     );
 
     // Then schedule periodic runs
     this.cleanupInterval = setInterval(() => {
-      void this.cleanupAll().catch((err) =>
+      void this.cleanupByDiskUsage().catch((err) =>
         console.error('[StorageManager] Auto-cleanup error:', err)
       );
     }, intervalMs);

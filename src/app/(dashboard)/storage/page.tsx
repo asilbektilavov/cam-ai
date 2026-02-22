@@ -8,11 +8,21 @@ import {
   Camera,
   Database,
   AlertTriangle,
+  Lock,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { apiGet, apiDelete } from '@/lib/api-client';
 import { toast } from 'sonner';
 
@@ -36,6 +46,11 @@ export default function StoragePage() {
   const [loading, setLoading] = useState(true);
   const [cleaning, setCleaning] = useState(false);
 
+  // Password dialog state
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [password, setPassword] = useState('');
+  const [pendingRetention, setPendingRetention] = useState<number | undefined>(undefined);
+
   const fetchStorage = async () => {
     setLoading(true);
     try {
@@ -52,18 +67,33 @@ export default function StoragePage() {
     fetchStorage();
   }, []);
 
-  const handleCleanup = async (retentionDays?: number) => {
+  const openCleanupDialog = (retentionDays?: number) => {
+    setPendingRetention(retentionDays);
+    setPassword('');
+    setDialogOpen(true);
+  };
+
+  const handleConfirmCleanup = async () => {
+    if (!password.trim()) {
+      toast.error('Введите пароль');
+      return;
+    }
+
     setCleaning(true);
+    setDialogOpen(false);
+
     try {
-      const result = await apiDelete<{ deleted: number }>(
-        `/api/storage${retentionDays ? `?retentionDays=${retentionDays}` : ''}`
-      );
+      const result = await apiDelete<{ deleted: number }>('/api/storage', {
+        password,
+        retentionDays: pendingRetention,
+      });
       toast.success(`Удалено записей: ${result.deleted}`);
       fetchStorage();
-    } catch {
-      toast.error('Ошибка при очистке');
+    } catch (err: any) {
+      toast.error(err?.message || 'Ошибка при очистке');
     } finally {
       setCleaning(false);
+      setPassword('');
     }
   };
 
@@ -91,7 +121,7 @@ export default function StoragePage() {
           <Button
             variant="destructive"
             size="sm"
-            onClick={() => handleCleanup()}
+            onClick={() => openCleanupDialog()}
             disabled={cleaning}
           >
             <Trash2 className="h-4 w-4 mr-2" />
@@ -176,7 +206,7 @@ export default function StoragePage() {
               {storage.percent > 85 && (
                 <div className="mt-3 flex items-center gap-2 text-sm text-yellow-600 dark:text-yellow-400">
                   <AlertTriangle className="h-4 w-4" />
-                  <span>Дисковое пространство заканчивается. Рекомендуется очистить старые записи.</span>
+                  <span>Дисковое пространство заканчивается. Автоочистка удалит старые записи при заполнении на 85%.</span>
                 </div>
               )}
             </CardContent>
@@ -223,7 +253,7 @@ export default function StoragePage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleCleanup(7)}
+                onClick={() => openCleanupDialog(7)}
                 disabled={cleaning}
               >
                 Удалить старше 7 дней
@@ -231,7 +261,7 @@ export default function StoragePage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleCleanup(14)}
+                onClick={() => openCleanupDialog(14)}
                 disabled={cleaning}
               >
                 Удалить старше 14 дней
@@ -239,7 +269,7 @@ export default function StoragePage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleCleanup(30)}
+                onClick={() => openCleanupDialog(30)}
                 disabled={cleaning}
               >
                 Удалить старше 30 дней
@@ -247,7 +277,7 @@ export default function StoragePage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleCleanup(90)}
+                onClick={() => openCleanupDialog(90)}
                 disabled={cleaning}
               >
                 Удалить старше 90 дней
@@ -262,6 +292,44 @@ export default function StoragePage() {
           <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       )}
+
+      {/* Password Confirmation Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="h-5 w-5" />
+              Подтверждение очистки
+            </DialogTitle>
+            <DialogDescription>
+              {pendingRetention
+                ? `Будут удалены записи старше ${pendingRetention} дней.`
+                : 'Будут удалены записи старше 30 дней (по умолчанию).'}
+              {' '}Введите пароль аккаунта для подтверждения.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Input
+              type="password"
+              placeholder="Пароль"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConfirmCleanup();
+              }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmCleanup} disabled={!password.trim()}>
+              Подтвердить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

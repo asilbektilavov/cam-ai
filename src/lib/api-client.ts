@@ -46,6 +46,9 @@ export function apiPatch<T>(url: string, body: unknown): Promise<T> {
   });
 }
 
-export function apiDelete<T = { success: boolean }>(url: string): Promise<T> {
-  return request<T>(url, { method: 'DELETE' });
+export function apiDelete<T = { success: boolean }>(url: string, body?: unknown): Promise<T> {
+  return request<T>(url, {
+    method: 'DELETE',
+    ...(body !== undefined && { body: JSON.stringify(body) }),
+  });
 }

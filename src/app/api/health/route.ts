@@ -1,9 +1,17 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { storageManager } from '@/lib/services/storage-manager';
 
 export const dynamic = 'force-dynamic';
 
+const STORAGE_CLEANUP_KEY = '__camai_storage_cleanup_started';
+
 export async function GET() {
+  // Start auto-cleanup once (survives HMR via process key)
+  if (!(process as any)[STORAGE_CLEANUP_KEY]) {
+    (process as any)[STORAGE_CLEANUP_KEY] = true;
+    storageManager.startAutoCleanup();
+  }
   const health = {
     status: 'ok' as string,
     timestamp: new Date().toISOString(),
