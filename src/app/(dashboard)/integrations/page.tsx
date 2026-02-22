@@ -21,6 +21,7 @@ import {
   Loader2,
   Send,
   Unlink,
+  HardDrive,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -60,6 +61,7 @@ interface TelegramStatus {
 }
 
 const iconMap: Record<string, React.ElementType> = {
+  google_drive: HardDrive,
   telegram: MessageCircle,
   slack: Hash,
   email: Mail,
@@ -75,6 +77,7 @@ const iconMap: Record<string, React.ElementType> = {
 };
 
 const categoryLabels: Record<string, string> = {
+  storage: 'Хранилище',
   notifications: 'Уведомления',
   crm: 'CRM & ERP',
   access: 'Доступ & POS',
@@ -129,6 +132,16 @@ export default function IntegrationsPage() {
   const [tgDisconnecting, setTgDisconnecting] = useState(false);
   const [tgTestingSend, setTgTestingSend] = useState(false);
 
+  // Google Drive state
+  const [gdStatus, setGdStatus] = useState<{ connected: boolean; email: string; configured: boolean }>({ connected: false, email: '', configured: false });
+  const [gdLoading, setGdLoading] = useState(true);
+  const [gdConnecting, setGdConnecting] = useState(false);
+  const [gdDisconnecting, setGdDisconnecting] = useState(false);
+  const [gdTesting, setGdTesting] = useState(false);
+  const [gdClientId, setGdClientId] = useState('');
+  const [gdClientSecret, setGdClientSecret] = useState('');
+  const [gdSaving, setGdSaving] = useState(false);
+
   const loadTelegramStatus = useCallback(async () => {
     try {
       const data = await apiGet<TelegramStatus>('/api/integrations/telegram/status');
@@ -140,6 +153,17 @@ export default function IntegrationsPage() {
     }
   }, []);
 
+  const loadGDriveStatus = useCallback(async () => {
+    try {
+      const data = await apiPost<{ connected: boolean; email: string; configured: boolean }>('/api/integrations/google-drive/auth', {});
+      setGdStatus(data);
+    } catch {
+      // Google Drive not available
+    } finally {
+      setGdLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     apiGet<IntegrationItem[]>('/api/integrations')
       .then((data) => setIntegrations(data))
@@ -147,7 +171,20 @@ export default function IntegrationsPage() {
       .finally(() => setLoading(false));
 
     loadTelegramStatus();
-  }, [loadTelegramStatus]);
+    loadGDriveStatus();
+
+    // Check for Google Drive callback result in URL
+    const params = new URLSearchParams(window.location.search);
+    const gdriveResult = params.get('gdrive');
+    if (gdriveResult === 'connected') {
+      toast.success('Google Drive подключён!');
+      window.history.replaceState({}, '', window.location.pathname);
+      loadGDriveStatus();
+    } else if (gdriveResult === 'error') {
+      toast.error('Ошибка подключения Google Drive');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [loadTelegramStatus, loadGDriveStatus]);
 
   const handleToggle = async (type: string, name: string, currentEnabled: boolean) => {
     if (togglingRef.current.has(type)) return;
@@ -280,6 +317,69 @@ export default function IntegrationsPage() {
     }
   };
 
+  // Google Drive handlers
+  const handleGdSaveCredentials = async () => {
+    if (!gdClientId.trim() || !gdClientSecret.trim()) {
+      toast.error('Заполните Client ID и Client Secret');
+      return;
+    }
+    setGdSaving(true);
+    try {
+      await apiPost('/api/integrations/google-drive/auth', {
+        clientId: gdClientId.trim(),
+        clientSecret: gdClientSecret.trim(),
+      });
+      toast.success('Credentials сохранены');
+      setGdStatus((prev) => ({ ...prev, configured: true }));
+      setGdClientId('');
+      setGdClientSecret('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка сохранения');
+    } finally {
+      setGdSaving(false);
+    }
+  };
+
+  const handleGdConnect = async () => {
+    setGdConnecting(true);
+    try {
+      const result = await apiGet<{ url: string }>('/api/integrations/google-drive/auth');
+      window.location.href = result.url;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Не удалось начать подключение');
+      setGdConnecting(false);
+    }
+  };
+
+  const handleGdDisconnect = async () => {
+    setGdDisconnecting(true);
+    try {
+      await apiDelete('/api/integrations/google-drive/auth');
+      toast.success('Google Drive отключён');
+      setGdStatus({ connected: false, email: '', configured: false });
+    } catch {
+      toast.error('Ошибка отключения');
+    } finally {
+      setGdDisconnecting(false);
+    }
+  };
+
+  const handleGdTest = async () => {
+    setGdTesting(true);
+    try {
+      const result = await apiPost<{ success: boolean; message?: string }>('/api/integrations/google_drive', { config: {} });
+      if (result.success) {
+        toast.success(result.message || 'Google Drive: соединение OK');
+      } else {
+        toast.error('Google Drive: ошибка соединения');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка тестового соединения');
+    } finally {
+      setGdTesting(false);
+    }
+  };
+
   const connectedCount = integrations.filter((i) => i.enabled).length;
 
   if (loading) {
@@ -336,6 +436,98 @@ export default function IntegrationsPage() {
           );
         })}
       </div>
+
+      {/* Google Drive — Special Card */}
+      <Card className={cn('transition-all', gdStatus.connected && 'border-green-500/30 bg-green-500/5')}>
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                'flex h-10 w-10 items-center justify-center rounded-lg',
+                gdStatus.connected ? 'bg-green-500/10 text-green-500' : 'bg-muted text-muted-foreground'
+              )}>
+                <HardDrive className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-semibold flex items-center gap-2">
+                  Google Drive
+                  {gdStatus.connected && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                </h3>
+                <Badge variant="secondary" className="text-[10px] mt-0.5">Хранилище</Badge>
+              </div>
+            </div>
+            {gdStatus.connected && (
+              <Badge variant="default" className="bg-green-500">Подключено</Badge>
+            )}
+          </div>
+
+          {gdLoading ? (
+            <div className="flex items-center gap-2 py-4">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm text-muted-foreground">Загрузка...</span>
+            </div>
+          ) : gdStatus.connected ? (
+            // State 3: Connected — show account info
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Аккаунт: <span className="font-medium text-foreground">{gdStatus.email}</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Записи автоматически загружаются в папку CamAI перед удалением. Автоочистка Drive при заполнении на 90%.
+              </p>
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={handleGdTest} disabled={gdTesting} className="gap-1.5">
+                  {gdTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Тест
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleGdDisconnect} disabled={gdDisconnecting} className="gap-1.5 text-destructive hover:text-destructive">
+                  {gdDisconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
+                  Отключить
+                </Button>
+              </div>
+            </div>
+          ) : gdStatus.configured ? (
+            // State 2: Credentials saved, not connected — one button
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Нажмите кнопку для авторизации через Google-аккаунт. Записи будут автоматически сохраняться в папку CamAI.
+              </p>
+              <Button onClick={handleGdConnect} disabled={gdConnecting} className="gap-2">
+                {gdConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+                Подключить Google Drive
+              </Button>
+            </div>
+          ) : (
+            // State 1: Not configured — enter Client ID/Secret
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Для подключения создайте OAuth-приложение в{' '}
+                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">
+                  Google Cloud Console
+                </a>
+                {' '}и введите данные ниже.
+              </p>
+              <div className="space-y-2">
+                <Input
+                  placeholder="Client ID"
+                  value={gdClientId}
+                  onChange={(e) => setGdClientId(e.target.value)}
+                />
+                <Input
+                  type="password"
+                  placeholder="Client Secret"
+                  value={gdClientSecret}
+                  onChange={(e) => setGdClientSecret(e.target.value)}
+                />
+              </div>
+              <Button onClick={handleGdSaveCredentials} disabled={gdSaving || !gdClientId.trim() || !gdClientSecret.trim()} className="gap-2">
+                {gdSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
+                Сохранить и подключить
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Telegram — Special Card */}
       <Card className={cn('transition-all', tgStatus?.connected && 'border-green-500/30 bg-green-500/5')}>
@@ -455,17 +647,18 @@ export default function IntegrationsPage() {
       <Tabs defaultValue="all">
         <TabsList>
           <TabsTrigger value="all">Все</TabsTrigger>
+          <TabsTrigger value="storage">Хранилище</TabsTrigger>
           <TabsTrigger value="notifications">Уведомления</TabsTrigger>
           <TabsTrigger value="crm">CRM & ERP</TabsTrigger>
           <TabsTrigger value="access">Доступ & POS</TabsTrigger>
           <TabsTrigger value="api">API & IoT</TabsTrigger>
         </TabsList>
 
-        {['all', 'notifications', 'crm', 'access', 'api'].map((tab) => (
+        {['all', 'storage', 'notifications', 'crm', 'access', 'api'].map((tab) => (
           <TabsContent key={tab} value={tab}>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
               {integrations
-                .filter((i) => i.type !== 'telegram')
+                .filter((i) => i.type !== 'telegram' && i.type !== 'google_drive')
                 .filter((i) => tab === 'all' || i.category === tab)
                 .map((integration) => {
                   const Icon = iconMap[integration.type] || Circle;

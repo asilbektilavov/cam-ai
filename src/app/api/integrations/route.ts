@@ -5,6 +5,7 @@ import { checkPermission, RBACError } from '@/lib/rbac';
 
 // Default integrations template
 const DEFAULT_INTEGRATIONS = [
+  { type: 'google_drive', name: 'Google Drive', category: 'storage', description: 'Бэкап видеозаписей в Google Drive' },
   { type: 'telegram', name: 'Telegram', category: 'notifications', description: 'Уведомления через Telegram-бот' },
   { type: 'slack', name: 'Slack', category: 'notifications', description: 'Алерты в Slack-каналы' },
   { type: 'email', name: 'Email SMTP', category: 'notifications', description: 'Уведомления на email' },

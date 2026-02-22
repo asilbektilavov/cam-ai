@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthSession, unauthorized, badRequest } from '@/lib/api-utils';
 import { prisma } from '@/lib/prisma';
 import { checkPermission, RBACError } from '@/lib/rbac';
+import { testConnection as testGDrive } from '@/lib/services/google-drive';
 
 export async function PATCH(
   request: Request,
@@ -107,6 +108,11 @@ export async function POST(
           body: JSON.stringify({ test: true, source: 'cam-ai' }),
         });
         return NextResponse.json({ success: res.ok, status: res.status });
+      }
+      case 'google_drive': {
+        const result = await testGDrive(orgId);
+        if (!result.success) return badRequest('Не удалось подключиться к Google Drive. Попробуйте переподключить.');
+        return NextResponse.json({ success: true, message: `Подключено: ${result.email} (${result.storage})` });
       }
       default:
         return NextResponse.json({ success: true, message: 'Тестирование для этого типа пока недоступно' });

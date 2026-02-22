@@ -2,6 +2,11 @@ import { prisma } from '@/lib/prisma';
 import { readdir, stat, rm } from 'fs/promises';
 import path from 'path';
 import { execSync } from 'child_process';
+import {
+  isConnected as isDriveConnected,
+  uploadRecording as driveUpload,
+  cleanupAllDrives,
+} from '@/lib/services/google-drive';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -239,7 +244,7 @@ class StorageManager {
         where: { status: { not: 'recording' } },
         orderBy: { startedAt: 'asc' },
         take: 10,
-        select: { id: true, segmentDir: true },
+        select: { id: true, segmentDir: true, organizationId: true },
       });
 
       if (batch.length === 0) {
@@ -249,6 +254,9 @@ class StorageManager {
 
       for (const recording of batch) {
         try {
+          // Backup to Google Drive before deleting (if connected)
+          await this.backupToDriveIfConnected(recording.organizationId, recording.id);
+
           const fullDir = path.join(DATA_DIR, recording.segmentDir);
           await this.removeSegmentDir(fullDir);
           await prisma.recording.delete({ where: { id: recording.id } });
@@ -347,13 +355,13 @@ class StorageManager {
     console.log('[StorageManager] Starting auto-cleanup every 30 minutes (disk threshold: 85%)');
 
     // Run immediately on start
-    void this.cleanupByDiskUsage().catch((err) =>
+    void this.runAutoCleanupCycle().catch((err) =>
       console.error('[StorageManager] Auto-cleanup error:', err)
     );
 
     // Then schedule periodic runs
     this.cleanupInterval = setInterval(() => {
-      void this.cleanupByDiskUsage().catch((err) =>
+      void this.runAutoCleanupCycle().catch((err) =>
         console.error('[StorageManager] Auto-cleanup error:', err)
       );
     }, intervalMs);
@@ -376,6 +384,31 @@ class StorageManager {
   // -----------------------------------------------------------------------
   // Internal helpers
   // -----------------------------------------------------------------------
+
+  /** Run one full auto-cleanup cycle: local disk + Google Drive. */
+  private async runAutoCleanupCycle(): Promise<void> {
+    await this.cleanupByDiskUsage();
+
+    // Also cleanup Google Drive if any org has it connected
+    try {
+      await cleanupAllDrives();
+    } catch (err) {
+      console.error('[StorageManager] Google Drive cleanup error:', err);
+    }
+  }
+
+  /** Try to backup a recording to Google Drive before deletion. Best-effort. */
+  private async backupToDriveIfConnected(orgId: string, recordingId: string): Promise<void> {
+    try {
+      const connected = await isDriveConnected(orgId);
+      if (!connected) return;
+
+      await driveUpload(orgId, recordingId);
+    } catch (err) {
+      // Best-effort: log but don't block deletion
+      console.warn(`[StorageManager] Drive backup failed for recording ${recordingId}, proceeding with deletion:`, err);
+    }
+  }
 
   /** Recursively remove a segment directory and its contents. */
   private async removeSegmentDir(dir: string): Promise<void> {
