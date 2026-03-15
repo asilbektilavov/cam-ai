@@ -1,0 +1,15 @@
+[Unit]
+Description=DSS Tailscale Connection Notifier
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=TELEGRAM_BOT_TOKEN=8476918566:AAE9l_8Wq6kgsCo3EsyMSov0ugHpgdK_RHk
+Environment=TELEGRAM_CHAT_ID=6418128446
+ExecStart=/usr/local/bin/tailscale-notify.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

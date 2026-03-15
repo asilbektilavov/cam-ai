@@ -101,7 +101,7 @@ cmd_update() {
   # Pull latest code
   echo -e "${BLUE}[1/3] Git pull...${NC}"
   git fetch origin
-  git reset --hard origin/main
+  git reset --hard origin/line-crossing
   echo ""
 
   # Rebuild images
