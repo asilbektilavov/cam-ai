@@ -118,7 +118,7 @@ function StepWelcome() {
   return (
     <div className="space-y-8">
       <div className="text-center py-6">
-        <img src="/logo.png" alt="DSS" className="mx-auto mb-6 h-16 w-16 rounded-2xl" />
+        <img src="/logo.png" alt="DSS" className="mx-auto mb-6 h-16 rounded-2xl" />
         <h2 className="text-2xl font-bold mb-3">Добро пожаловать в DSS</h2>
         <p className="text-muted-foreground max-w-lg mx-auto">
           Digital Security Systems — ИИ-платформа для видеонаблюдения, которая превращает ваши камеры
