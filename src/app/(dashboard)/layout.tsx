@@ -4,7 +4,6 @@ import { usePathname } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
-import { AiChat } from '@/components/ai-chat';
 import { cn } from '@/lib/utils';
 
 export default function DashboardLayout({
@@ -33,7 +32,6 @@ export default function DashboardLayout({
       >
         <div className="p-4 md:p-6">{children}</div>
       </main>
-      <AiChat />
     </div>
   );
 }

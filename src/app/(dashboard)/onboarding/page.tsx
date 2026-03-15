@@ -24,7 +24,6 @@ import {
   Timer,
   ScanFace,
   MessageCircle,
-  Webhook,
   LayoutDashboard,
   BarChart3,
   Shield,
@@ -56,7 +55,6 @@ const steps: OnboardingStep[] = [
   { id: 'server-setup', title: 'Установка на сервер', subtitle: 'Для мастера / администратора', icon: Terminal, iconColor: 'text-green-500', iconBg: 'bg-green-500/10' },
   { id: 'remote-access', title: 'Удалённый доступ', subtitle: 'Подключение к серверу', icon: Globe, iconColor: 'text-indigo-500', iconBg: 'bg-indigo-500/10' },
   { id: 'cameras', title: 'Подключение камер', subtitle: 'Настройка видеопотоков', icon: Camera, iconColor: 'text-purple-500', iconBg: 'bg-purple-500/10' },
-  { id: 'features', title: 'Умные функции', subtitle: 'ИИ-аналитика для бизнеса', icon: Brain, iconColor: 'text-cyan-500', iconBg: 'bg-cyan-500/10' },
   { id: 'notifications', title: 'Уведомления', subtitle: 'Telegram, вебхуки, интеграции', icon: Bell, iconColor: 'text-yellow-500', iconBg: 'bg-yellow-500/10' },
   { id: 'management', title: 'Управление системой', subtitle: 'Обслуживание и обновления', icon: Settings, iconColor: 'text-rose-500', iconBg: 'bg-rose-500/10' },
   { id: 'done', title: 'Готово!', subtitle: 'Вы готовы к работе', icon: PartyPopper, iconColor: 'text-emerald-500', iconBg: 'bg-emerald-500/10' },
@@ -155,10 +153,10 @@ function StepWelcome() {
 
 function StepRequirements() {
   const hardware = [
-    { icon: Cpu, label: 'Процессор', value: 'ARM64 (Orange Pi, Raspberry Pi 5) или x86_64' },
-    { icon: HardDrive, label: 'Оперативная память', value: '8 ГБ RAM (рекомендуется 16 ГБ)' },
-    { icon: HardDrive, label: 'Диск', value: 'SSD 256 ГБ+ (для записей видео)' },
-    { icon: Monitor, label: 'ОС', value: 'Ubuntu 22.04+ / Debian 12+ / Armbian' },
+    { icon: Cpu, label: 'Процессор', value: 'x86_64: AMD Ryzen 7/9 или Intel Xeon (8+ ядер)' },
+    { icon: HardDrive, label: 'Оперативная память', value: '32 ГБ RAM (рекомендуется 64 ГБ)' },
+    { icon: HardDrive, label: 'Диск', value: 'NVMe SSD 512 ГБ+ (для записей видео)' },
+    { icon: Monitor, label: 'ОС', value: 'Ubuntu 22.04+ / Debian 12+' },
   ];
 
   const network = [
@@ -171,7 +169,7 @@ function StepRequirements() {
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground">
-        DSS устанавливается на мини-ПК (Orange Pi, Raspberry Pi и т.д.) или обычный ПК в локальной сети заказчика.
+        DSS устанавливается на сервер (ПК или мини-сервер) в локальной сети заказчика.
       </p>
 
       <div>
@@ -285,7 +283,7 @@ cd camai" />
         <CodeBlock code="http://IP-адрес-сервера:3000" />
         <p className="text-xs text-muted-foreground mt-2">
           Пример: <code className="bg-muted px-1 py-0.5 rounded">http://192.168.1.100:3000</code>.
-          Первый зарегистрированный аккаунт получает права администратора.
+          Для входа используйте предоставленные логин и пароль.
         </p>
       </div>
 
@@ -467,6 +465,7 @@ function StepCameras() {
         <div className="grid sm:grid-cols-2 gap-3">
           {[
             { label: 'Детекция объектов', desc: 'Подсчёт людей, тепловые карты, очереди', color: 'text-blue-500' },
+            { label: 'Пересечение линии', desc: 'Трипвайр + распознавание лиц при пересечении', color: 'text-cyan-500' },
             { label: 'Посещаемость (вход)', desc: 'Распознавание лиц при входе', color: 'text-green-500' },
             { label: 'Посещаемость (выход)', desc: 'Фиксация ухода сотрудников', color: 'text-orange-500' },
             { label: 'Распознавание номеров', desc: 'LPR — детекция автомобильных номеров', color: 'text-purple-500' },
@@ -484,6 +483,13 @@ function StepCameras() {
 
 function StepFeatures() {
   const features = [
+    {
+      icon: Shield,
+      title: 'Пересечение линии (Tripwire)',
+      description: 'Настройте виртуальную линию — при пересечении система распознаёт лицо и фиксирует вход/выход.',
+      color: 'text-cyan-500',
+      bg: 'bg-cyan-500/10',
+    },
     {
       icon: Users,
       title: 'Контроль очередей',
@@ -566,55 +572,44 @@ function StepNotifications() {
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground">
-        Получайте мгновенные уведомления о событиях через удобный канал связи.
+        Получайте мгновенные уведомления о событиях и сохраняйте записи в облако.
       </p>
 
       <div>
         <h3 className="font-semibold mb-3 flex items-center gap-2">
           <MessageCircle className="h-5 w-5 text-blue-500" />
-          Telegram (рекомендуется)
+          Telegram
         </h3>
         <div className="rounded-lg border p-4 space-y-3 text-sm">
-          <p><strong>Шаг 1:</strong> Создайте бота через <code className="bg-muted px-1 py-0.5 rounded">@BotFather</code> в Telegram</p>
-          <p><strong>Шаг 2:</strong> Скопируйте Bot Token (формат: <code className="bg-muted px-1 py-0.5 rounded">123456:ABC-DEF...</code>)</p>
-          <p><strong>Шаг 3:</strong> Создайте группу/канал и добавьте бота</p>
-          <p><strong>Шаг 4:</strong> Получите Chat ID через <code className="bg-muted px-1 py-0.5 rounded">@userinfobot</code></p>
-          <p><strong>Шаг 5:</strong> Введите Bot Token и Chat ID на странице «Интеграции»</p>
+          <p><strong>Шаг 1:</strong> Перейдите на страницу «Интеграции» в боковом меню</p>
+          <p><strong>Шаг 2:</strong> В карточке Telegram нажмите «Открыть бота»</p>
+          <p><strong>Шаг 3:</strong> Нажмите <strong>Start</strong> в Telegram-боте</p>
+          <p><strong>Шаг 4:</strong> Вернитесь и нажмите «Подключить»</p>
+          <p className="text-muted-foreground text-xs mt-2">
+            После подключения вы будете получать уведомления о событиях, пересечениях линий, распознанных лицах и номерах.
+          </p>
         </div>
       </div>
 
       <div>
         <h3 className="font-semibold mb-3 flex items-center gap-2">
-          <Webhook className="h-5 w-5 text-orange-500" />
-          Webhook
+          <HardDrive className="h-5 w-5 text-green-500" />
+          Google Drive
         </h3>
-        <div className="rounded-lg border p-4 text-sm space-y-2">
-          <p>Для интеграции с вашими системами используйте вебхуки. DSS отправляет POST-запрос на указанный URL при каждом событии.</p>
-          <p className="text-muted-foreground text-xs">Поддерживается JSON формат с типом события, камерой и сообщением.</p>
-        </div>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-3">Другие интеграции</h3>
-        <div className="grid sm:grid-cols-2 gap-3">
-          {[
-            { label: 'Email (SMTP)', desc: 'Уведомления на электронную почту' },
-            { label: 'Slack', desc: 'Уведомления в Slack-канал' },
-            { label: 'Google Drive', desc: 'Бэкап видеозаписей в облако' },
-            { label: 'Автоматизации', desc: 'Настройка правил: если → то' },
-          ].map((item) => (
-            <div key={item.label} className="rounded-lg border p-3 text-center">
-              <p className="text-sm font-medium">{item.label}</p>
-              <p className="text-xs text-muted-foreground">{item.desc}</p>
-            </div>
-          ))}
+        <div className="rounded-lg border p-4 space-y-3 text-sm">
+          <p>Автоматическое резервное копирование видеозаписей в Google Drive.</p>
+          <p><strong>Шаг 1:</strong> Создайте OAuth-приложение в Google Cloud Console</p>
+          <p><strong>Шаг 2:</strong> Введите Client ID и Client Secret на странице «Интеграции»</p>
+          <p><strong>Шаг 3:</strong> Нажмите «Подключить Google Drive» и авторизуйтесь</p>
+          <p className="text-muted-foreground text-xs mt-2">
+            Записи автоматически загружаются в папку DSS перед удалением с сервера.
+          </p>
         </div>
       </div>
 
       <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
         <p className="text-sm text-muted-foreground">
           Все интеграции настраиваются на странице «Интеграции» в боковом меню.
-          Каждую умную функцию можно привязать к своей интеграции.
         </p>
       </div>
     </div>
@@ -650,7 +645,7 @@ function StepManagement() {
           Для обновления DSS до последней версии выполните:
         </p>
         <CodeBlock code={`cd /opt/camai
-git fetch origin && git reset --hard origin/main
+git fetch origin && git reset --hard origin/line-crossing
 docker compose -f docker-compose.prod.yml build cam-ai
 docker compose -f docker-compose.prod.yml up -d cam-ai`} />
         <p className="text-xs text-muted-foreground mt-2">
@@ -673,9 +668,9 @@ docker compose -f docker-compose.prod.yml up -d cam-ai`} />
         <h3 className="font-semibold mb-3">Резервное копирование</h3>
         <div className="rounded-lg border p-4 space-y-2 text-sm">
           <p><strong>База данных:</strong></p>
-          <CodeBlock code="docker exec camai-postgres pg_dump -U camai camai > backup.sql" />
+          <CodeBlock code="docker exec camai-db pg_dump -U camai camai > backup.sql" />
           <p className="text-xs text-muted-foreground mt-1">
-            Восстановление: <code className="bg-muted px-1 py-0.5 rounded">cat backup.sql | docker exec -i camai-postgres psql -U camai camai</code>
+            Восстановление: <code className="bg-muted px-1 py-0.5 rounded">cat backup.sql | docker exec -i camai-db psql -U camai camai</code>
           </p>
         </div>
       </div>
@@ -756,10 +751,9 @@ export default function OnboardingPage() {
       case 2: return <StepServerSetup />;
       case 3: return <StepRemoteAccess />;
       case 4: return <StepCameras />;
-      case 5: return <StepFeatures />;
-      case 6: return <StepNotifications />;
-      case 7: return <StepManagement />;
-      case 8: return <StepDone onNavigate={(path) => router.push(path)} />;
+      case 5: return <StepNotifications />;
+      case 6: return <StepManagement />;
+      case 7: return <StepDone onNavigate={(path) => router.push(path)} />;
       default: return null;
     }
   }
