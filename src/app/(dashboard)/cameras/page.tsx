@@ -108,6 +108,14 @@ export default function CamerasPage() {
     fps: 30,
     purpose: 'detection',
   });
+  const [camCreds, setCamCreds] = useState({
+    ip: '',
+    port: '554',
+    username: 'admin',
+    password: '',
+    path: '/stream1',
+    protocol: 'rtsp' as 'rtsp' | 'http',
+  });
   const [scanning, setScanning] = useState(false);
   const [scanDialogOpen, setScanDialogOpen] = useState(false);
   const [discoveredCameras, setDiscoveredCameras] = useState<Array<{
@@ -157,6 +165,19 @@ export default function CamerasPage() {
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Build RTSP/HTTP URL from separate fields
+  const buildStreamUrl = () => {
+    if (camCreds.protocol === 'http') {
+      return `http://${camCreds.ip}:${camCreds.port || '8080'}`;
+    }
+    const cred = camCreds.password
+      ? `${camCreds.username}:${camCreds.password}`
+      : camCreds.username;
+    const port = camCreds.port || '554';
+    const path = camCreds.path.startsWith('/') ? camCreds.path : `/${camCreds.path}`;
+    return `rtsp://${cred}@${camCreds.ip}:${port}${path}`;
+  };
 
   const handleTestConnection = async () => {
     if (!newCamera.streamUrl) {
@@ -210,23 +231,49 @@ export default function CamerasPage() {
     }
   };
 
-  const handleSelectDiscovered = (cam: { ip: string; suggestedUrl: string; brand?: string; name?: string }) => {
-    // Use URL as-is (scanner already probed credentials), override only if user specified custom ones
-    let url = cam.suggestedUrl;
-    if (showCredentials && url.startsWith('rtsp://')) {
-      const cred = scanCredentials.password
-        ? `${scanCredentials.username}:${scanCredentials.password}`
-        : scanCredentials.username;
-      if (url.includes('@')) {
-        url = url.replace(/rtsp:\/\/[^@]*@/, `rtsp://${cred}@`);
-      } else {
-        url = url.replace('rtsp://', `rtsp://${cred}@`);
-      }
+  const handleSelectDiscovered = (cam: { ip: string; suggestedUrl: string; brand?: string; name?: string; ports?: number[] }) => {
+    // Parse discovered URL into separate fields
+    const isHttp = cam.suggestedUrl.startsWith('http://');
+    let username = 'admin';
+    let password = '';
+    let port = isHttp ? '8080' : '554';
+    let path = '/stream1';
+
+    if (showCredentials) {
+      username = scanCredentials.username;
+      password = scanCredentials.password;
     }
+
+    try {
+      const urlMatch = cam.suggestedUrl.match(/rtsp:\/\/([^:]+):([^@]*)@[^:]+:(\d+)(\/.*)/);
+      if (urlMatch) {
+        username = urlMatch[1];
+        password = urlMatch[2];
+        port = urlMatch[3];
+        path = urlMatch[4];
+      } else {
+        const simpleMatch = cam.suggestedUrl.match(/rtsp:\/\/([^@]+)@[^:]+:(\d+)(\/.*)/);
+        if (simpleMatch) {
+          username = simpleMatch[1];
+          port = simpleMatch[2];
+          path = simpleMatch[3];
+        }
+      }
+    } catch { /* use defaults */ }
+
+    setCamCreds({
+      ip: cam.ip,
+      port,
+      username,
+      password,
+      path,
+      protocol: isHttp ? 'http' : 'rtsp',
+    });
+
     setNewCamera({
       ...newCamera,
       name: cam.name || cam.brand || 'Камера',
-      streamUrl: url,
+      streamUrl: '',
       location: `IP: ${cam.ip}`,
     });
     setScanDialogOpen(false);
@@ -309,10 +356,13 @@ export default function CamerasPage() {
   };
 
   const handleAdd = async () => {
-    if (!newCamera.name || !newCamera.location || !newCamera.streamUrl) {
+    // Build streamUrl from separate fields if not already set
+    const streamUrl = camCreds.ip ? buildStreamUrl() : newCamera.streamUrl;
+    if (!newCamera.name || !newCamera.location || !streamUrl) {
       toast.error('Заполните все обязательные поля');
       return;
     }
+    newCamera.streamUrl = streamUrl;
     let branchId = selectedBranchId;
     if (!branchId) {
       try {
@@ -340,6 +390,7 @@ export default function CamerasPage() {
       });
       toast.success(`Камера "${newCamera.name}" добавлена`);
       setNewCamera({ name: '', location: '', streamUrl: '', resolution: '1920x1080', fps: 30, purpose: 'detection' });
+      setCamCreds({ ip: '', port: '554', username: 'admin', password: '', path: '/stream1', protocol: 'rtsp' });
       setDialogOpen(false);
       fetchCameras();
     } catch {
@@ -489,13 +540,9 @@ export default function CamerasPage() {
               <div className="space-y-2">
                 <Label>Протокол</Label>
                 <Select
-                  value={newCamera.streamUrl.startsWith('rtsp://') ? 'rtsp' : 'http'}
-                  onValueChange={(v) => {
-                    if (v === 'rtsp') {
-                      setNewCamera({ ...newCamera, streamUrl: 'rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101' });
-                    } else {
-                      setNewCamera({ ...newCamera, streamUrl: 'http://192.168.1.100:8080' });
-                    }
+                  value={camCreds.protocol}
+                  onValueChange={(v: 'rtsp' | 'http') => {
+                    setCamCreds({ ...camCreds, protocol: v, port: v === 'rtsp' ? '554' : '8080', path: v === 'rtsp' ? '/stream1' : '' });
                   }}
                 >
                   <SelectTrigger>
@@ -508,22 +555,85 @@ export default function CamerasPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>URL потока</Label>
+                <Label>IP адрес камеры</Label>
                 <div className="flex gap-2">
                   <Input
-                    placeholder={
-                      newCamera.streamUrl.startsWith('rtsp://')
-                        ? 'rtsp://admin:password@192.168.1.100:554/...'
-                        : 'http://192.168.1.100:8080'
-                    }
-                    value={newCamera.streamUrl}
-                    onChange={(e) => setNewCamera({ ...newCamera, streamUrl: e.target.value })}
+                    placeholder="192.168.1.55"
+                    value={camCreds.ip}
+                    onChange={(e) => setCamCreds({ ...camCreds, ip: e.target.value })}
+                    className="flex-1"
                   />
+                  <Input
+                    placeholder="554"
+                    value={camCreds.port}
+                    onChange={(e) => setCamCreds({ ...camCreds, port: e.target.value })}
+                    className="w-20"
+                  />
+                </div>
+              </div>
+              {camCreds.protocol === 'rtsp' && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-2">
+                      <Label>Логин камеры</Label>
+                      <Input
+                        placeholder="admin"
+                        value={camCreds.username}
+                        onChange={(e) => setCamCreds({ ...camCreds, username: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Пароль камеры</Label>
+                      <Input
+                        type="password"
+                        placeholder="Пароль"
+                        value={camCreds.password}
+                        onChange={(e) => setCamCreds({ ...camCreds, password: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Производитель камеры</Label>
+                    <Select
+                      value={camCreds.path}
+                      onValueChange={(v) => setCamCreds({ ...camCreds, path: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="/stream1">DSS (основной поток)</SelectItem>
+                        <SelectItem value="/stream2">DSS (субпоток)</SelectItem>
+                        <SelectItem value="/Streaming/Channels/101">Hikvision (основной)</SelectItem>
+                        <SelectItem value="/Streaming/Channels/102">Hikvision (субпоток)</SelectItem>
+                        <SelectItem value="/cam/realmonitor?channel=1&subtype=0">Dahua (основной)</SelectItem>
+                        <SelectItem value="/cam/realmonitor?channel=1&subtype=1">Dahua (субпоток)</SelectItem>
+                        <SelectItem value="/live/main">Trassir (основной)</SelectItem>
+                        <SelectItem value="/live/sub">Trassir (субпоток)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
+              <div className="space-y-2">
+                <div className="flex gap-2 items-end">
+                  <div className="flex-1">
+                    <Label className="text-xs text-muted-foreground">Итоговый URL</Label>
+                    <Input
+                      value={camCreds.ip ? buildStreamUrl() : ''}
+                      readOnly
+                      className="font-mono text-xs bg-muted/50"
+                      placeholder="Заполните поля выше"
+                    />
+                  </div>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={handleTestConnection}
-                    disabled={testingConnection}
+                    onClick={() => {
+                      setNewCamera({ ...newCamera, streamUrl: buildStreamUrl() });
+                      handleTestConnection();
+                    }}
+                    disabled={testingConnection || !camCreds.ip}
                     className="shrink-0"
                   >
                     {testingConnection ? (
@@ -533,36 +643,6 @@ export default function CamerasPage() {
                     )}
                   </Button>
                 </div>
-                {newCamera.streamUrl.startsWith('rtsp://') ? (
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">
-                      Шаблоны URL для популярных камер:
-                    </p>
-                    <div className="flex flex-wrap gap-1">
-                      {[
-                        { label: 'Hikvision', url: 'rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101' },
-                        { label: 'Dahua', url: 'rtsp://admin:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=0' },
-                        { label: 'Trassir', url: 'rtsp://admin:password@192.168.1.100:554/live/main' },
-                      ].map((preset) => (
-                        <button
-                          key={preset.label}
-                          type="button"
-                          className="text-[10px] px-2 py-0.5 rounded-full bg-muted hover:bg-accent transition-colors"
-                          onClick={() => setNewCamera({ ...newCamera, streamUrl: preset.url })}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Замените admin:password на логин/пароль камеры, IP на адрес камеры
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Для IP Webcam: откройте приложение, нажмите «Запустить сервер» и введите URL
-                  </p>
-                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">

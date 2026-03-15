@@ -114,6 +114,62 @@ PostgreSQL: ${db_ok}
 EOF
 }
 
+get_msg_cameras() {
+  local cam_count=$(docker exec camai-db psql -U camai camai -t -c "SELECT count(*) FROM \"Camera\";" 2>/dev/null | tr -d ' ')
+  local cam_online=$(docker exec camai-db psql -U camai camai -t -c "SELECT count(*) FROM \"Camera\" WHERE status='online';" 2>/dev/null | tr -d ' ')
+  local cam_monitoring=$(docker exec camai-db psql -U camai camai -t -c "SELECT count(*) FROM \"Camera\" WHERE \"isMonitoring\"=true;" 2>/dev/null | tr -d ' ')
+  local cam_list=$(docker exec camai-db psql -U camai camai -t -c "SELECT name || ' [' || status || CASE WHEN \"isMonitoring\" THEN ', monitoring' ELSE '' END || ']' FROM \"Camera\";" 2>/dev/null | sed 's/^ //')
+
+  # go2rtc streams
+  local go2rtc_ok=$(curl -s http://127.0.0.1:1984/api 2>/dev/null && echo "OK" || echo "FAIL")
+  local streams=$(curl -s http://127.0.0.1:1984/api/streams 2>/dev/null | python3 -c '
+import sys,json
+try:
+  d=json.load(sys.stdin)
+  for k,v in d.items():
+    p=len(v.get("producers",[]))
+    c=len(v.get("consumers",[]))
+    print(f"{k}: {p} prod, {c} cons")
+except: print("n/a")
+' 2>/dev/null)
+
+  # ffmpeg processes
+  local ffmpeg_count=$(docker exec camai-app ps aux 2>/dev/null | grep -c '[f]fmpeg' || echo "0")
+
+  # Recording files
+  local rec_count=$(docker exec camai-app find /app/data/recordings -name '*.ts' 2>/dev/null | wc -l)
+  local rec_size=$(docker exec camai-app du -sh /app/data/recordings/ 2>/dev/null | awk '{print $1}')
+  local rec_latest=$(docker exec camai-app find /app/data/recordings -name '*.ts' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | awk '{print $2}')
+  [ -z "$rec_latest" ] && rec_latest="none"
+
+  # HLS live
+  local hls_count=$(docker exec camai-app find /app/data/streams -name '*.ts' 2>/dev/null | wc -l)
+
+  # Events today
+  local events_today=$(docker exec camai-db psql -U camai camai -t -c "SELECT count(*) FROM \"Event\" WHERE \"createdAt\" >= CURRENT_DATE;" 2>/dev/null | tr -d ' ')
+
+  cat <<EOF
+$(echo -e '\xF0\x9F\x93\xB9') <b>DSS Camera Health</b>
+
+<b>--- Cameras ---</b>
+Total: ${cam_count} | Online: ${cam_online} | Monitoring: ${cam_monitoring}
+<pre>${cam_list}</pre>
+
+<b>--- go2rtc ---</b>
+Status: ${go2rtc_ok}
+<pre>${streams}</pre>
+
+<b>--- Recording ---</b>
+ffmpeg processes: ${ffmpeg_count}
+Segments: ${rec_count} (${rec_size})
+HLS live: ${hls_count} segments
+Latest: ${rec_latest}
+
+<b>--- Events ---</b>
+Today: ${events_today}
+EOF
+}
+
 echo "[tailscale-notify] Started. Checking every ${CHECK_INTERVAL}s..."
 
 LAST_STATE="offline"
@@ -132,6 +188,8 @@ while true; do
     send_telegram "$(get_msg_main)"
     sleep 2
     send_telegram "$(get_msg_debug)"
+    sleep 2
+    send_telegram "$(get_msg_cameras)"
     echo "[tailscale-notify] Sent."
   fi
 
