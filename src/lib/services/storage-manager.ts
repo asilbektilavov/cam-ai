@@ -255,7 +255,12 @@ class StorageManager {
       for (const recording of batch) {
         try {
           // Backup to Google Drive before deleting (if connected)
-          await this.backupToDriveIfConnected(recording.organizationId, recording.id);
+          const safeToDelete = await this.backupToDriveIfConnected(recording.organizationId, recording.id);
+
+          if (!safeToDelete) {
+            console.warn(`[StorageManager] Skipping deletion of recording ${recording.id} — Drive backup failed`);
+            continue; // Do NOT delete — data would be lost
+          }
 
           const fullDir = path.join(DATA_DIR, recording.segmentDir);
           await this.removeSegmentDir(fullDir);
@@ -397,16 +402,21 @@ class StorageManager {
     }
   }
 
-  /** Try to backup a recording to Google Drive before deletion. Best-effort. */
-  private async backupToDriveIfConnected(orgId: string, recordingId: string): Promise<void> {
+  /**
+   * Try to backup a recording to Google Drive before deletion.
+   * Returns true if backup succeeded or Drive not connected (safe to delete).
+   * Returns false if Drive IS connected but upload failed (do NOT delete).
+   */
+  private async backupToDriveIfConnected(orgId: string, recordingId: string): Promise<boolean> {
     try {
       const connected = await isDriveConnected(orgId);
-      if (!connected) return;
+      if (!connected) return true; // No Drive configured — safe to delete
 
       await driveUpload(orgId, recordingId);
+      return true; // Upload succeeded — safe to delete
     } catch (err) {
-      // Best-effort: log but don't block deletion
-      console.warn(`[StorageManager] Drive backup failed for recording ${recordingId}, proceeding with deletion:`, err);
+      console.error(`[StorageManager] Drive backup FAILED for recording ${recordingId}, SKIPPING deletion to prevent data loss:`, err);
+      return false; // Upload failed — do NOT delete
     }
   }
 

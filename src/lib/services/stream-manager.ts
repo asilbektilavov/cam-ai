@@ -406,25 +406,18 @@ class StreamManager {
       return;
     }
 
-    // Retry with exponential backoff
-    if (streamProc.restartCount >= MAX_RESTART_RETRIES) {
-      console.error(
-        `[StreamManager] Max retries (${MAX_RESTART_RETRIES}) exceeded for camera ${cameraId}`
-      );
-      await this.markStreamFailed(
-        streamProc,
-        `Max retries exceeded. Last: ${reason}`
-      );
-      return;
-    }
-
-    const delay =
-      BASE_RESTART_DELAY_MS * Math.pow(2, streamProc.restartCount);
+    // Retry with exponential backoff — never give up, cap delay at 60s
+    const MAX_DELAY_MS = 60_000;
+    const delay = Math.min(
+      BASE_RESTART_DELAY_MS * Math.pow(2, streamProc.restartCount),
+      MAX_DELAY_MS
+    );
     streamProc.restartCount++;
 
+    // Reset retry counter after sustained success (will be reset in restartProcess on success)
     console.log(
       `[StreamManager] Restarting stream for camera ${cameraId} ` +
-        `in ${delay}ms (attempt ${streamProc.restartCount}/${MAX_RESTART_RETRIES})`
+        `in ${delay / 1000}s (attempt ${streamProc.restartCount})`
     );
 
     streamProc.restartTimer = setTimeout(() => {
@@ -474,6 +467,9 @@ class StreamManager {
     streamProc.pid = proc.pid;
 
     this.attachProcessHandlers(streamProc);
+
+    // Reset retry counter on successful restart
+    streamProc.restartCount = 0;
 
     console.log(
       `[StreamManager] Restarted stream for camera ${cameraId} (PID: ${proc.pid})`
