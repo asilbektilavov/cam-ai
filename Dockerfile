@@ -35,7 +35,7 @@ COPY protection/ ./protection/
 # Step 1: Obfuscate server-side JS (chunks + API routes + server.js)
 # Skip: node_modules, .next/static (client), prisma
 RUN echo "[OBFUSCATOR] Obfuscating server chunks..." && \
-    find .next/server/chunks -name '*.js' -size +0c 2>/dev/null | head -200 | while read f; do \
+    find .next/server/chunks -name '*.js' -size +0c 2>/dev/null | grep -v 'nextauth\|auth\|next-auth\|credentials' | head -200 | while read f; do \
       javascript-obfuscator "$f" --output "$f" --config protection/obfuscator-config.json 2>/dev/null || true; \
     done && \
     echo "[OBFUSCATOR] Obfuscating API routes..." && \
