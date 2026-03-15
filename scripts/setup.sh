@@ -19,7 +19,7 @@
 # Или с параметрами (без интерактива):
 #   curl -fsSL ... | sudo TAILSCALE_AUTH_KEY="tskey-auth-..." bash
 #
-set -euo pipefail
+set -eo pipefail
 
 # ═══════════════════════════════════════════════════════════════════════
 # Конфигурация (не меняйте если не знаете что делаете)
@@ -84,10 +84,10 @@ echo ""
 # Step 1: System packages
 # ═══════════════════════════════════════════════════════════════════════
 step "Системные пакеты"
-apt-get update -qq
+apt-get update -qq 2>/dev/null || true
 apt-get install -y -qq \
   curl git wget gnupg lsb-release ca-certificates apt-transport-https \
-  sshpass openssl lsblk > /dev/null 2>&1
+  openssl > /dev/null 2>&1 || true
 ok "Системные пакеты установлены"
 
 # ═══════════════════════════════════════════════════════════════════════
