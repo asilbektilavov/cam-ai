@@ -278,7 +278,7 @@ class StreamManager {
       // RTSP input with TCP transport
       inputArgs.push(
         '-rtsp_transport', 'tcp',
-        '-stimeout', '5000000', // 5 seconds connection timeout (microseconds)
+        '-timeout', '5000000', // 5 seconds connection timeout (microseconds)
       );
     }
 
