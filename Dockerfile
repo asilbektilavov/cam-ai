@@ -34,16 +34,7 @@ COPY protection/ ./protection/
 
 # Step 1: Obfuscate server-side JS (chunks + API routes + server.js)
 # Skip: node_modules, .next/static (client), prisma
-RUN echo "[OBFUSCATOR] Obfuscating server chunks..." && \
-    find .next/server/chunks -name '*.js' -size +0c 2>/dev/null | grep -v 'nextauth\|auth\|next-auth\|credentials' | head -200 | while read f; do \
-      javascript-obfuscator "$f" --output "$f" --config protection/obfuscator-config.json 2>/dev/null || true; \
-    done && \
-    echo "[OBFUSCATOR] Obfuscating API routes..." && \
-    find .next/server/app/api -name '*.js' -size +0c 2>/dev/null | head -200 | while read f; do \
-      javascript-obfuscator "$f" --output "$f" --config protection/obfuscator-config.json 2>/dev/null || true; \
-    done && \
-    echo "[OBFUSCATOR] Obfuscating server.js..." && \
-    javascript-obfuscator server.js --output server.js --config protection/obfuscator-config.json 2>/dev/null || true && \
+RUN echo "[OBFUSCATOR] Skipping JS obfuscation (disabled for stability)." && \
     echo "[OBFUSCATOR] Done."
 
 # Step 2: Obfuscate hardware-guard.js BEFORE integrity manifest
