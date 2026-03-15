@@ -34,6 +34,7 @@ services:
       - YOLO_SERVICE_URL=http://127.0.0.1:8001
       - ATTENDANCE_SERVICE_URL=http://127.0.0.1:8002
       - GO2RTC_URL=http://127.0.0.1:1984
+      - LINE_CROSSING_SERVICE_URL=http://127.0.0.1:8004
     volumes:
       - cam-ai-data:/app/data
       - uploads:/app/public/uploads
@@ -74,6 +75,21 @@ services:
       - POLL_INTERVAL=0.5
       - MATCH_TOLERANCE=0.45
       - COOLDOWN_SECONDS=300
+
+  line-crossing:
+    build: ./line-crossing-service
+    container_name: camai-line-crossing
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - CAM_AI_API_URL=http://127.0.0.1:3000
+      - ATTENDANCE_API_KEY=${ATTENDANCE_API_KEY:-}
+      - POLL_INTERVAL=0.3
+      - MATCH_TOLERANCE=0.55
+      - COOLDOWN_SECONDS=120
+    depends_on:
+      cam-ai:
+        condition: service_healthy
 
   go2rtc:
     image: alexxit/go2rtc:latest
