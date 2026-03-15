@@ -48,6 +48,8 @@ services:
     volumes:
       - cam-ai-data:/app/data
       - uploads:/app/public/uploads
+      # External disks — allows user to select HDD/SSD for recordings via UI
+      - /mnt:/mnt
       # Hardware binding (read-only access to host identifiers)
       - /etc/machine-id:/etc/machine-id:ro
       - /sys/class/dmi/id/:/sys/class/dmi/id/:ro

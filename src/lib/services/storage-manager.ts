@@ -37,8 +37,15 @@ export interface DiskUsage {
 // ---------------------------------------------------------------------------
 
 const DATA_DIR = path.join(process.cwd(), 'data');
-const RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
+const DEFAULT_RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
 const DEFAULT_RETENTION_DAYS = 30;
+
+/** Resolve segmentDir to absolute path (supports both relative and absolute). */
+function resolveSegmentDir(segmentDir: string): string {
+  return path.isAbsolute(segmentDir)
+    ? segmentDir
+    : path.join(DATA_DIR, segmentDir);
+}
 
 // ---------------------------------------------------------------------------
 // StorageManager — singleton
@@ -156,7 +163,7 @@ class StorageManager {
     for (const recording of oldRecordings) {
       try {
         // Remove segment files from disk
-        const fullDir = path.join(DATA_DIR, recording.segmentDir);
+        const fullDir = resolveSegmentDir(recording.segmentDir);
         await this.removeSegmentDir(fullDir);
 
         // Delete the database entry
@@ -207,7 +214,7 @@ class StorageManager {
     }
 
     // Also clean up empty date/hour directories
-    await this.cleanupEmptyDirs(RECORDINGS_DIR);
+    await this.cleanupEmptyDirs(DEFAULT_RECORDINGS_DIR);
 
     console.log('[StorageManager] Cleanup complete');
   }
@@ -262,7 +269,7 @@ class StorageManager {
             continue; // Do NOT delete — data would be lost
           }
 
-          const fullDir = path.join(DATA_DIR, recording.segmentDir);
+          const fullDir = resolveSegmentDir(recording.segmentDir);
           await this.removeSegmentDir(fullDir);
           await prisma.recording.delete({ where: { id: recording.id } });
           deletedCount++;
@@ -277,7 +284,7 @@ class StorageManager {
 
     if (deletedCount > 0) {
       // Clean up empty dirs after bulk deletion
-      await this.cleanupEmptyDirs(RECORDINGS_DIR);
+      await this.cleanupEmptyDirs(DEFAULT_RECORDINGS_DIR);
       const finalDisk = this.getDiskUsage();
       console.log(
         `[StorageManager] Disk cleanup done: deleted ${deletedCount} recording(s). Disk now at ${finalDisk.percent}%`

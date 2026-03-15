@@ -41,7 +41,19 @@ const MAX_RESTART_RETRIES = 5;
 const BASE_RESTART_DELAY_MS = 2_000; // 2 seconds, doubles each retry
 const DATA_DIR = path.join(process.cwd(), 'data');
 const STREAMS_DIR = path.join(DATA_DIR, 'streams');
-const RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
+const DEFAULT_RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
+
+/** Get recordings directory for an organization (custom or default). */
+async function getRecordingsDir(organizationId: string): Promise<string> {
+  try {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { storagePath: true },
+    });
+    if (org?.storagePath) return org.storagePath;
+  } catch { /* fallback to default */ }
+  return DEFAULT_RECORDINGS_DIR;
+}
 
 // ---------------------------------------------------------------------------
 // StreamManager — singleton
@@ -92,12 +104,13 @@ class StreamManager {
       throw new Error(`Camera ${cameraId} has no stream URL configured`);
     }
 
-    // Prepare directories
+    // Prepare directories — use org-specific storage path if configured
+    const recordingsBase = await getRecordingsDir(camera.organizationId);
     const liveDir = path.join(STREAMS_DIR, cameraId);
     const now = new Date();
     const dateDir = this.formatDate(now); // YYYY-MM-DD
     const hourDir = this.formatHour(now); // HH
-    const recordDir = path.join(RECORDINGS_DIR, cameraId, dateDir, hourDir);
+    const recordDir = path.join(recordingsBase, cameraId, dateDir, hourDir);
 
     await fs.mkdir(liveDir, { recursive: true });
     await fs.mkdir(recordDir, { recursive: true });
@@ -107,7 +120,9 @@ class StreamManager {
       data: {
         cameraId: camera.id,
         organizationId: camera.organizationId,
-        segmentDir: path.relative(DATA_DIR, recordDir),
+        segmentDir: recordDir.startsWith(DATA_DIR)
+          ? path.relative(DATA_DIR, recordDir)
+          : recordDir,
         status: 'recording',
       },
     });
@@ -433,11 +448,12 @@ class StreamManager {
     // Check if we were stopped while waiting for restart
     if (streamProc.stopping || this.shuttingDown) return;
 
-    // Rotate recording directory to current hour
+    // Rotate recording directory to current hour — use org-specific storage path
+    const recordingsBase = await getRecordingsDir(streamProc.organizationId);
     const now = new Date();
     const dateDir = this.formatDate(now);
     const hourDir = this.formatHour(now);
-    const newRecordDir = path.join(RECORDINGS_DIR, cameraId, dateDir, hourDir);
+    const newRecordDir = path.join(recordingsBase, cameraId, dateDir, hourDir);
 
     await fs.mkdir(newRecordDir, { recursive: true });
 
@@ -449,7 +465,9 @@ class StreamManager {
       data: {
         cameraId,
         organizationId: streamProc.organizationId,
-        segmentDir: path.relative(DATA_DIR, newRecordDir),
+        segmentDir: newRecordDir.startsWith(DATA_DIR)
+          ? path.relative(DATA_DIR, newRecordDir)
+          : newRecordDir,
         status: 'recording',
       },
     });

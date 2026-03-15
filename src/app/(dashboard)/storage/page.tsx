@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   HardDrive,
   Trash2,
@@ -9,6 +9,9 @@ import {
   Database,
   AlertTriangle,
   Lock,
+  CheckCircle2,
+  Loader2,
+  FolderOpen,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -23,7 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { apiGet, apiDelete } from '@/lib/api-client';
+import { apiGet, apiDelete, apiPatch } from '@/lib/api-client';
 import { toast } from 'sonner';
 
 interface StorageData {
@@ -41,6 +44,26 @@ interface StorageData {
   }[];
 }
 
+interface DiskInfo {
+  mountpoint: string;
+  total: number;
+  used: number;
+  free: number;
+  percent: number;
+  device: string;
+}
+
+interface StorageConfig {
+  currentPath: string | null;
+  defaultPath: string;
+  disks: DiskInfo[];
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(0)} МБ`;
+  return `${(bytes / 1_073_741_824).toFixed(1)} ГБ`;
+}
+
 export default function StoragePage() {
   const [storage, setStorage] = useState<StorageData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,6 +73,10 @@ export default function StoragePage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [password, setPassword] = useState('');
   const [pendingRetention, setPendingRetention] = useState<number | undefined>(undefined);
+
+  // Storage path selection
+  const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null);
+  const [savingPath, setSavingPath] = useState(false);
 
   const fetchStorage = async () => {
     setLoading(true);
@@ -63,9 +90,32 @@ export default function StoragePage() {
     }
   };
 
+  const fetchStorageConfig = useCallback(async () => {
+    try {
+      const data = await apiGet<StorageConfig>('/api/settings/storage');
+      setStorageConfig(data);
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleSelectDisk = async (mountpoint: string) => {
+    setSavingPath(true);
+    try {
+      const storagePath = mountpoint === '__default__' ? null : mountpoint;
+      await apiPatch('/api/settings/storage', { storagePath });
+      toast.success(storagePath ? `Хранилище: ${storagePath}` : 'Хранилище: по умолчанию (SSD)');
+      await fetchStorageConfig();
+      await fetchStorage();
+    } catch (err: any) {
+      toast.error(err?.message || 'Ошибка сохранения');
+    } finally {
+      setSavingPath(false);
+    }
+  };
+
   useEffect(() => {
     fetchStorage();
-  }, []);
+    fetchStorageConfig();
+  }, [fetchStorageConfig]);
 
   const openCleanupDialog = (retentionDays?: number) => {
     setPendingRetention(retentionDays);
@@ -129,6 +179,85 @@ export default function StoragePage() {
           </Button>
         </div>
       </div>
+
+      {/* Storage Path Selection */}
+      {storageConfig && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FolderOpen className="h-5 w-5" />
+              Путь хранения записей
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-4">
+              Выберите диск для хранения видеозаписей. Настройка сохраняется и действует после перезапуска.
+            </p>
+            <div className="space-y-2">
+              {/* Default (SSD) option */}
+              <button
+                onClick={() => handleSelectDisk('__default__')}
+                disabled={savingPath}
+                className={`w-full flex items-center justify-between rounded-lg border p-4 text-left transition-colors hover:bg-muted/50 ${
+                  !storageConfig.currentPath ? 'border-green-500 bg-green-500/5' : ''
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <HardDrive className="h-5 w-5 text-blue-500" />
+                  <div>
+                    <p className="text-sm font-medium">По умолчанию (системный диск)</p>
+                    <p className="text-xs text-muted-foreground font-mono">{storageConfig.defaultPath}</p>
+                  </div>
+                </div>
+                {!storageConfig.currentPath && (
+                  <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
+                )}
+              </button>
+
+              {/* Available disks */}
+              {storageConfig.disks.map((disk) => {
+                const isSelected = storageConfig.currentPath?.startsWith(disk.mountpoint);
+                return (
+                  <button
+                    key={disk.mountpoint}
+                    onClick={() => handleSelectDisk(disk.mountpoint)}
+                    disabled={savingPath}
+                    className={`w-full flex items-center justify-between rounded-lg border p-4 text-left transition-colors hover:bg-muted/50 ${
+                      isSelected ? 'border-green-500 bg-green-500/5' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <HardDrive className="h-5 w-5 text-purple-500" />
+                      <div>
+                        <p className="text-sm font-medium">{disk.device}</p>
+                        <p className="text-xs text-muted-foreground font-mono">{disk.mountpoint}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {formatBytes(disk.free)} свободно из {formatBytes(disk.total)} ({disk.percent}% занято)
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {isSelected && <CheckCircle2 className="h-5 w-5 text-green-500" />}
+                    </div>
+                  </button>
+                );
+              })}
+
+              {storageConfig.disks.length === 0 && (
+                <p className="text-sm text-muted-foreground py-2">
+                  Дополнительные диски не обнаружены. Подключите HDD и перезагрузите страницу.
+                </p>
+              )}
+            </div>
+            {savingPath && (
+              <div className="flex items-center gap-2 mt-3 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Сохранение...
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {storage && (
         <>
