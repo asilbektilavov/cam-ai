@@ -216,7 +216,8 @@ export default function StoragePage() {
 
               {/* Available disks */}
               {storageConfig.disks.map((disk) => {
-                const isSelected = storageConfig.currentPath === disk.mountpoint;
+                const isSelected = storageConfig.currentPath === disk.mountpoint ||
+                  storageConfig.currentPath?.startsWith(disk.mountpoint + '/');
                 return (
                   <button
                     key={disk.mountpoint}
