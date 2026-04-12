@@ -1,4 +1,6 @@
-FROM python:3.11-slim AS builder
+ARG BASE_IMAGE=python:3.11-slim
+
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -9,9 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install PyTorch with CUDA support (works on CPU too, auto-detects GPU at runtime)
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121 \
+    && pip install --no-cache-dir -r requirements.txt
 
-FROM python:3.11-slim
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 

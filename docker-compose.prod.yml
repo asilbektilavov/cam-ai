@@ -89,7 +89,13 @@ services:
       - COOLDOWN_SECONDS=300
 
   line-crossing:
-    build: ./line-crossing-service
+    build:
+      context: ./line-crossing-service
+      args:
+        # Use NVIDIA CUDA base image when GPU is available:
+        #   BASE_IMAGE=nvidia/cuda:12.1.0-runtime-ubuntu22.04
+        # Default (no GPU): python:3.11-slim
+        BASE_IMAGE: ${LINE_CROSSING_BASE_IMAGE:-python:3.11-slim}
     container_name: camai-line-crossing
     restart: unless-stopped
     network_mode: host
@@ -99,6 +105,15 @@ services:
       - POLL_INTERVAL=0.3
       - MATCH_TOLERANCE=0.55
       - COOLDOWN_SECONDS=120
+    # GPU support: uncomment below when NVIDIA GPU is installed
+    # Requires: nvidia-container-toolkit on host
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     depends_on:
       cam-ai:
         condition: service_healthy
