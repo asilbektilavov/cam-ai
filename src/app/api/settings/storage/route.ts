@@ -18,10 +18,12 @@ interface DiskInfo {
 /** List mounted disks/partitions available for storage. */
 function listDisks(): DiskInfo[] {
   try {
-    const output = execSync(
-      "df -B1 --output=source,target,size,used,avail,pcent 2>/dev/null || df -k",
-      { encoding: 'utf8', timeout: 5000 }
-    );
+    // POSIX format works on both GNU coreutils and BusyBox (Alpine)
+    // Columns: Filesystem 1024-blocks Used Available Capacity Mounted-on
+    const output = execSync('df -P -k', {
+      encoding: 'utf8',
+      timeout: 5000,
+    });
 
     const lines = output.trim().split('\n').slice(1);
     const disks: DiskInfo[] = [];
@@ -30,20 +32,20 @@ function listDisks(): DiskInfo[] {
       const parts = line.trim().split(/\s+/);
       if (parts.length < 6) continue;
 
-      const [device, mountpoint, totalStr, usedStr, freeStr, percentStr] = parts;
+      const [device, totalStr, usedStr, freeStr, percentStr, mountpoint] = parts;
 
       // Only show real disks (skip tmpfs, overlay, etc.)
       if (!device.startsWith('/dev/') && !mountpoint.startsWith('/mnt')) continue;
-      // Skip small partitions (boot, efi)
-      const total = parseInt(totalStr, 10);
-      if (total < 1_000_000_000) continue; // < 1GB
+      // Skip small partitions (boot, efi) — values are in KB (1024 blocks)
+      const totalKB = parseInt(totalStr, 10);
+      if (totalKB < 1_000_000) continue; // < 1GB
 
       disks.push({
         device,
         mountpoint,
-        total,
-        used: parseInt(usedStr, 10),
-        free: parseInt(freeStr, 10),
+        total: totalKB * 1024,
+        used: parseInt(usedStr, 10) * 1024,
+        free: parseInt(freeStr, 10) * 1024,
         percent: parseInt(percentStr, 10),
       });
     }
