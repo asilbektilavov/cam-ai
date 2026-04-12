@@ -27,6 +27,7 @@ function listDisks(): DiskInfo[] {
 
     const lines = output.trim().split('\n').slice(1);
     const disks: DiskInfo[] = [];
+    const seen = new Set<string>();
 
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
@@ -34,12 +35,15 @@ function listDisks(): DiskInfo[] {
 
       const [device, totalStr, usedStr, freeStr, percentStr, mountpoint] = parts;
 
-      // Only show real disks (skip tmpfs, overlay, etc.)
-      if (!device.startsWith('/dev/') && !mountpoint.startsWith('/mnt')) continue;
+      // Only allow /mnt/* mountpoints (external disks) — skip container bind mounts
+      if (!mountpoint.startsWith('/mnt/')) continue;
+      // Deduplicate same mountpoint
+      if (seen.has(mountpoint)) continue;
       // Skip small partitions (boot, efi) — values are in KB (1024 blocks)
       const totalKB = parseInt(totalStr, 10);
       if (totalKB < 1_000_000) continue; // < 1GB
 
+      seen.add(mountpoint);
       disks.push({
         device,
         mountpoint,
