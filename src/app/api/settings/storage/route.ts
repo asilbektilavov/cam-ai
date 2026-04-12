@@ -88,7 +88,7 @@ export async function GET() {
 
   const org = await prisma.organization.findUnique({
     where: { id: session.user.organizationId },
-    select: { storagePath: true },
+    select: { storagePath: true, retentionDays: true },
   });
 
   const defaultPath = path.join(process.cwd(), 'data', 'recordings');
@@ -98,6 +98,7 @@ export async function GET() {
     currentPath: org?.storagePath || null,
     defaultPath,
     disks,
+    retentionDays: org?.retentionDays ?? null,
   });
 }
 
@@ -115,7 +116,23 @@ export async function PATCH(request: Request) {
     throw e;
   }
 
-  const { storagePath } = await request.json();
+  const body = await request.json();
+  const { storagePath, retentionDays } = body;
+
+  // Handle retention-only update (without changing storage path)
+  if (retentionDays !== undefined && storagePath === undefined) {
+    if (retentionDays !== null && (typeof retentionDays !== 'number' || retentionDays < 1 || retentionDays > 3650)) {
+      return NextResponse.json(
+        { error: 'retentionDays должен быть числом от 1 до 3650 или null' },
+        { status: 400 }
+      );
+    }
+    await prisma.organization.update({
+      where: { id: session.user.organizationId },
+      data: { retentionDays },
+    });
+    return NextResponse.json({ success: true, retentionDays });
+  }
 
   // null = reset to default
   if (storagePath === null) {

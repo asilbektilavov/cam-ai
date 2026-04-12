@@ -190,7 +190,7 @@ class StorageManager {
   /** Run cleanup for all organizations. */
   async cleanupAll(): Promise<void> {
     const organizations = await prisma.organization.findMany({
-      select: { id: true, name: true },
+      select: { id: true, name: true, retentionDays: true },
     });
 
     console.log(
@@ -199,7 +199,9 @@ class StorageManager {
 
     for (const org of organizations) {
       try {
-        const deleted = await this.cleanup(org.id);
+        // Skip if retention not configured for this org
+        if (org.retentionDays == null) continue;
+        const deleted = await this.cleanup(org.id, org.retentionDays);
         if (deleted > 0) {
           console.log(
             `[StorageManager] Org "${org.name}": cleaned up ${deleted} recording(s)`
@@ -397,8 +399,16 @@ class StorageManager {
   // Internal helpers
   // -----------------------------------------------------------------------
 
-  /** Run one full auto-cleanup cycle: local disk + Google Drive. */
+  /** Run one full auto-cleanup cycle: retention + disk + Google Drive. */
   private async runAutoCleanupCycle(): Promise<void> {
+    // Retention-based cleanup (per-org configurable)
+    try {
+      await this.cleanupAll();
+    } catch (err) {
+      console.error('[StorageManager] Retention cleanup error:', err);
+    }
+
+    // Disk-based safety net (triggers at 85%)
     await this.cleanupByDiskUsage();
 
     // Also cleanup Google Drive if any org has it connected

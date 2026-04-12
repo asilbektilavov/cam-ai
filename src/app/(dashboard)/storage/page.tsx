@@ -57,6 +57,7 @@ interface StorageConfig {
   currentPath: string | null;
   defaultPath: string;
   disks: DiskInfo[];
+  retentionDays: number | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -77,6 +78,8 @@ export default function StoragePage() {
   // Storage path selection
   const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null);
   const [savingPath, setSavingPath] = useState(false);
+  const [retentionInput, setRetentionInput] = useState<string>('');
+  const [savingRetention, setSavingRetention] = useState(false);
 
   const fetchStorage = async () => {
     setLoading(true);
@@ -116,6 +119,32 @@ export default function StoragePage() {
     fetchStorage();
     fetchStorageConfig();
   }, [fetchStorageConfig]);
+
+  useEffect(() => {
+    if (storageConfig) {
+      setRetentionInput(storageConfig.retentionDays?.toString() ?? '');
+    }
+  }, [storageConfig]);
+
+  const handleSaveRetention = async () => {
+    setSavingRetention(true);
+    try {
+      const value = retentionInput.trim();
+      const retentionDays = value === '' ? null : parseInt(value, 10);
+      if (retentionDays !== null && (isNaN(retentionDays) || retentionDays < 1)) {
+        toast.error('Введите положительное число дней или оставьте пустым');
+        setSavingRetention(false);
+        return;
+      }
+      await apiPatch('/api/settings/storage', { retentionDays });
+      toast.success(retentionDays ? `Retention: ${retentionDays} дней` : 'Retention отключён');
+      await fetchStorageConfig();
+    } catch (err: any) {
+      toast.error(err?.message || 'Ошибка сохранения');
+    } finally {
+      setSavingRetention(false);
+    }
+  };
 
   const openCleanupDialog = (retentionDays?: number) => {
     setPendingRetention(retentionDays);
@@ -256,6 +285,41 @@ export default function StoragePage() {
                 Сохранение...
               </div>
             )}
+
+            {/* Retention Policy */}
+            <div className="mt-6 pt-6 border-t">
+              <div className="flex items-center gap-2 mb-2">
+                <Trash2 className="h-4 w-4 text-muted-foreground" />
+                <p className="text-sm font-medium">Автоматическая очистка (retention policy)</p>
+              </div>
+              <p className="text-sm text-muted-foreground mb-3">
+                Автоматически удалять записи старше указанного количества дней. Проверяется каждые 30 минут. Оставьте пустым, чтобы отключить (диск всё равно будет очищаться при заполнении 85%).
+              </p>
+              <div className="flex items-center gap-2 max-w-md">
+                <Input
+                  type="number"
+                  min={1}
+                  max={3650}
+                  placeholder="Не задано (отключено)"
+                  value={retentionInput}
+                  onChange={(e) => setRetentionInput(e.target.value)}
+                  disabled={savingRetention}
+                />
+                <span className="text-sm text-muted-foreground whitespace-nowrap">дней</span>
+                <Button
+                  onClick={handleSaveRetention}
+                  disabled={savingRetention || retentionInput === (storageConfig.retentionDays?.toString() ?? '')}
+                  size="sm"
+                >
+                  {savingRetention ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Сохранить'}
+                </Button>
+              </div>
+              {storageConfig.retentionDays && (
+                <p className="text-xs text-green-600 mt-2">
+                  ✓ Активно: записи старше {storageConfig.retentionDays} дней удаляются автоматически
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
