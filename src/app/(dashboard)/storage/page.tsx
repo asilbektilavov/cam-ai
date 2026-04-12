@@ -58,6 +58,8 @@ interface StorageConfig {
   defaultPath: string;
   disks: DiskInfo[];
   retentionDays: number | null;
+  retentionDaysScreenshots: number | null;
+  retentionDaysEvents: number | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -79,7 +81,9 @@ export default function StoragePage() {
   const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null);
   const [savingPath, setSavingPath] = useState(false);
   const [retentionInput, setRetentionInput] = useState<string>('');
-  const [savingRetention, setSavingRetention] = useState(false);
+  const [retentionScreenshotsInput, setRetentionScreenshotsInput] = useState<string>('');
+  const [retentionEventsInput, setRetentionEventsInput] = useState<string>('');
+  const [savingRetention, setSavingRetention] = useState<string | null>(null);
 
   const fetchStorage = async () => {
     setLoading(true);
@@ -123,26 +127,28 @@ export default function StoragePage() {
   useEffect(() => {
     if (storageConfig) {
       setRetentionInput(storageConfig.retentionDays?.toString() ?? '');
+      setRetentionScreenshotsInput(storageConfig.retentionDaysScreenshots?.toString() ?? '');
+      setRetentionEventsInput(storageConfig.retentionDaysEvents?.toString() ?? '');
     }
   }, [storageConfig]);
 
-  const handleSaveRetention = async () => {
-    setSavingRetention(true);
+  const handleSaveRetention = async (field: 'retentionDays' | 'retentionDaysScreenshots' | 'retentionDaysEvents', value: string, label: string) => {
+    setSavingRetention(field);
     try {
-      const value = retentionInput.trim();
-      const retentionDays = value === '' ? null : parseInt(value, 10);
-      if (retentionDays !== null && (isNaN(retentionDays) || retentionDays < 1)) {
+      const trimmed = value.trim();
+      const days = trimmed === '' ? null : parseInt(trimmed, 10);
+      if (days !== null && (isNaN(days) || days < 1)) {
         toast.error('Введите положительное число дней или оставьте пустым');
-        setSavingRetention(false);
+        setSavingRetention(null);
         return;
       }
-      await apiPatch('/api/settings/storage', { retentionDays });
-      toast.success(retentionDays ? `Retention: ${retentionDays} дней` : 'Retention отключён');
+      await apiPatch('/api/settings/storage', { [field]: days });
+      toast.success(days ? `${label}: ${days} дней` : `${label}: отключено`);
       await fetchStorageConfig();
     } catch (err: any) {
       toast.error(err?.message || 'Ошибка сохранения');
     } finally {
-      setSavingRetention(false);
+      setSavingRetention(null);
     }
   };
 
@@ -286,39 +292,75 @@ export default function StoragePage() {
               </div>
             )}
 
-            {/* Retention Policy */}
-            <div className="mt-6 pt-6 border-t">
-              <div className="flex items-center gap-2 mb-2">
+            {/* Retention Policies */}
+            <div className="mt-6 pt-6 border-t space-y-5">
+              <div className="flex items-center gap-2">
                 <Trash2 className="h-4 w-4 text-muted-foreground" />
                 <p className="text-sm font-medium">Автоматическая очистка (retention policy)</p>
               </div>
-              <p className="text-sm text-muted-foreground mb-3">
-                Автоматически удалять записи старше указанного количества дней. Проверяется каждые 30 минут. Оставьте пустым, чтобы отключить (диск всё равно будет очищаться при заполнении 85%).
+              <p className="text-sm text-muted-foreground">
+                Проверяется каждые 30 минут. Оставьте пустым для отключения (диск всё равно очистится при 95% заполнения).
               </p>
-              <div className="flex items-center gap-2 max-w-md">
-                <Input
-                  type="number"
-                  min={1}
-                  max={3650}
-                  placeholder="Не задано (отключено)"
-                  value={retentionInput}
-                  onChange={(e) => setRetentionInput(e.target.value)}
-                  disabled={savingRetention}
-                />
-                <span className="text-sm text-muted-foreground whitespace-nowrap">дней</span>
-                <Button
-                  onClick={handleSaveRetention}
-                  disabled={savingRetention || retentionInput === (storageConfig.retentionDays?.toString() ?? '')}
-                  size="sm"
-                >
-                  {savingRetention ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Сохранить'}
-                </Button>
+
+              {/* Videos */}
+              <div>
+                <p className="text-sm font-medium mb-1">Видеозаписи (на HDD)</p>
+                <div className="flex items-center gap-2 max-w-md">
+                  <Input type="number" min={1} max={3650} placeholder="Отключено"
+                    value={retentionInput}
+                    onChange={(e) => setRetentionInput(e.target.value)}
+                    disabled={savingRetention === 'retentionDays'}
+                  />
+                  <span className="text-sm text-muted-foreground whitespace-nowrap">дней</span>
+                  <Button onClick={() => handleSaveRetention('retentionDays', retentionInput, 'Видео retention')}
+                    disabled={savingRetention === 'retentionDays' || retentionInput === (storageConfig.retentionDays?.toString() ?? '')}
+                    size="sm"
+                  >
+                    {savingRetention === 'retentionDays' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Сохранить'}
+                  </Button>
+                </div>
+                {storageConfig.retentionDays && <p className="text-xs text-green-600 mt-1">✓ Старше {storageConfig.retentionDays} дней удаляются</p>}
               </div>
-              {storageConfig.retentionDays && (
-                <p className="text-xs text-green-600 mt-2">
-                  ✓ Активно: записи старше {storageConfig.retentionDays} дней удаляются автоматически
-                </p>
-              )}
+
+              {/* Screenshots */}
+              <div>
+                <p className="text-sm font-medium mb-1">Скриншоты (номера, лица, события)</p>
+                <div className="flex items-center gap-2 max-w-md">
+                  <Input type="number" min={1} max={3650} placeholder="Отключено"
+                    value={retentionScreenshotsInput}
+                    onChange={(e) => setRetentionScreenshotsInput(e.target.value)}
+                    disabled={savingRetention === 'retentionDaysScreenshots'}
+                  />
+                  <span className="text-sm text-muted-foreground whitespace-nowrap">дней</span>
+                  <Button onClick={() => handleSaveRetention('retentionDaysScreenshots', retentionScreenshotsInput, 'Скриншоты retention')}
+                    disabled={savingRetention === 'retentionDaysScreenshots' || retentionScreenshotsInput === (storageConfig.retentionDaysScreenshots?.toString() ?? '')}
+                    size="sm"
+                  >
+                    {savingRetention === 'retentionDaysScreenshots' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Сохранить'}
+                  </Button>
+                </div>
+                {storageConfig.retentionDaysScreenshots && <p className="text-xs text-green-600 mt-1">✓ Старше {storageConfig.retentionDaysScreenshots} дней удаляются</p>}
+              </div>
+
+              {/* Events DB */}
+              <div>
+                <p className="text-sm font-medium mb-1">События в БД (журнал)</p>
+                <div className="flex items-center gap-2 max-w-md">
+                  <Input type="number" min={1} max={3650} placeholder="Отключено"
+                    value={retentionEventsInput}
+                    onChange={(e) => setRetentionEventsInput(e.target.value)}
+                    disabled={savingRetention === 'retentionDaysEvents'}
+                  />
+                  <span className="text-sm text-muted-foreground whitespace-nowrap">дней</span>
+                  <Button onClick={() => handleSaveRetention('retentionDaysEvents', retentionEventsInput, 'События retention')}
+                    disabled={savingRetention === 'retentionDaysEvents' || retentionEventsInput === (storageConfig.retentionDaysEvents?.toString() ?? '')}
+                    size="sm"
+                  >
+                    {savingRetention === 'retentionDaysEvents' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Сохранить'}
+                  </Button>
+                </div>
+                {storageConfig.retentionDaysEvents && <p className="text-xs text-green-600 mt-1">✓ Старше {storageConfig.retentionDaysEvents} дней удаляются</p>}
+              </div>
             </div>
           </CardContent>
         </Card>

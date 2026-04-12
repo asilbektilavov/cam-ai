@@ -14,7 +14,9 @@ model Organization {
   analysisMode    String           @default("yolo_gemini_events") // yolo_only | yolo_gemini_events | yolo_gemini_always
   geminiApiKey    String?          // per-org Gemini API key (overrides env var)
   storagePath     String?          // custom recordings path (e.g. /mnt/hdd/recordings). null = default ./data/recordings
-  retentionDays   Int?             // auto-delete recordings older than N days. null = disabled (only disk-based cleanup at 85%)
+  retentionDays   Int?             // auto-delete video recordings older than N days. null = disabled
+  retentionDaysScreenshots Int?    // auto-delete screenshots (plates, faces, person sightings) older than N days. null = disabled
+  retentionDaysEvents Int?         // auto-delete Event DB records older than N days. null = disabled
   createdAt       DateTime         @default(now())
   users           User[]
   branches        Branch[]

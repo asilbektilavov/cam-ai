@@ -88,7 +88,7 @@ export async function GET() {
 
   const org = await prisma.organization.findUnique({
     where: { id: session.user.organizationId },
-    select: { storagePath: true, retentionDays: true },
+    select: { storagePath: true, retentionDays: true, retentionDaysScreenshots: true, retentionDaysEvents: true },
   });
 
   const defaultPath = path.join(process.cwd(), 'data', 'recordings');
@@ -99,6 +99,8 @@ export async function GET() {
     defaultPath,
     disks,
     retentionDays: org?.retentionDays ?? null,
+    retentionDaysScreenshots: org?.retentionDaysScreenshots ?? null,
+    retentionDaysEvents: org?.retentionDaysEvents ?? null,
   });
 }
 
@@ -117,21 +119,36 @@ export async function PATCH(request: Request) {
   }
 
   const body = await request.json();
-  const { storagePath, retentionDays } = body;
+  const { storagePath, retentionDays, retentionDaysScreenshots, retentionDaysEvents } = body;
 
   // Handle retention-only update (without changing storage path)
-  if (retentionDays !== undefined && storagePath === undefined) {
-    if (retentionDays !== null && (typeof retentionDays !== 'number' || retentionDays < 1 || retentionDays > 3650)) {
-      return NextResponse.json(
-        { error: 'retentionDays должен быть числом от 1 до 3650 или null' },
-        { status: 400 }
-      );
+  const isRetentionOnly = storagePath === undefined && (
+    retentionDays !== undefined ||
+    retentionDaysScreenshots !== undefined ||
+    retentionDaysEvents !== undefined
+  );
+  if (isRetentionOnly) {
+    const data: { retentionDays?: number | null; retentionDaysScreenshots?: number | null; retentionDaysEvents?: number | null } = {};
+    const validate = (v: unknown, name: string) => {
+      if (v === undefined) return undefined;
+      if (v === null) return null;
+      if (typeof v !== 'number' || v < 1 || v > 3650) {
+        throw new Error(`${name} должен быть числом от 1 до 3650 или null`);
+      }
+      return v;
+    };
+    try {
+      if (retentionDays !== undefined) data.retentionDays = validate(retentionDays, 'retentionDays') as number | null;
+      if (retentionDaysScreenshots !== undefined) data.retentionDaysScreenshots = validate(retentionDaysScreenshots, 'retentionDaysScreenshots') as number | null;
+      if (retentionDaysEvents !== undefined) data.retentionDaysEvents = validate(retentionDaysEvents, 'retentionDaysEvents') as number | null;
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: 400 });
     }
     await prisma.organization.update({
       where: { id: session.user.organizationId },
-      data: { retentionDays },
+      data,
     });
-    return NextResponse.json({ success: true, retentionDays });
+    return NextResponse.json({ success: true, ...data });
   }
 
   // null = reset to default

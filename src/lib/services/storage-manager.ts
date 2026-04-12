@@ -229,7 +229,7 @@ class StorageManager {
    * Delete oldest completed recordings when disk usage exceeds the threshold.
    * Uses hysteresis: starts deleting at `threshold`%, stops at `threshold - 5`%.
    */
-  async cleanupByDiskUsage(threshold: number = 85): Promise<number> {
+  async cleanupByDiskUsage(threshold: number = 95): Promise<number> {
     const disk = this.getDiskUsage();
     if (disk.total === 0 || disk.percent < threshold) {
       return 0;
@@ -366,7 +366,7 @@ class StorageManager {
 
     const intervalMs = 30 * 60 * 1000; // 30 minutes
 
-    console.log('[StorageManager] Starting auto-cleanup every 30 minutes (disk threshold: 85%)');
+    console.log('[StorageManager] Starting auto-cleanup every 30 minutes (disk threshold: 95%)');
 
     // Run immediately on start
     void this.runAutoCleanupCycle().catch((err) =>
@@ -395,6 +395,83 @@ class StorageManager {
     }
   }
 
+  /**
+   * Delete old screenshots (plate images, attendance snapshots, person sightings)
+   * and Event DB records according to per-org retention settings.
+   */
+  async cleanupScreenshotsAndEvents(): Promise<void> {
+    const organizations = await prisma.organization.findMany({
+      select: { id: true, name: true, retentionDaysScreenshots: true, retentionDaysEvents: true },
+    });
+
+    for (const org of organizations) {
+      // Screenshots cleanup
+      if (org.retentionDaysScreenshots != null && org.retentionDaysScreenshots > 0) {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - org.retentionDaysScreenshots);
+
+        // Plate screenshots
+        const oldPlates = await prisma.plateDetection.findMany({
+          where: { camera: { organizationId: org.id }, timestamp: { lt: cutoff }, imagePath: { not: null } },
+          select: { id: true, imagePath: true },
+        });
+        for (const p of oldPlates) {
+          if (p.imagePath) {
+            const full = path.isAbsolute(p.imagePath) ? p.imagePath : path.join(process.cwd(), 'public', p.imagePath);
+            await rm(full, { force: true }).catch(() => {});
+          }
+        }
+        await prisma.plateDetection.deleteMany({
+          where: { camera: { organizationId: org.id }, timestamp: { lt: cutoff } },
+        });
+
+        // Attendance snapshots
+        const oldAttendance = await prisma.attendanceRecord.findMany({
+          where: { employee: { organizationId: org.id }, timestamp: { lt: cutoff }, snapshotPath: { not: null } },
+          select: { id: true, snapshotPath: true },
+        });
+        for (const a of oldAttendance) {
+          if (a.snapshotPath) {
+            const full = path.isAbsolute(a.snapshotPath) ? a.snapshotPath : path.join(process.cwd(), a.snapshotPath);
+            await rm(full, { force: true }).catch(() => {});
+          }
+        }
+        await prisma.attendanceRecord.deleteMany({
+          where: { employee: { organizationId: org.id }, timestamp: { lt: cutoff } },
+        });
+
+        // Person sightings
+        const oldSightings = await prisma.personSighting.findMany({
+          where: { searchPerson: { organizationId: org.id }, timestamp: { lt: cutoff }, framePath: { not: null } },
+          select: { id: true, framePath: true },
+        });
+        for (const s of oldSightings) {
+          if (s.framePath) {
+            const full = path.isAbsolute(s.framePath) ? s.framePath : path.join(process.cwd(), 'public', s.framePath);
+            await rm(full, { force: true }).catch(() => {});
+          }
+        }
+        await prisma.personSighting.deleteMany({
+          where: { searchPerson: { organizationId: org.id }, timestamp: { lt: cutoff } },
+        });
+
+        console.log(`[StorageManager] Screenshots cleanup for org "${org.name}": plates=${oldPlates.length}, attendance=${oldAttendance.length}, sightings=${oldSightings.length}`);
+      }
+
+      // Events cleanup (DB only)
+      if (org.retentionDaysEvents != null && org.retentionDaysEvents > 0) {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - org.retentionDaysEvents);
+        const result = await prisma.event.deleteMany({
+          where: { organizationId: org.id, timestamp: { lt: cutoff } },
+        });
+        if (result.count > 0) {
+          console.log(`[StorageManager] Events cleanup for org "${org.name}": deleted ${result.count} event(s)`);
+        }
+      }
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Internal helpers
   // -----------------------------------------------------------------------
@@ -408,8 +485,15 @@ class StorageManager {
       console.error('[StorageManager] Retention cleanup error:', err);
     }
 
-    // Disk-based safety net (triggers at 85%)
+    // Disk-based safety net (triggers at 95%)
     await this.cleanupByDiskUsage();
+
+    // Screenshots + events cleanup (per-org)
+    try {
+      await this.cleanupScreenshotsAndEvents();
+    } catch (err) {
+      console.error('[StorageManager] Screenshots/events cleanup error:', err);
+    }
 
     // Also cleanup Google Drive if any org has it connected
     try {
