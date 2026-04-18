@@ -50,9 +50,10 @@ class Go2rtcManager {
       if (!(await this.isAvailable())) return false;
 
       let go2rtcSrc = streamUrl;
-      // Force TCP transport for RTSP streams (more reliable, avoids UDP issues)
+      // Force TCP transport + H264 transcoding for RTSP streams
+      // H264 needed because many cameras stream H265 which browsers don't support
       if (streamUrl.toLowerCase().startsWith('rtsp://') && !streamUrl.includes('#')) {
-        go2rtcSrc = streamUrl + '#transport=tcp';
+        go2rtcSrc = 'ffmpeg:' + streamUrl + '#video=h264';
       }
       if (!streamUrl.toLowerCase().startsWith('rtsp://')) {
         // Ensure we point to the MJPEG stream endpoint, not the base URL
