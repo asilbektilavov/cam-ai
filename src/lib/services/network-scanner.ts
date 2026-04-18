@@ -21,6 +21,8 @@ const CAMERA_PORTS = [
   { port: 443, protocol: 'http' as const },
   { port: 37777, protocol: 'rtsp' as const }, // Dahua
   { port: 34567, protocol: 'rtsp' as const }, // Chinese NVR
+  { port: 6060, protocol: 'rtsp' as const },  // DSS cameras
+  { port: 8000, protocol: 'rtsp' as const },  // Hikvision SDK / DSS
 ];
 
 const SCAN_TIMEOUT = 1000;
@@ -107,9 +109,11 @@ async function checkPortSlow(ip: string, port: number): Promise<boolean> {
 }
 
 function guessBrand(ports: number[]): string | undefined {
+  if (ports.includes(6060) || (ports.includes(8000) && ports.includes(6066))) return 'DSS';
   if (ports.includes(37777)) return 'Dahua';
   if (ports.includes(34567)) return 'XMeye/NVR';
   if (ports.includes(8080) && !ports.includes(554)) return 'IP Webcam';
+  if (ports.includes(8000) && ports.includes(554)) return 'Hikvision';
   if (ports.includes(554) && ports.includes(80)) return 'IP Camera';
   if (ports.includes(554)) return 'RTSP Camera';
   return undefined;
@@ -124,8 +128,10 @@ const DEFAULT_CREDENTIALS = [
 
 // Common RTSP paths to probe (ordered by popularity)
 const RTSP_PATHS = [
+  '/stream1',                  // DSS / Generic Chinese cameras
   '/Streaming/Channels/101',   // Hikvision
-  '/stream1',                  // Generic / Chinese cameras
+  '/live.sdp',                 // DSS NVR / DVR
+  '/ch01.264',                 // DSS alternate
   '/cam/realmonitor?channel=1&subtype=0', // Dahua
   '/live/main',                // Trassir
   '/h264Preview_01_main',      // Dahua alt
@@ -205,7 +211,10 @@ function buildSuggestedUrl(ip: string, ports: number[], brand?: string, probe?: 
     return `http://${ip}:8080/video`;
   }
   if (ports.includes(554)) {
-    const path = probe?.path || (brand === 'Dahua' ? '/cam/realmonitor?channel=1&subtype=0' : '/Streaming/Channels/101');
+    let defaultPath = '/Streaming/Channels/101';
+    if (brand === 'Dahua') defaultPath = '/cam/realmonitor?channel=1&subtype=0';
+    else if (brand === 'DSS') defaultPath = '/stream1';
+    const path = probe?.path || defaultPath;
     const user = probe?.user || 'admin';
     const pass = probe?.pass || '';
     const cred = pass ? `${user}:${pass}` : user;
