@@ -125,6 +125,7 @@ services:
     network_mode: host
     environment:
       - GO2RTC_API_LISTEN=:1984
+      - GO2RTC_API_ORIGIN=*
       - GO2RTC_WEBRTC_LISTEN=:8555
       - GO2RTC_RTSP_LISTEN=:8554
     volumes:
