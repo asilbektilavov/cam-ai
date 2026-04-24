@@ -28,6 +28,7 @@ services:
       retries: 5
 
   cam-ai:
+    image: camai-cam-ai:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -61,6 +62,7 @@ services:
       retries: 3
 
   detector:
+    image: camai-detector:latest
     build: ./detection-service
     container_name: camai-detector
     restart: unless-stopped
@@ -77,6 +79,7 @@ services:
 
   # attendance/plate need LAN access for RTSP cameras — use host network
   attendance:
+    image: camai-attendance:latest
     build: ./attendance-service
     container_name: camai-attendance
     restart: unless-stopped
@@ -89,6 +92,7 @@ services:
       - COOLDOWN_SECONDS=300
 
   line-crossing:
+    image: camai-line-crossing:latest
     build:
       context: ./line-crossing-service
       args:
