@@ -5,7 +5,18 @@ import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound, badRequest } from '@/lib/api-utils';
 import { checkPermission, RBACError } from '@/lib/rbac';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const DEFAULT_RECORDINGS_DIR = path.join(process.cwd(), 'data', 'recordings');
+
+async function getRecordingsDir(organizationId: string): Promise<string> {
+  try {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { storagePath: true },
+    });
+    if (org?.storagePath) return org.storagePath;
+  } catch { /* fallback to default */ }
+  return DEFAULT_RECORDINGS_DIR;
+}
 
 // Validate date format YYYY-MM-DD
 function isValidDate(date: string): boolean {
@@ -66,7 +77,8 @@ export async function GET(
   if (!isValidDate(date)) return badRequest('Invalid date format. Use YYYY-MM-DD');
   if (hour && !isValidHour(hour)) return badRequest('Invalid hour format. Use HH (00-23)');
 
-  const recordingsDir = path.join(DATA_DIR, 'recordings', id, date);
+  const recordingsBase = await getRecordingsDir(orgId);
+  const recordingsDir = path.join(recordingsBase, id, date);
 
   try {
     // If a specific hour is requested

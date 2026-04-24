@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { prisma } from '@/lib/prisma';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const DEFAULT_RECORDINGS_DIR = path.join(process.cwd(), 'data', 'recordings');
+
+async function getRecordingsDir(organizationId: string): Promise<string> {
+  try {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { storagePath: true },
+    });
+    if (org?.storagePath) return org.storagePath;
+  } catch { /* fallback to default */ }
+  return DEFAULT_RECORDINGS_DIR;
+}
 
 // Validate date format YYYY-MM-DD
 function isValidDate(date: string): boolean {
@@ -77,12 +89,22 @@ export async function GET(
     );
   }
 
+  // Resolve recordings base via the camera's organization (custom storagePath)
+  const camera = await prisma.camera.findUnique({
+    where: { id },
+    select: { organizationId: true },
+  });
+  if (!camera) {
+    return NextResponse.json({ error: 'Camera not found' }, { status: 404 });
+  }
+  const recordingsBase = await getRecordingsDir(camera.organizationId);
+
   // Build the file path
-  const filePath = path.join(DATA_DIR, 'recordings', id, date, hour, segment);
+  const filePath = path.join(recordingsBase, id, date, hour, segment);
 
   // Resolve and verify path is within expected directory (prevent traversal)
   const resolvedPath = path.resolve(filePath);
-  const expectedBase = path.resolve(path.join(DATA_DIR, 'recordings', id));
+  const expectedBase = path.resolve(path.join(recordingsBase, id));
   if (!resolvedPath.startsWith(expectedBase + path.sep)) {
     return NextResponse.json(
       { error: 'Invalid path' },
