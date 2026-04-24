@@ -4,6 +4,7 @@ import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { fetchSnapshot } from '@/lib/services/motion-detector';
 import { checkPermission, RBACError } from '@/lib/rbac';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
+import { go2rtcManager } from '@/lib/services/go2rtc-manager';
 
 export async function GET(
   _req: NextRequest,
@@ -36,6 +37,17 @@ export async function GET(
     const cachedFrame = cameraMonitor.getLatestFrame(id);
     if (cachedFrame) {
       return new NextResponse(new Uint8Array(cachedFrame), {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        },
+      });
+    }
+
+    // Try go2rtc snapshot — reuses the transcoded stream, no new RTSP session
+    const go2rtcFrame = await go2rtcManager.getSnapshot(id);
+    if (go2rtcFrame) {
+      return new NextResponse(new Uint8Array(go2rtcFrame), {
         headers: {
           'Content-Type': 'image/jpeg',
           'Cache-Control': 'no-cache, no-store, must-revalidate',
