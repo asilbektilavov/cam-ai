@@ -31,24 +31,15 @@ const POLL_INTERVAL_MS = 500; // 500ms — motion detection only (YOLO moved to 
 
 /**
  * Derive a substream URL from the main stream URL.
- * Substreams are lower resolution (D1/CIF) — ideal for YOLO detection with less CPU/bandwidth.
- * Supports: Hikvision, Dahua, generic /stream1→/stream2.
- * Returns the original URL unchanged if no substream pattern is recognized.
+ * Many cameras advertise a substream but actually return 404 on those paths
+ * (e.g. DSS cameras don't expose /stream2). When ffmpeg fails on the substream,
+ * the persistent grabber respawns every poll, flooding the camera's RTSP
+ * session pool until go2rtc can no longer connect ("454 Session Not Found").
+ *
+ * Default to the main stream — same RTSP session is shared between monitor and
+ * go2rtc anyway since go2rtc transcodes the main stream.
  */
 function deriveSubstreamUrl(streamUrl: string): string {
-  // Hikvision: /Streaming/Channels/101 → /Streaming/Channels/102
-  if (/\/Streaming\/Channels\/\d01/i.test(streamUrl)) {
-    return streamUrl.replace(/(\/Streaming\/Channels\/\d)01/i, '$102');
-  }
-  // Dahua: subtype=0 → subtype=1
-  if (/subtype=0/i.test(streamUrl)) {
-    return streamUrl.replace(/subtype=0/i, 'subtype=1');
-  }
-  // Generic: /stream1 → /stream2
-  if (/\/stream1$/i.test(streamUrl)) {
-    return streamUrl.replace(/\/stream1$/i, '/stream2');
-  }
-  // No recognized pattern — use main stream
   return streamUrl;
 }
 
