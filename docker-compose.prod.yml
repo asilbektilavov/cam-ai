@@ -105,15 +105,14 @@ services:
       - POLL_INTERVAL=0.3
       - MATCH_TOLERANCE=0.55
       - COOLDOWN_SECONDS=120
-    # GPU support: uncomment below when NVIDIA GPU is installed
-    # Requires: nvidia-container-toolkit on host
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    # GPU support (requires nvidia-container-toolkit on host)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       cam-ai:
         condition: service_healthy
