@@ -8,10 +8,14 @@ export async function register() {
     // Start notification dispatcher
     notificationDispatcher.start();
 
-    // Resume monitoring for cameras that had monitoring enabled
+    // Resume monitoring for cameras that had monitoring enabled.
+    // Only "detection" purpose uses CameraMonitor — other purposes
+    // (line_crossing, lpr, attendance_*) own their own monitoring loops
+    // in dedicated services. Calling startMonitoring on them spawns an
+    // ffmpeg grabber per camera that floods the camera's RTSP session pool.
     try {
       const cameras = await prisma.camera.findMany({
-        where: { isMonitoring: true },
+        where: { isMonitoring: true, purpose: 'detection' },
       });
 
       for (const camera of cameras) {
@@ -20,7 +24,23 @@ export async function register() {
 
       if (cameras.length > 0) {
         console.log(
-          `[Init] Resumed monitoring for ${cameras.length} camera(s)`
+          `[Init] Resumed monitoring for ${cameras.length} detection camera(s)`
+        );
+      }
+
+      // Re-register go2rtc streams for non-detection cameras (line_crossing,
+      // lpr, attendance_*). go2rtc persists its config but a fresh container
+      // (or an unhealthy stream) needs to be told about every camera again.
+      const otherCameras = await prisma.camera.findMany({
+        where: { isMonitoring: true, purpose: { not: 'detection' } },
+      });
+      if (otherCameras.length > 0) {
+        const { go2rtcManager } = await import('@/lib/services/go2rtc-manager');
+        await Promise.allSettled(
+          otherCameras.map((c) => go2rtcManager.addStream(c.id, c.streamUrl))
+        );
+        console.log(
+          `[Init] Re-registered go2rtc streams for ${otherCameras.length} camera(s)`
         );
       }
 
