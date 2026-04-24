@@ -67,8 +67,11 @@ class CameraMonitor {
 
   private async _doRestore(): Promise<void> {
     try {
+      // Only restore "detection" cameras here. Other purposes (line_crossing,
+      // lpr, attendance_*) own their own monitoring loop and would flood RTSP
+      // sessions if started by CameraMonitor.
       const cameras = await prisma.camera.findMany({
-        where: { isMonitoring: true },
+        where: { isMonitoring: true, purpose: 'detection' },
         select: { id: true, name: true },
       });
 
