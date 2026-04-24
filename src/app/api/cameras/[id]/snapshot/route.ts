@@ -55,7 +55,18 @@ export async function GET(
       });
     }
 
-    // Fallback: fetch fresh snapshot (slow for RTSP — spawns ffmpeg)
+    // For RTSP cameras: do NOT fall back to direct ffmpeg here. Spawning an
+    // ffmpeg per request floods the camera's tiny RTSP session pool and
+    // permanently locks out go2rtc with "454 Session Not Found".
+    // Browser will retry on next snapshotTick once go2rtc reconnects.
+    if (camera.streamUrl.toLowerCase().startsWith('rtsp://')) {
+      return NextResponse.json(
+        { error: 'Stream warming up' },
+        { status: 503 }
+      );
+    }
+
+    // HTTP cameras (MJPEG/IP Webcam) are safe — single connection per request.
     const imageBuffer = await fetchSnapshot(camera.streamUrl, id);
 
     return new NextResponse(new Uint8Array(imageBuffer), {

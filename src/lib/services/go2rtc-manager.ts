@@ -119,7 +119,11 @@ class Go2rtcManager {
       );
 
       if (!res.ok) return null;
-      return Buffer.from(await res.arrayBuffer());
+      const buf = Buffer.from(await res.arrayBuffer());
+      // go2rtc can return 200 with 0 bytes when the stream isn't producing
+      // (e.g. ffmpeg subprocess still warming up, or producer dead).
+      if (buf.length < 100) return null;
+      return buf;
     } catch {
       return null;
     }
