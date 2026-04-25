@@ -21,7 +21,6 @@ import {
   Stethoscope,
   UserCheck,
   Archive,
-  Car,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -34,7 +33,6 @@ const navItems = [
   { href: '/cameras', label: 'Камеры', icon: Camera },
   { href: '/wall', label: 'Видеостена', icon: LayoutGrid },
   { href: '/archive', label: 'Архив', icon: Archive },
-  { href: '/lpr', label: 'Номера (LPR)', icon: Car },
   { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
   { href: '/attendance', label: 'Посещаемость', icon: UserCheck },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
