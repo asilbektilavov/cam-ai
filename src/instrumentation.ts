@@ -8,6 +8,10 @@ export async function register() {
     // Start notification dispatcher
     notificationDispatcher.start();
 
+    // Start Telegram bot subscriber polling
+    const { startTelegramBotPolling } = await import('@/lib/services/telegram-bot');
+    startTelegramBotPolling();
+
     // Resume monitoring for cameras that had monitoring enabled.
     // Only "detection" purpose uses CameraMonitor — other purposes
     // (line_crossing, lpr, attendance_*) own their own monitoring loops

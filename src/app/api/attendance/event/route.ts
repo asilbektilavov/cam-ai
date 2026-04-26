@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { appEvents, CameraEvent } from '@/lib/services/event-emitter';
 import '@/lib/services/notification-dispatcher'; // ensure listener is active
+import { broadcastAttendance } from '@/lib/services/telegram-bot';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
@@ -94,6 +95,18 @@ export async function POST(req: NextRequest) {
       message: description,
       metadata: { employeeId, employeeName: employee.name, direction, confidence },
     });
+
+    // Broadcast to all Telegram subscribers with photo (fire-and-forget)
+    void broadcastAttendance({
+      organizationId: camera.organizationId,
+      employeeName: employee.name,
+      direction: direction as 'check_in' | 'check_out',
+      cameraName: cameraFull?.name || 'Камера',
+      cameraLocation: cameraFull?.location || '',
+      confidence: confidence ?? 0,
+      snapshotPath,
+      employeePhotoPath: employee.photoPath,
+    }).catch((e) => console.error('[Telegram] broadcast failed:', e instanceof Error ? e.message : e));
   }
 
   return NextResponse.json({ success: true, recordId: record.id });

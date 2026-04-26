@@ -32,6 +32,21 @@ model Organization {
   auditLogs       AuditLog[]
   automationRules AutomationRule[]
   employees       Employee[]
+  telegramSubs    TelegramSubscriber[]
+}
+
+model TelegramSubscriber {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  chatId         String       // Telegram chat_id (group, channel, or private)
+  chatType       String       // 'private' | 'group' | 'supergroup' | 'channel'
+  chatTitle      String?      // Display name (group title or first_name)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, chatId])
+  @@index([organizationId])
 }
 
 model Branch {
