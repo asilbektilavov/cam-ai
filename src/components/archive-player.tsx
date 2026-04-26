@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -64,25 +64,37 @@ export function ArchivePlayer({ cameraId, cameraName }: ArchivePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
 
-  const fetchTimeline = useCallback(async () => {
-    setLoadingTimeline(true);
-    try {
-      const data = await apiGet<TimelineResponse>(
-        `/api/cameras/${cameraId}/timeline?date=${selectedDate}`
-      );
-      setTimeline(data.hours || {});
-    } catch {
-      setTimeline({});
-    } finally {
-      setLoadingTimeline(false);
-    }
-  }, [cameraId, selectedDate]);
-
   useEffect(() => {
-    fetchTimeline();
+    let cancelled = false;
     setSelectedHour(null);
     setIsPlaying(false);
-  }, [fetchTimeline]);
+    (async () => {
+      setLoadingTimeline(true);
+      try {
+        const data = await apiGet<TimelineResponse>(
+          `/api/cameras/${cameraId}/timeline?date=${selectedDate}`
+        );
+        if (cancelled) return;
+        setTimeline(data.hours || {});
+        // Auto-play the latest hour with data so the user sees video immediately
+        const availableHours = Object.entries(data.hours || {})
+          .filter(([, h]) => h.available)
+          .map(([k]) => parseInt(k, 10));
+        if (availableHours.length > 0) {
+          setSelectedHour(Math.max(...availableHours));
+          setIsPlaying(true);
+        }
+      } catch {
+        if (!cancelled) setTimeline({});
+      } finally {
+        if (!cancelled) setLoadingTimeline(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraId, selectedDate]);
 
   // Fetch archive detections when hour changes
   useEffect(() => {
