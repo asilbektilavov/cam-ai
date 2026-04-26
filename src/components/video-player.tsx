@@ -81,6 +81,18 @@ export function VideoPlayer({
     setErrorMessage('');
     setIsBuffering(true);
 
+    // Direct (non-HLS) stream — let the browser handle native progressive
+    // playback. Used by /archive/concat which serves a single MPEG-TS file.
+    const isHls = /\.m3u8(\?|$)|format=playlist/i.test(src);
+    if (!isHls) {
+      video.src = src;
+      video.load();
+      if (autoPlay) {
+        video.play().catch(() => { /* autoplay blocked */ });
+      }
+      return;
+    }
+
     // Prefer hls.js when supported (Chrome/Firefox/Edge on all platforms)
     // Only fall back to native HLS for Safari/iOS where hls.js isn't supported
     if (Hls.isSupported()) {
