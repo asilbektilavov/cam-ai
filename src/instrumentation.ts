@@ -52,24 +52,28 @@ export async function register() {
       // flag survived restart but the ffmpeg child process did not, so the
       // archive silently stopped growing. Restart via go2rtc proxy URL so we
       // don't open another RTSP session against the camera.
+      // Delay 20s to let go2rtc warm its producers — otherwise ffmpeg fails
+      // immediately and StreamManager marks the stream non-recoverable.
       const recordingCameras = await prisma.camera.findMany({
         where: { isRecording: true },
         select: { id: true, name: true },
       });
       if (recordingCameras.length > 0) {
-        const { streamManager } = await import('@/lib/services/stream-manager');
-        for (const cam of recordingCameras) {
-          const proxyUrl = `rtsp://localhost:8554/${cam.id}`;
-          streamManager.startStream(cam.id, proxyUrl).catch((err) =>
-            console.warn(
-              `[Init] Failed to resume recording for ${cam.name}:`,
-              err instanceof Error ? err.message : err
-            )
+        setTimeout(async () => {
+          const { streamManager } = await import('@/lib/services/stream-manager');
+          for (const cam of recordingCameras) {
+            const proxyUrl = `rtsp://localhost:8554/${cam.id}`;
+            streamManager.startStream(cam.id, proxyUrl).catch((err) =>
+              console.warn(
+                `[Init] Failed to resume recording for ${cam.name}:`,
+                err instanceof Error ? err.message : err
+              )
+            );
+          }
+          console.log(
+            `[Init] Resumed HLS recording for ${recordingCameras.length} camera(s)`
           );
-        }
-        console.log(
-          `[Init] Resumed HLS recording for ${recordingCameras.length} camera(s)`
-        );
+        }, 20_000);
       }
 
       // Reconcile attendance-service: stop stale watchers not in DB
