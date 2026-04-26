@@ -60,9 +60,30 @@ export function ArchivePlayer({ cameraId, cameraName }: ArchivePlayerProps) {
   const [showDetections, setShowDetections] = useState(true);
   const [archiveDetections, setArchiveDetections] = useState<ArchiveDetectionFrame[]>([]);
   const [currentDetections, setCurrentDetections] = useState<Detection[]>([]);
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch list of dates with recordings for this camera
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<{ dates: string[] }>(`/api/cameras/${cameraId}/dates`)
+      .then((data) => {
+        if (cancelled) return;
+        setAvailableDates(data.dates || []);
+        if (data.dates && data.dates.length > 0 && !data.dates.includes(selectedDate)) {
+          setSelectedDate(data.dates[0]);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableDates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -228,6 +249,33 @@ export function ArchivePlayer({ cameraId, cameraName }: ArchivePlayerProps) {
           />
         </div>
       </div>
+
+      {/* Available dates strip — quick jump to any day with recordings */}
+      {availableDates.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <span className="text-xs text-muted-foreground self-center">Дни с записями:</span>
+          {availableDates.map((d) => {
+            const isSel = d === selectedDate;
+            const date = new Date(d);
+            const label = date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
+            return (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setSelectedDate(d)}
+                className={cn(
+                  'h-7 px-3 rounded-md text-xs font-medium transition-colors',
+                  isSel
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-green-500/15 text-green-400 hover:bg-green-500/25'
+                )}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Video Player Area */}
       <div ref={containerRef} className="relative">
