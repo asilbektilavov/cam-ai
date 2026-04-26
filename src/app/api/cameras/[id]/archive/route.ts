@@ -33,6 +33,7 @@ interface SegmentInfo {
   size: number;
   duration: number;
   url: string;
+  startMs?: number; // epoch ms parsed from filename
 }
 
 interface HourInfo {
@@ -227,6 +228,7 @@ async function listSegments(
       size: p.size,
       duration,
       url: `/api/cameras/${cameraId}/archive/${date}/${hour}/${p.file}`,
+      startMs: p.startMs ?? undefined,
     };
   });
 
@@ -241,22 +243,25 @@ function generatePlaylist(segments: SegmentInfo[]): string {
   const maxDuration = Math.ceil(Math.max(...segments.map((s) => s.duration)));
 
   let playlist = '#EXTM3U\n';
-  // Version 6 is needed for EXT-X-DISCONTINUITY-SEQUENCE / DISCONTINUITY semantics.
   playlist += '#EXT-X-VERSION:6\n';
   playlist += `#EXT-X-TARGETDURATION:${maxDuration}\n`;
   playlist += '#EXT-X-PLAYLIST-TYPE:VOD\n';
-  playlist += '#EXT-X-DISCONTINUITY-SEQUENCE:0\n';
+  playlist += '#EXT-X-INDEPENDENT-SEGMENTS\n';
 
   for (let i = 0; i < segments.length; i++) {
-    // Each .ts segment is an independent recording with its own PTS origin
-    // (the camera burns its own timestamp). Without DISCONTINUITY, hls.js
-    // expects contiguous PTS and "resets" the timeline whenever a segment
-    // starts at a different time, breaking seek across segment boundaries.
+    const seg = segments[i];
+    // Each .ts has its own PTS origin (camera-embedded timestamp). DISCONTINUITY
+    // tells hls.js to splice them; PROGRAM-DATE-TIME tags pin each segment to
+    // an absolute clock so the player can compute a consistent total duration
+    // and seek to absolute positions.
     if (i > 0) {
       playlist += '#EXT-X-DISCONTINUITY\n';
     }
-    playlist += `#EXTINF:${segments[i].duration.toFixed(3)},\n`;
-    playlist += `${segments[i].url}\n`;
+    if (seg.startMs !== undefined) {
+      playlist += `#EXT-X-PROGRAM-DATE-TIME:${new Date(seg.startMs).toISOString()}\n`;
+    }
+    playlist += `#EXTINF:${seg.duration.toFixed(3)},\n`;
+    playlist += `${seg.url}\n`;
   }
 
   playlist += '#EXT-X-ENDLIST\n';
