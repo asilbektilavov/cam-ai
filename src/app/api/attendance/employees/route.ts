@@ -38,17 +38,21 @@ export async function GET(req: NextRequest) {
   const syncHeader = req.headers.get('x-attendance-sync');
   const apiKey = req.headers.get('x-api-key');
   if (syncHeader === 'true' || apiKey) {
-    // Service auth — return all active employees with photo paths for attendance-service
+    // Service auth — return all active employees with both filesystem photoPath
+    // (for attendance-service which reads disk) and HTTP photoUrl (for
+    // line-crossing-service which downloads via API).
     const employees = await prisma.employee.findMany({
-      where: { isActive: true },
+      where: { isActive: true, photoPath: { not: null } },
       select: { id: true, name: true, photoPath: true },
     });
+    const apiBase = process.env.CAM_AI_API_URL || 'http://127.0.0.1:3000';
 
     return NextResponse.json(
       employees.map((e) => ({
         id: e.id,
         name: e.name,
         photoPath: e.photoPath,
+        photoUrl: `${apiBase}/api/attendance/${e.id}/photo`,
       }))
     );
   }

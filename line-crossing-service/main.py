@@ -273,7 +273,9 @@ def _recover_cameras():
                     # Download and encode
                     encoded = []
                     for emp in employees:
-                        photo = emp.get("photoPath") or emp.get("photoUrl")
+                        # Prefer photoUrl (HTTP) over photoPath (cam-ai filesystem
+                        # path that line-crossing container can't read directly).
+                        photo = emp.get("photoUrl") or emp.get("photoPath")
                         if not photo:
                             continue
                         encoding = _download_and_encode_photo(photo)
