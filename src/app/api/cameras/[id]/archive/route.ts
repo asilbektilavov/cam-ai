@@ -188,43 +188,49 @@ async function listSegments(
     .filter((f) => f.endsWith('.ts'))
     .sort();
 
-  const segments: SegmentInfo[] = [];
-
+  // Parse start times from filenames: "2026-04-26_14-26-16.ts" → epoch ms.
+  // Duration of segment N = startTime[N+1] - startTime[N].
+  // The recorder uses segment_time=60 so the last segment is ~60s by default.
+  type Parsed = { file: string; size: number; startMs: number | null };
+  const parsed: Parsed[] = [];
   for (const file of tsFiles) {
-    const filePath = path.join(dirPath, file);
+    let s = 0;
     try {
-      const fileStat = await stat(filePath);
-      // Estimate duration: typical TS segment is ~6 seconds
-      // If segment naming contains duration info, parse it; otherwise estimate from file size
-      const duration = estimateSegmentDuration(file, fileStat.size);
+      s = (await stat(path.join(dirPath, file))).size;
+    } catch { continue; }
 
-      segments.push({
-        name: file,
-        size: fileStat.size,
-        duration,
-        url: `/api/cameras/${cameraId}/archive/${date}/${hour}/${file}`,
-      });
-    } catch {
-      // Skip files that can't be stat'd
+    // Match YYYY-MM-DD_HH-MM-SS.ts (ffmpeg strftime output)
+    const m = file.match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.ts$/);
+    let startMs: number | null = null;
+    if (m) {
+      // Treat as UTC to avoid TZ-induced negative gaps; only the diff matters
+      startMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
     }
+    parsed.push({ file, size: s, startMs });
   }
+
+  const segments: SegmentInfo[] = parsed.map((p, i) => {
+    let duration = 60; // default — matches segment_time in stream-manager
+    if (p.startMs !== null) {
+      const next = parsed[i + 1];
+      if (next?.startMs && next.startMs > p.startMs) {
+        const diff = (next.startMs - p.startMs) / 1000;
+        // Sanity: clamp to [0.5s, 600s]
+        if (diff >= 0.5 && diff <= 600) duration = diff;
+      }
+    } else {
+      // Fallback for non-strftime names: assume 2 Mbps
+      duration = Math.max(1, Math.min(600, p.size / 250_000));
+    }
+    return {
+      name: p.file,
+      size: p.size,
+      duration,
+      url: `/api/cameras/${cameraId}/archive/${date}/${hour}/${p.file}`,
+    };
+  });
 
   return segments;
-}
-
-function estimateSegmentDuration(filename: string, size: number): number {
-  // Try to extract duration from filename pattern like "segment_6.0s.ts"
-  const durationMatch = filename.match(/_(\d+(?:\.\d+)?)s\.ts$/);
-  if (durationMatch) {
-    return parseFloat(durationMatch[1]);
-  }
-  // Default estimate: ~1 Mbps bitrate, so duration = size / (1_000_000 / 8) = size / 125000
-  // Typical segment: 6 seconds
-  // Fallback to 6 seconds if we can't determine
-  if (size > 0) {
-    return Math.round((size / 125000) * 10) / 10 || 6;
-  }
-  return 6;
 }
 
 function generatePlaylist(segments: SegmentInfo[]): string {
