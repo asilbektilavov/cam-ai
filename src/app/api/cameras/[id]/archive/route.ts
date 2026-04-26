@@ -241,13 +241,22 @@ function generatePlaylist(segments: SegmentInfo[]): string {
   const maxDuration = Math.ceil(Math.max(...segments.map((s) => s.duration)));
 
   let playlist = '#EXTM3U\n';
-  playlist += '#EXT-X-VERSION:3\n';
+  // Version 6 is needed for EXT-X-DISCONTINUITY-SEQUENCE / DISCONTINUITY semantics.
+  playlist += '#EXT-X-VERSION:6\n';
   playlist += `#EXT-X-TARGETDURATION:${maxDuration}\n`;
   playlist += '#EXT-X-PLAYLIST-TYPE:VOD\n';
+  playlist += '#EXT-X-DISCONTINUITY-SEQUENCE:0\n';
 
-  for (const segment of segments) {
-    playlist += `#EXTINF:${segment.duration.toFixed(3)},\n`;
-    playlist += `${segment.url}\n`;
+  for (let i = 0; i < segments.length; i++) {
+    // Each .ts segment is an independent recording with its own PTS origin
+    // (the camera burns its own timestamp). Without DISCONTINUITY, hls.js
+    // expects contiguous PTS and "resets" the timeline whenever a segment
+    // starts at a different time, breaking seek across segment boundaries.
+    if (i > 0) {
+      playlist += '#EXT-X-DISCONTINUITY\n';
+    }
+    playlist += `#EXTINF:${segments[i].duration.toFixed(3)},\n`;
+    playlist += `${segments[i].url}\n`;
   }
 
   playlist += '#EXT-X-ENDLIST\n';
