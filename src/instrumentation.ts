@@ -50,30 +50,30 @@ export async function register() {
 
       // Resume HLS recording for any camera marked isRecording=true. The DB
       // flag survived restart but the ffmpeg child process did not, so the
-      // archive silently stopped growing. Restart via go2rtc proxy URL so we
-      // don't open another RTSP session against the camera.
-      // Delay 20s to let go2rtc warm its producers — otherwise ffmpeg fails
-      // immediately and StreamManager marks the stream non-recoverable.
+      // archive silently stopped growing.
+      //
+      // Use the camera's direct RTSP URL (not the go2rtc proxy). The proxy
+      // requires go2rtc to have an active producer, and on cold start ffmpeg
+      // hits go2rtc before that — gets "Invalid data" and StreamManager
+      // marks the stream non-recoverable. Direct RTSP costs one extra session
+      // per camera but starts reliably.
       const recordingCameras = await prisma.camera.findMany({
         where: { isRecording: true },
         select: { id: true, name: true },
       });
       if (recordingCameras.length > 0) {
-        setTimeout(async () => {
-          const { streamManager } = await import('@/lib/services/stream-manager');
-          for (const cam of recordingCameras) {
-            const proxyUrl = `rtsp://localhost:8554/${cam.id}`;
-            streamManager.startStream(cam.id, proxyUrl).catch((err) =>
-              console.warn(
-                `[Init] Failed to resume recording for ${cam.name}:`,
-                err instanceof Error ? err.message : err
-              )
-            );
-          }
-          console.log(
-            `[Init] Resumed HLS recording for ${recordingCameras.length} camera(s)`
+        const { streamManager } = await import('@/lib/services/stream-manager');
+        for (const cam of recordingCameras) {
+          streamManager.startStream(cam.id).catch((err) =>
+            console.warn(
+              `[Init] Failed to resume recording for ${cam.name}:`,
+              err instanceof Error ? err.message : err
+            )
           );
-        }, 20_000);
+        }
+        console.log(
+          `[Init] Resumed HLS recording for ${recordingCameras.length} camera(s)`
+        );
       }
 
       // Reconcile attendance-service: stop stale watchers not in DB
