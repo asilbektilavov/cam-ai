@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   UserCheck,
   Plus,
+  Pencil,
   Trash2,
   Loader2,
   Clock,
@@ -40,7 +41,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { apiGet, apiPost, apiDelete } from '@/lib/api-client';
+import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api-client';
 import { FaceExtractor } from '@/components/person-search/face-extractor';
 
 // ---------------------------------------------------------------------------
@@ -203,6 +204,18 @@ export default function AttendancePage() {
       fetchEmployees();
     } catch {
       toast.error('Ошибка удаления');
+    }
+  };
+
+  const handleRenameEmployee = async (id: string, currentName: string) => {
+    const newName = prompt('Новое имя:', currentName);
+    if (!newName || newName.trim() === '' || newName === currentName) return;
+    try {
+      await apiPatch(`/api/attendance/${id}`, { name: newName.trim() });
+      toast.success('Имя изменено');
+      fetchEmployees();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка');
     }
   };
 
@@ -550,6 +563,14 @@ export default function AttendancePage() {
                       ) : (
                         <ChevronDown className="h-4 w-4" />
                       )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRenameEmployee(emp.id, emp.name)}
+                      title="Переименовать"
+                    >
+                      <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
                       variant="ghost"
