@@ -403,6 +403,23 @@ class LineCrossingDetector(threading.Thread):
 
                 self.crossings_detected += 1
 
+                # Report every crossing (regardless of face recognition) for
+                # per-camera per-day analytics.
+                try:
+                    import httpx as _httpx
+                    _httpx.post(
+                        f"{self.api_url}/api/line-crossing/count",
+                        json={
+                            "cameraId": self.camera_id,
+                            "trackId": int(track_id),
+                            "direction": self.direction,
+                        },
+                        headers={"x-attendance-sync": "true"},
+                        timeout=3,
+                    )
+                except Exception:
+                    pass
+
                 # 4. Face recognition in body region
                 result = self.face_recognizer.recognize_in_region(
                     rgb, bbox, h, w
