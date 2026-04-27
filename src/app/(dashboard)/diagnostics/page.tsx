@@ -69,6 +69,17 @@ interface DiagnosticsData {
     diskPercent: number;
     platform: string;
     nodeVersion: string;
+    gpus: Array<{
+      name: string;
+      utilizationPercent: number;
+      memoryUsedMb: number;
+      memoryTotalMb: number;
+      memoryPercent: number;
+      temperatureC: number;
+      powerWatts: number | null;
+      driverVersion: string;
+      processes: Array<{ pid: number; name: string; memoryMb: number }>;
+    }>;
   };
   cameras: {
     total: number;
@@ -611,6 +622,68 @@ export default function DiagnosticsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* GPU section — visible only when at least one NVIDIA GPU is present */}
+      {data.system.gpus && data.system.gpus.length > 0 && (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {data.system.gpus.map((gpu, idx) => (
+            <Card key={idx}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Cpu className="h-4 w-4" />
+                  GPU: {gpu.name}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Драйвер {gpu.driverVersion} · {gpu.temperatureC}°C
+                  {gpu.powerWatts !== null && ` · ${Math.round(gpu.powerWatts)} Вт`}
+                </p>
+
+                <div>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span>Загрузка GPU</span>
+                    <span className={
+                      gpu.utilizationPercent > 90 ? 'text-red-500' :
+                      gpu.utilizationPercent > 70 ? 'text-yellow-500' : 'text-green-500'
+                    }>
+                      {gpu.utilizationPercent}%
+                    </span>
+                  </div>
+                  <Progress value={gpu.utilizationPercent} className="h-2" />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span>{gpu.memoryUsedMb} / {gpu.memoryTotalMb} МБ</span>
+                    <span className={
+                      gpu.memoryPercent > 90 ? 'text-red-500' :
+                      gpu.memoryPercent > 70 ? 'text-yellow-500' : 'text-green-500'
+                    }>
+                      {gpu.memoryPercent}%
+                    </span>
+                  </div>
+                  <Progress value={gpu.memoryPercent} className="h-2" />
+                </div>
+
+                {gpu.processes.length > 0 && (
+                  <div className="pt-2 border-t">
+                    <p className="text-xs text-muted-foreground mb-2">Процессы:</p>
+                    <div className="space-y-1">
+                      {gpu.processes.slice(0, 5).map((p) => (
+                        <div key={p.pid} className="flex items-center justify-between text-xs">
+                          <span className="truncate" title={p.name}>{p.name.split('/').pop() || p.name}</span>
+                          <span className="text-muted-foreground tabular-nums shrink-0 ml-2">{p.memoryMb} МБ</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Activity Stats */}
       <div className="grid gap-4 md:grid-cols-4">

@@ -136,6 +136,62 @@ def health():
     }
 
 
+@app.get("/gpu")
+def gpu_info():
+    """Read nvidia-smi for diagnostics. Container has --gpus access."""
+    import subprocess
+    gpus = []
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi",
+             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,driver_version",
+             "--format=csv,noheader,nounits"],
+            timeout=3, text=True
+        ).strip()
+        proc_out = ""
+        try:
+            proc_out = subprocess.check_output(
+                ["nvidia-smi",
+                 "--query-compute-apps=pid,process_name,used_memory",
+                 "--format=csv,noheader,nounits"],
+                timeout=3, text=True
+            ).strip()
+        except Exception:
+            pass
+        processes = []
+        for row in proc_out.split("\n") if proc_out else []:
+            parts = [p.strip() for p in row.split(",")]
+            if len(parts) >= 3:
+                try:
+                    processes.append({"pid": int(parts[0]), "name": parts[1], "memoryMb": int(parts[2])})
+                except Exception:
+                    pass
+        for line in out.split("\n"):
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 7:
+                continue
+            try:
+                used = int(parts[2])
+                total = int(parts[3])
+                power = float(parts[5]) if parts[5] not in ("[N/A]", "") else None
+                gpus.append({
+                    "name": parts[0],
+                    "utilizationPercent": int(parts[1]),
+                    "memoryUsedMb": used,
+                    "memoryTotalMb": total,
+                    "memoryPercent": round(used / total * 1000) / 10 if total > 0 else 0,
+                    "temperatureC": int(parts[4]),
+                    "powerWatts": power,
+                    "driverVersion": parts[6],
+                    "processes": processes,
+                })
+            except Exception as e:
+                log.warning("Failed to parse GPU line: %s", e)
+    except Exception as e:
+        log.debug("nvidia-smi unavailable: %s", e)
+    return {"gpus": gpus}
+
+
 @app.post("/cameras/start")
 async def start_camera(data: dict):
     """Start watching a camera for line crossings.

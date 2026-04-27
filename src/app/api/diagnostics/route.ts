@@ -133,6 +133,32 @@ export async function GET() {
     _count: true,
   });
 
+  // ── GPU (NVIDIA) ─────────────────────────────────────────────
+  // line-crossing-service has GPU access (--gpus all) — query its /gpu
+  // endpoint which shells out to nvidia-smi locally and returns parsed JSON.
+  type GpuInfo = {
+    name: string;
+    utilizationPercent: number;
+    memoryUsedMb: number;
+    memoryTotalMb: number;
+    memoryPercent: number;
+    temperatureC: number;
+    powerWatts: number | null;
+    driverVersion: string;
+    processes: Array<{ pid: number; name: string; memoryMb: number }>;
+  };
+  let gpus: GpuInfo[] = [];
+  try {
+    const lcUrl = process.env.LINE_CROSSING_SERVICE_URL || 'http://localhost:8004';
+    const res = await fetch(`${lcUrl}/gpu`, { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const data = await res.json();
+      gpus = (data.gpus as GpuInfo[]) || [];
+    }
+  } catch {
+    // line-crossing offline — leave gpus empty
+  }
+
   // ── Disk usage ───────────────────────────────────────────────
   let diskTotal = 0;
   let diskUsed = 0;
@@ -197,6 +223,7 @@ export async function GET() {
       diskPercent: Math.round(diskPercent * 10) / 10,
       platform: os.platform(),
       nodeVersion: process.version,
+      gpus,
     },
     cameras: {
       total: totalCameras,
