@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile } from 'fs/promises';
+import { readFile, stat } from 'fs/promises';
+import { spawn } from 'child_process';
 import path from 'path';
 import { prisma } from '@/lib/prisma';
+
+// Detect codec by reading the first PMT in the TS file. HEVC stream_type is
+// 0x24, H.264 is 0x1B. Cheap and avoids spawning ffprobe.
+async function isHevc(filePath: string): Promise<boolean> {
+  try {
+    const buf = await readFile(filePath, { encoding: null });
+    // Scan for stream_type 0x24 in the first 64 KB (PMT usually appears early)
+    const slice = buf.subarray(0, Math.min(64 * 1024, buf.length));
+    for (let i = 0; i < slice.length - 1; i++) {
+      if (slice[i] === 0x24 && (slice[i + 1] & 0xE0) === 0xE0) return true;
+      if (slice[i] === 0x1B && (slice[i + 1] & 0xE0) === 0xE0) return false;
+    }
+  } catch { /* fall through */ }
+  return false;
+}
 
 const DEFAULT_RECORDINGS_DIR = path.join(process.cwd(), 'data', 'recordings');
 
@@ -113,9 +129,54 @@ export async function GET(
   }
 
   try {
+    // Verify file exists
+    await stat(resolvedPath);
+  } catch {
+    return NextResponse.json({ error: 'File not found' }, { status: 404 });
+  }
+
+  // Browser (Chrome) cannot play HEVC natively. If the segment is HEVC,
+  // transcode video to H.264 on the fly via ffmpeg streaming.
+  if (segment.endsWith('.ts') && (await isHevc(resolvedPath))) {
+    const ff = spawn('ffmpeg', [
+      '-hide_banner', '-v', 'error',
+      '-i', resolvedPath,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-an',
+      '-fflags', '+genpts+igndts',
+      '-avoid_negative_ts', 'make_zero',
+      '-f', 'mpegts',
+      'pipe:1',
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    const stream = new ReadableStream({
+      start(controller) {
+        ff.stdout.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
+        ff.stdout.on('end', () => controller.close());
+        ff.stderr.on('data', (chunk: Buffer) => {
+          const msg = chunk.toString().slice(0, 200);
+          if (msg.trim()) console.warn(`[archive ${segment}] ffmpeg: ${msg}`);
+        });
+        ff.on('error', (err) => controller.error(err));
+      },
+      cancel() { try { ff.kill('SIGKILL'); } catch { /* ignore */ } },
+    });
+
+    return new NextResponse(stream, {
+      headers: {
+        'Content-Type': 'video/mp2t',
+        'Cache-Control': 'public, max-age=86400, immutable',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  }
+
+  // H264 / .m3u8 — serve as-is
+  try {
     const data = await readFile(resolvedPath);
     const contentType = getContentType(segment);
-
     return new NextResponse(data, {
       headers: {
         'Content-Type': contentType,
@@ -124,9 +185,6 @@ export async function GET(
       },
     });
   } catch {
-    return NextResponse.json(
-      { error: 'File not found' },
-      { status: 404 }
-    );
+    return NextResponse.json({ error: 'File not found' }, { status: 404 });
   }
 }
