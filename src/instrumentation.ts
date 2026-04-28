@@ -100,5 +100,48 @@ export async function register() {
       const { randomUUID } = await import('crypto');
       process.env.INSTANCE_ID = randomUUID();
     }
+
+    // Periodic camera reachability healthcheck. Status field was set to
+    // "online" once at monitoring start and never updated when the camera
+    // went physically offline. Now we TCP-ping each camera's RTSP port
+    // every 60s and update Camera.status accordingly.
+    const HEALTHCHECK_KEY = '__cameraHealthcheckTimer';
+    const proc = process as unknown as { [HEALTHCHECK_KEY]?: ReturnType<typeof setInterval> };
+    if (proc[HEALTHCHECK_KEY]) clearInterval(proc[HEALTHCHECK_KEY]);
+    const net = await import('net');
+    const checkOne = (host: string, port: number): Promise<boolean> =>
+      new Promise((resolve) => {
+        const sock = new net.Socket();
+        const done = (alive: boolean) => { try { sock.destroy(); } catch {} resolve(alive); };
+        sock.setTimeout(2500);
+        sock.once('connect', () => done(true));
+        sock.once('timeout', () => done(false));
+        sock.once('error', () => done(false));
+        sock.connect(port, host);
+      });
+    const runHealthcheck = async (): Promise<void> => {
+      try {
+        const cams = await prisma.camera.findMany({
+          where: { isMonitoring: true },
+          select: { id: true, status: true, streamUrl: true },
+        });
+        await Promise.all(
+          cams.map(async (c) => {
+            const m = c.streamUrl.match(/@?([0-9.]+):(\d+)/);
+            if (!m) return;
+            const alive = await checkOne(m[1], parseInt(m[2], 10));
+            const want = alive ? 'online' : 'offline';
+            if (c.status !== want) {
+              await prisma.camera.update({ where: { id: c.id }, data: { status: want } });
+            }
+          })
+        );
+      } catch (err) {
+        console.warn('[Healthcheck] error:', err instanceof Error ? err.message : err);
+      }
+    };
+    proc[HEALTHCHECK_KEY] = setInterval(runHealthcheck, 60_000);
+    setTimeout(runHealthcheck, 10_000); // initial run shortly after boot
+    console.log('[Init] Camera reachability healthcheck started (60s interval)');
   }
 }
