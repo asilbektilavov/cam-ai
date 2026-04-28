@@ -97,6 +97,7 @@ export default function AttendancePage() {
   const [attendanceCameras, setAttendanceCameras] = useState<AttendanceCamera[]>([]);
   const [loading, setLoading] = useState(true);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState<{ id: string; name: string } | null>(null);
   const [selectedDate, setSelectedDate] = useState(() => {
     const d = new Date();
     return d.toISOString().split('T')[0];
@@ -517,7 +518,13 @@ export default function AttendancePage() {
                 <CardContent className="py-3">
                   <div className="flex items-center gap-3">
                     {/* Avatar */}
-                    <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center shrink-0 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => emp.photoPath && setPhotoPreview({ id: emp.id, name: emp.name })}
+                      disabled={!emp.photoPath}
+                      className="h-10 w-10 rounded-full bg-muted flex items-center justify-center shrink-0 overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary disabled:cursor-default"
+                      title={emp.photoPath ? 'Открыть фото' : ''}
+                    >
                       {emp.photoPath ? (
                         <img
                           src={`/api/attendance/${emp.id}/photo`}
@@ -527,7 +534,7 @@ export default function AttendancePage() {
                       ) : (
                         <Users className="h-5 w-5 text-muted-foreground" />
                       )}
-                    </div>
+                    </button>
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
@@ -703,6 +710,24 @@ export default function AttendancePage() {
           )}
         </div>
       )}
+
+      {/* Photo Preview Dialog */}
+      <Dialog open={!!photoPreview} onOpenChange={(open) => !open && setPhotoPreview(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{photoPreview?.name}</DialogTitle>
+          </DialogHeader>
+          {photoPreview && (
+            <div className="flex items-center justify-center">
+              <img
+                src={`/api/attendance/${photoPreview.id}/photo`}
+                alt={photoPreview.name}
+                className="max-w-full max-h-[70vh] object-contain rounded-md"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Add Employee Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
