@@ -135,19 +135,21 @@ export async function GET(
     return NextResponse.json({ error: 'File not found' }, { status: 404 });
   }
 
-  // Browser (Chrome) cannot play HEVC natively. If the segment is HEVC,
-  // transcode video to H.264 on the fly via ffmpeg streaming.
-  if (segment.endsWith('.ts') && (await isHevc(resolvedPath))) {
+  // Browser <video> element doesn't play raw MPEG-TS or HEVC natively.
+  // Transcode HEVC → H264 (or just remux H264) into fragmented MP4 so the
+  // browser can play it directly.
+  if (segment.endsWith('.ts')) {
+    const hevc = await isHevc(resolvedPath);
     const ff = spawn('ffmpeg', [
       '-hide_banner', '-v', 'error',
       '-i', resolvedPath,
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'zerolatency',
-      '-an',
+      '-c:v', hevc ? 'libx264' : 'copy',
+      ...(hevc ? ['-preset', 'ultrafast', '-tune', 'zerolatency'] : []),
+      '-c:a', 'copy',
       '-fflags', '+genpts+igndts',
       '-avoid_negative_ts', 'make_zero',
-      '-f', 'mpegts',
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart',
+      '-f', 'mp4',
       'pipe:1',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -166,7 +168,7 @@ export async function GET(
 
     return new NextResponse(stream, {
       headers: {
-        'Content-Type': 'video/mp2t',
+        'Content-Type': 'video/mp4',
         'Cache-Control': 'public, max-age=86400, immutable',
         'Access-Control-Allow-Origin': '*',
       },
