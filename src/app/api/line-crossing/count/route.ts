@@ -75,11 +75,17 @@ export async function GET(req: NextRequest) {
     orderBy: { timestamp: 'asc' },
   });
 
-  // Group: { cameraId: { dayISO: count } }
+  // Group: { cameraId: { dayISO: count } } — bucket by Tashkent local day,
+  // not UTC. Otherwise events between 00:00-05:00 local time fall into the
+  // previous UTC date and the daily counter looks like it never resets.
+  const tzFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tashkent',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
   type Bucket = Record<string, Record<string, number>>;
   const buckets: Bucket = {};
   for (const e of events) {
-    const day = e.timestamp.toISOString().slice(0, 10);
+    const day = tzFormatter.format(e.timestamp); // YYYY-MM-DD in Tashkent
     if (!buckets[e.cameraId]) buckets[e.cameraId] = {};
     buckets[e.cameraId][day] = (buckets[e.cameraId][day] || 0) + 1;
   }
