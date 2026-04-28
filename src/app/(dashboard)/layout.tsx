@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
+import { MaintenanceBanner } from '@/components/maintenance-banner';
 import { cn } from '@/lib/utils';
 
 export default function DashboardLayout({
@@ -30,6 +31,7 @@ export default function DashboardLayout({
           'pl-0'
         )}
       >
+        <MaintenanceBanner />
         <div className="p-4 md:p-6">{children}</div>
       </main>
     </div>
