@@ -195,14 +195,32 @@ class LineCrossingDetector(threading.Thread):
             fx2 = int(face_bbox[2] * w)
             fy2 = int(face_bbox[3] * h)
             cv2.rectangle(annotated, (fx1, fy1), (fx2, fy2), green, 2)
-            # Name label above face
+            # Name label above face — use PIL for Unicode (Cyrillic) support.
+            # cv2.putText with FONT_HERSHEY only renders Latin → Cyrillic = "?".
+            from PIL import Image, ImageDraw, ImageFont
             label = f"{employee_name} {round(confidence * 100)}%"
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = max(0.6, min(h, w) / 1500)
-            thickness = max(1, int(font_scale * 2))
-            (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness)
-            cv2.rectangle(annotated, (fx1, fy1 - th - 8), (fx1 + tw + 4, fy1), green, -1)
-            cv2.putText(annotated, label, (fx1 + 2, fy1 - 4), font, font_scale, (0, 0, 0), thickness)
+            font_size = max(14, int(min(h, w) / 50))
+            try:
+                pil_font = ImageFont.truetype(
+                    "/usr/local/lib/python3.11/site-packages/cv2/qt/fonts/DejaVuSans.ttf",
+                    font_size,
+                )
+            except Exception:
+                pil_font = ImageFont.load_default()
+            # Convert BGR → RGB for PIL, draw, convert back
+            pil_img = Image.fromarray(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(pil_img)
+            try:
+                bbox_t = draw.textbbox((0, 0), label, font=pil_font)
+                tw, th = bbox_t[2] - bbox_t[0], bbox_t[3] - bbox_t[1]
+            except AttributeError:
+                tw, th = draw.textsize(label, font=pil_font)
+            draw.rectangle(
+                [(fx1, fy1 - th - 8), (fx1 + tw + 8, fy1)],
+                fill=(0, 200, 0),
+            )
+            draw.text((fx1 + 4, fy1 - th - 6), label, font=pil_font, fill=(255, 255, 255))
+            annotated = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
         quality = self.tripwire.get("snapshotQuality", "medium")
         max_dim = QUALITY_MAP.get(quality, 480)
