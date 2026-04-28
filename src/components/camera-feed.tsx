@@ -275,7 +275,7 @@ export function CameraFeed({
 
             // Name label
             const label = matchName;
-            ctx.font = 'bold 14px monospace';
+            ctx.font = 'bold 14px system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
             const textWidth = ctx.measureText(label).width;
             const labelHeight = 22;
             const labelY = y - labelHeight - 2;
@@ -300,7 +300,7 @@ export function CameraFeed({
 
             // ID label background
             const label = `ID: ${faceId}`;
-            ctx.font = 'bold 12px monospace';
+            ctx.font = 'bold 12px system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
             const textWidth = ctx.measureText(label).width;
             const labelHeight = 18;
             const labelY = y - labelHeight - 2;
@@ -314,7 +314,7 @@ export function CameraFeed({
 
             // Confidence score
             const score = `${Math.round(detection.detection.score * 100)}%`;
-            ctx.font = '10px monospace';
+            ctx.font = '10px system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
             ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
             const scoreWidth = ctx.measureText(score).width;
             ctx.fillRect(x + width - scoreWidth - 6, y + height - 16, scoreWidth + 6, 16);
