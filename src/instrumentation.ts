@@ -74,17 +74,23 @@ export async function register() {
       });
       if (recordingCameras.length > 0) {
         const { streamManager } = await import('@/lib/services/stream-manager');
-        for (const cam of recordingCameras) {
-          streamManager.startStream(cam.id).catch((err) =>
-            console.warn(
-              `[Init] Failed to resume recording for ${cam.name}:`,
-              err instanceof Error ? err.message : err
-            )
+        // Stagger after go2rtc registration so the proxy producers have time
+        // to warm up before ffmpeg connects. Cold-start "Invalid data" used
+        // to mark streams non-recoverable; we now retry, but the warm-up
+        // delay still avoids a noisy first minute of restart spam.
+        setTimeout(() => {
+          for (const cam of recordingCameras) {
+            streamManager.startStream(cam.id).catch((err) =>
+              console.warn(
+                `[Init] Failed to resume recording for ${cam.name}:`,
+                err instanceof Error ? err.message : err
+              )
+            );
+          }
+          console.log(
+            `[Init] Resumed HLS recording for ${recordingCameras.length} camera(s)`
           );
-        }
-        console.log(
-          `[Init] Resumed HLS recording for ${recordingCameras.length} camera(s)`
-        );
+        }, 8_000);
       }
 
       // Reconcile attendance-service: stop stale watchers not in DB

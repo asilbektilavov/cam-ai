@@ -409,12 +409,16 @@ class StreamManager {
       return;
     }
 
-    // Determine if the error is non-recoverable
+    // Determine if the error is non-recoverable. "Invalid data found" used
+    // to be on this list, but it shows up legitimately right after a cold
+    // boot when the go2rtc proxy producer hasn't warmed yet — burning the
+    // recorder permanently is too costly. Let it retry like any other
+    // transient open failure; if the URL is genuinely garbage it'll fail
+    // again and back off to once-a-minute.
     const nonRecoverable =
       reason.includes('No such file or directory') || // ffmpeg not found
       reason.includes('Permission denied') ||
       reason.includes('No space left on device') ||
-      reason.includes('Invalid data found') || // corrupt/wrong stream URL
       exitCode === 127; // command not found
 
     if (nonRecoverable) {
