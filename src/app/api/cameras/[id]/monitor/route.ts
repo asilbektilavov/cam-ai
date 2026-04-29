@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
-import { go2rtcManager } from '@/lib/services/go2rtc-manager';
+import { go2rtcManager, getEffectiveStreamUrl } from '@/lib/services/go2rtc-manager';
 import { plateServiceManager } from '@/lib/services/plate-service-manager';
 import { streamManager } from '@/lib/services/stream-manager';
 import { checkPermission, RBACError } from '@/lib/rbac';
@@ -17,6 +17,7 @@ async function startExternalCamera(
   serviceUrl: string,
   camera: {
     id: string; streamUrl: string; purpose: string;
+    useGo2rtcForStream?: boolean | null;
     onvifHost?: string | null; onvifPort?: number | null;
     onvifUser?: string | null; onvifPass?: string | null;
     hasPtz?: boolean;
@@ -24,7 +25,7 @@ async function startExternalCamera(
 ) {
   const form = new URLSearchParams();
   form.append('camera_id', camera.id);
-  form.append('stream_url', camera.streamUrl);
+  form.append('stream_url', getEffectiveStreamUrl(camera));
   // Attendance cameras need direction
   if (camera.purpose.startsWith('attendance_')) {
     form.append('direction', camera.purpose === 'attendance_entry' ? 'entry' : 'exit');
@@ -97,11 +98,13 @@ async function syncPlates() {
   }
 }
 
-async function startPlateCamera(camera: { id: string; streamUrl: string }) {
+async function startPlateCamera(camera: {
+  id: string; streamUrl: string; useGo2rtcForStream?: boolean | null;
+}) {
   const resp = await fetch(`${PLATE_SERVICE_URL}/cameras/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ camera_id: camera.id, stream_url: camera.streamUrl }),
+    body: JSON.stringify({ camera_id: camera.id, stream_url: getEffectiveStreamUrl(camera) }),
   });
   if (!resp.ok) {
     const err = await resp.text();

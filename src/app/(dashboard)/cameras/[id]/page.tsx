@@ -75,6 +75,7 @@ interface CameraDetail {
   onvifUser: string | null;
   onvifPass: string | null;
   hasPtz: boolean;
+  useGo2rtcForStream: boolean;
   maxPeopleCapacity: number | null;
   tripwireLine: string | null;
   createdAt: string;
@@ -187,6 +188,7 @@ export default function CameraDetailPage() {
     onvifUser: '',
     onvifPass: '',
     hasPtz: false,
+    useGo2rtcForStream: false,
   });
 
   const fetchCamera = useCallback(async () => {
@@ -199,6 +201,7 @@ export default function CameraDetailPage() {
         onvifUser: data.onvifUser || '',
         onvifPass: data.onvifPass || '',
         hasPtz: data.hasPtz,
+        useGo2rtcForStream: !!data.useGo2rtcForStream,
       });
     } catch {
       toast.error('Камера не найдена');
@@ -1059,6 +1062,18 @@ export default function CameraDetailPage() {
               <Switch
                 checked={onvifForm.hasPtz}
                 onCheckedChange={(v) => setOnvifForm({ ...onvifForm, hasPtz: v })}
+              />
+            </div>
+            <div className="flex items-start justify-between gap-4 pt-2 border-t">
+              <div className="space-y-1">
+                <Label>Через go2rtc-прокси</Label>
+                <p className="text-xs text-muted-foreground">
+                  AI-сервисы читают видео через go2rtc, а не напрямую с камеры. Снимает лимит RTSP-сессий.
+                </p>
+              </div>
+              <Switch
+                checked={onvifForm.useGo2rtcForStream}
+                onCheckedChange={(v) => setOnvifForm({ ...onvifForm, useGo2rtcForStream: v })}
               />
             </div>
             <Button onClick={handleSaveOnvif} className="w-full" disabled={saving}>

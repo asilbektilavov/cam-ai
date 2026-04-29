@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { getEffectiveStreamUrl } from '@/lib/services/go2rtc-manager';
 
 // GET /api/detection/cameras — list active detection cameras (for detection-service auto-recovery)
 export async function GET() {
@@ -12,6 +13,7 @@ export async function GET() {
       id: true,
       name: true,
       streamUrl: true,
+      useGo2rtcForStream: true,
     },
   });
 
@@ -19,7 +21,7 @@ export async function GET() {
     cameras.map((c) => ({
       id: c.id,
       name: c.name,
-      streamUrl: c.streamUrl,
+      streamUrl: getEffectiveStreamUrl(c),
     }))
   );
 }

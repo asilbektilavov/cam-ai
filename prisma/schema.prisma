@@ -102,6 +102,11 @@ model Camera {
   onvifUser       String?
   onvifPass       String?
   hasPtz          Boolean           @default(false)
+  // Route AI services (detection/attendance/LPR) through go2rtc instead of
+  // hitting the camera directly. Off by default so existing cameras keep
+  // working unchanged; flip per-camera once verified to relieve the 4-session
+  // RTSP limit on cheap IP cameras.
+  useGo2rtcForStream Boolean        @default(false)
   maxPeopleCapacity Int?            // Alert threshold: save frame when personCount >= this value
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt

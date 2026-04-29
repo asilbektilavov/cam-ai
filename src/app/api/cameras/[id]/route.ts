@@ -4,7 +4,7 @@ import { getAuthSession, unauthorized, notFound } from '@/lib/api-utils';
 import { checkPermission, RBACError } from '@/lib/rbac';
 import { cameraMonitor } from '@/lib/services/camera-monitor';
 import { streamManager } from '@/lib/services/stream-manager';
-import { go2rtcManager } from '@/lib/services/go2rtc-manager';
+import { go2rtcManager, getEffectiveStreamUrl } from '@/lib/services/go2rtc-manager';
 import { reconcileAttendanceCameras } from '@/lib/services/attendance-reconciler';
 
 const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002';
@@ -72,7 +72,7 @@ export async function PATCH(
     name, location, streamUrl, status, venueType, resolution, fps,
     motionThreshold, captureInterval, isMonitoring,
     onvifHost, onvifPort, onvifUser, onvifPass, hasPtz, retentionDays,
-    purpose, maxPeopleCapacity,
+    purpose, maxPeopleCapacity, useGo2rtcForStream,
   } = body;
 
   // Detect purpose change while camera is monitoring — need to switch services
@@ -100,6 +100,7 @@ export async function PATCH(
       ...(hasPtz !== undefined && { hasPtz }),
       ...(retentionDays !== undefined && { retentionDays }),
       ...(maxPeopleCapacity !== undefined && { maxPeopleCapacity }),
+      ...(useGo2rtcForStream !== undefined && { useGo2rtcForStream: !!useGo2rtcForStream }),
     },
   });
 
@@ -117,11 +118,11 @@ export async function PATCH(
 
     const startService = async (
       serviceUrl: string,
-      cam: { id: string; streamUrl: string; purpose: string },
+      cam: { id: string; streamUrl: string; purpose: string; useGo2rtcForStream?: boolean | null },
     ) => {
       const form = new URLSearchParams();
       form.append('camera_id', cam.id);
-      form.append('stream_url', cam.streamUrl);
+      form.append('stream_url', getEffectiveStreamUrl(cam));
       if (cam.purpose.startsWith('attendance_')) {
         form.append('direction', cam.purpose === 'attendance_entry' ? 'entry' : 'exit');
       }

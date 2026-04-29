@@ -5,6 +5,22 @@
  */
 
 const GO2RTC_API = process.env.GO2RTC_API_URL || 'http://localhost:1984';
+const GO2RTC_RTSP_HOST = process.env.GO2RTC_RTSP_HOST || 'localhost';
+const GO2RTC_RTSP_PORT = process.env.GO2RTC_RTSP_PORT || '8554';
+
+/**
+ * Effective RTSP URL for a camera. When useGo2rtc is on, every AI service
+ * shares the single producer that go2rtc holds open against the camera —
+ * sidesteps the per-camera RTSP session cap (typically 4) on cheap IP cams.
+ */
+export function getEffectiveStreamUrl(camera: {
+  id: string;
+  streamUrl: string;
+  useGo2rtcForStream?: boolean | null;
+}): string {
+  if (!camera.useGo2rtcForStream) return camera.streamUrl;
+  return `rtsp://${GO2RTC_RTSP_HOST}:${GO2RTC_RTSP_PORT}/${camera.id}`;
+}
 
 class Go2rtcManager {
   private static instance: Go2rtcManager;

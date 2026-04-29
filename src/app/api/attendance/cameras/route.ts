@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { getEffectiveStreamUrl } from '@/lib/services/go2rtc-manager';
 
 // GET /api/attendance/cameras — list active attendance + people_search cameras (for attendance-service auto-recovery)
 export async function GET() {
@@ -12,6 +13,7 @@ export async function GET() {
       id: true,
       name: true,
       streamUrl: true,
+      useGo2rtcForStream: true,
       purpose: true,
       onvifHost: true,
       onvifPort: true,
@@ -24,7 +26,7 @@ export async function GET() {
     cameras.map((c) => ({
       id: c.id,
       name: c.name,
-      streamUrl: c.streamUrl,
+      streamUrl: getEffectiveStreamUrl(c),
       direction: c.purpose === 'attendance_entry' ? 'entry'
         : c.purpose === 'attendance_exit' ? 'exit'
         : 'search',
