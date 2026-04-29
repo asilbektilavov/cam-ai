@@ -204,12 +204,16 @@ async function listSegments(
       mtimeMs = st.mtimeMs;
     } catch { continue; }
 
-    // Match YYYY-MM-DD_HH-MM-SS.ts (ffmpeg strftime output)
+    // Match YYYY-MM-DD_HH-MM-SS.ts (ffmpeg strftime output). The container
+    // runs in Asia/Tashkent, so strftime stamps the filename with local
+    // time. Parse as local-time-of-process so the resulting epoch lines up
+    // with mtime (which is always real UTC) — without this, mtime - startMs
+    // is negative by the TZ offset and every duration falls back to the
+    // size-based estimate, which under-reports tiny files as 1s.
     const m = file.match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.ts$/);
     let startMs: number | null = null;
     if (m) {
-      // Treat as UTC to avoid TZ-induced negative gaps; only the diff matters
-      startMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+      startMs = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
     }
     parsed.push({ file, size: s, startMs, mtimeMs });
   }
