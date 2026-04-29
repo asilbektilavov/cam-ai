@@ -215,19 +215,17 @@ async function listSegments(
   }
 
   const SEGMENT_TIME_S = 600; // recorder's -segment_time, used as a sane default
-  const segments: SegmentInfo[] = parsed.map((p, i) => {
+  const segments: SegmentInfo[] = parsed.map((p) => {
+    // mtime - startTime is the actual time ffmpeg spent writing this file,
+    // i.e. the real video duration. Subtracting next-segment start instead
+    // would conflate the duration with the gap before the next segment
+    // (e.g. when the recorder retried after a connection drop), so the UI
+    // would advertise 10 minutes for a clip that actually plays in 2:45.
     let duration = SEGMENT_TIME_S;
-    if (p.startMs !== null) {
-      const next = parsed[i + 1];
-      if (next?.startMs && next.startMs > p.startMs) {
-        const diff = (next.startMs - p.startMs) / 1000;
-        if (diff >= 0.5 && diff <= 1800) duration = diff;
-      } else if (p.mtimeMs > p.startMs) {
-        // Last file (no following segment) — use mtime to reflect the
-        // current length of the in-progress recording. Caps at the
-        // configured segment_time to avoid showing stale clock skew.
-        const mtimeDiff = (p.mtimeMs - p.startMs) / 1000;
-        if (mtimeDiff > 0 && mtimeDiff <= SEGMENT_TIME_S * 2) duration = mtimeDiff;
+    if (p.startMs !== null && p.mtimeMs > p.startMs) {
+      const realDuration = (p.mtimeMs - p.startMs) / 1000;
+      if (realDuration > 0 && realDuration <= SEGMENT_TIME_S * 2) {
+        duration = realDuration;
       }
     } else {
       // Fallback for non-strftime names: assume ~2 Mbps
