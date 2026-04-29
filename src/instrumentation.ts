@@ -32,11 +32,19 @@ export async function register() {
         );
       }
 
-      // Re-register go2rtc streams for non-detection cameras (line_crossing,
-      // lpr, attendance_*). go2rtc persists its config but a fresh container
-      // (or an unhealthy stream) needs to be told about every camera again.
+      // Re-register go2rtc streams for every camera that needs one: all the
+      // non-detection purposes (line_crossing, lpr, attendance_*) plus any
+      // detection camera with useGo2rtcForStream=true. go2rtc persists its
+      // config but a fresh container (or an unhealthy stream) needs to be
+      // told about every camera again.
       const otherCameras = await prisma.camera.findMany({
-        where: { isMonitoring: true, purpose: { not: 'detection' } },
+        where: {
+          isMonitoring: true,
+          OR: [
+            { purpose: { not: 'detection' } },
+            { useGo2rtcForStream: true },
+          ],
+        },
       });
       if (otherCameras.length > 0) {
         const { go2rtcManager } = await import('@/lib/services/go2rtc-manager');
@@ -52,11 +60,11 @@ export async function register() {
       // flag survived restart but the ffmpeg child process did not, so the
       // archive silently stopped growing.
       //
-      // Use the camera's direct RTSP URL (not the go2rtc proxy). The proxy
-      // requires go2rtc to have an active producer, and on cold start ffmpeg
-      // hits go2rtc before that — gets "Invalid data" and StreamManager
-      // marks the stream non-recoverable. Direct RTSP costs one extra session
-      // per camera but starts reliably.
+      // StreamManager honours camera.useGo2rtcForStream — if go2rtc is the
+      // chosen path it will use the proxy URL. Cold start risk: the proxy
+      // producer needs to be warm before ffmpeg connects, otherwise we get
+      // "Invalid data" and the stream is marked non-recoverable. The
+      // re-registration loop above runs first to give go2rtc a head start.
       const recordingCameras = await prisma.camera.findMany({
         where: { isRecording: true },
         select: { id: true, name: true },

@@ -127,8 +127,11 @@ class StreamManager {
       },
     });
 
-    // Build ffmpeg args — use override URL (e.g. go2rtc RTSP proxy) to avoid extra RTSP sessions
-    const effectiveStreamUrl = streamUrlOverride || camera.streamUrl;
+    // Build ffmpeg args — explicit override wins, then per-camera flag, then direct RTSP.
+    // Routing through go2rtc lets one producer feed both HLS recording and the
+    // browser viewer instead of opening two sessions to the camera.
+    const { getEffectiveStreamUrl } = await import('./go2rtc-manager');
+    const effectiveStreamUrl = streamUrlOverride || getEffectiveStreamUrl(camera);
     const ffmpegArgs = this.buildFfmpegArgs(effectiveStreamUrl, liveDir, recordDir);
 
     // Spawn ffmpeg
