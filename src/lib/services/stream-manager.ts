@@ -455,8 +455,15 @@ class StreamManager {
     // pushes the next retry out further so we stop spamming dozens of
     // 6-second segments per minute on a chronically-bad link.
     const isSessionExhausted = /454.*Session Not Found/i.test(reason);
-    const ranLessThan30s = Date.now() - streamProc.startedAt.getTime() < 30_000;
-    if (ranLessThan30s) streamProc.restartCount++;
+    const uptimeMs = Date.now() - streamProc.startedAt.getTime();
+    if (uptimeMs > 60_000) {
+      // Stable run — last failure cycle is over, reset escalation
+      streamProc.restartCount = 0;
+    } else if (uptimeMs < 30_000) {
+      // Camera is closing on us within seconds — escalate harder so we
+      // stop carving the disk into 6-second fragments on bad WiFi.
+      streamProc.restartCount++;
+    }
     const MAX_DELAY_MS = 300_000;
     const delay = isSessionExhausted
       ? 180_000
@@ -555,12 +562,12 @@ class StreamManager {
 
     this.attachProcessHandlers(streamProc);
 
-    // Reset uptime stamp so the "ran less than 30s" backoff escalation in
-    // handleProcessExit measures the most recent run, not the original boot.
+    // Reset uptime stamp so the backoff escalation in handleProcessExit
+    // measures the most recent run, not the original boot. Don't reset
+    // restartCount here — handleProcessExit decides based on actual
+    // uptime, otherwise a flapping camera that dies in 5s every time
+    // would never escalate beyond the base 5s delay.
     streamProc.startedAt = new Date();
-
-    // Reset retry counter on successful restart
-    streamProc.restartCount = 0;
 
     console.log(
       `[StreamManager] Restarted stream for camera ${cameraId} (PID: ${proc.pid})`
