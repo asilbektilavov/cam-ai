@@ -1039,24 +1039,21 @@ export default function CamerasPage() {
                 {/* Camera Preview */}
                 <div className="relative aspect-video bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
                   {camera.status === 'online' ? (
-                    <>
-                      {camera.isMonitoring ? (
-                        <Go2rtcPlayer
-                          streamName={camera.id}
-                          className="absolute inset-0 w-full h-full z-[1]"
-                          protocol={camera.streamUrl.toLowerCase().startsWith('rtsp://') ? 'rtsp' : 'http'}
-                        />
-                      ) : (
-                        <CameraFeed
-                          cameraId={camera.id}
-                          snapshotTick={snapshotTick}
-                          className="absolute inset-0 w-full h-full"
-                          showFaceDetection={false}
-                          rotateImage={!camera.streamUrl.startsWith('rtsp://')}
-                        />
-                      )}
-                      <Video className="h-10 w-10 text-gray-600" />
-                    </>
+                    camera.isMonitoring ? (
+                      <Go2rtcPlayer
+                        streamName={camera.id}
+                        className="absolute inset-0 w-full h-full z-[1]"
+                        protocol={camera.streamUrl.toLowerCase().startsWith('rtsp://') ? 'rtsp' : 'http'}
+                      />
+                    ) : (
+                      <CameraFeed
+                        cameraId={camera.id}
+                        snapshotTick={snapshotTick}
+                        className="absolute inset-0 w-full h-full"
+                        showFaceDetection={false}
+                        rotateImage={!camera.streamUrl.startsWith('rtsp://')}
+                      />
+                    )
                   ) : (
                     <Monitor className="h-10 w-10 text-gray-700" />
                   )}
