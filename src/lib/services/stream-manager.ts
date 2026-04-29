@@ -449,7 +449,14 @@ class StreamManager {
     // hammering it again just keeps the pool full. Force a long cool-down
     // (3 min) so the camera can reap idle sessions; otherwise use the
     // normal exponential backoff capped at 5 min.
+    //
+    // Cameras that close the connection within 30s of opening it ("End of
+    // file" exits) are usually mid-WiFi-blip — multiplying restartCount
+    // pushes the next retry out further so we stop spamming dozens of
+    // 6-second segments per minute on a chronically-bad link.
     const isSessionExhausted = /454.*Session Not Found/i.test(reason);
+    const ranLessThan30s = Date.now() - streamProc.startedAt.getTime() < 30_000;
+    if (ranLessThan30s) streamProc.restartCount++;
     const MAX_DELAY_MS = 300_000;
     const delay = isSessionExhausted
       ? 180_000
@@ -547,6 +554,10 @@ class StreamManager {
     streamProc.pid = proc.pid;
 
     this.attachProcessHandlers(streamProc);
+
+    // Reset uptime stamp so the "ran less than 30s" backoff escalation in
+    // handleProcessExit measures the most recent run, not the original boot.
+    streamProc.startedAt = new Date();
 
     // Reset retry counter on successful restart
     streamProc.restartCount = 0;
