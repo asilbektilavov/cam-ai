@@ -268,10 +268,12 @@ export async function POST(
     }
   }
 
-  // Start recording if autoRecord is enabled (best-effort, don't block monitoring)
+  // Start recording if autoRecord is enabled (best-effort, don't block monitoring).
+  // Recording uses the camera's direct RTSP URL (StreamManager default) — the
+  // go2rtc proxy needs warm-up time we can't guarantee at start, and we'd
+  // rather pay one extra RTSP session than risk a gap in the archive.
   if (shouldRecord) {
-    const go2rtcStreamUrl = `rtsp://localhost:8554/${id}`;
-    streamManager.startStream(id, go2rtcStreamUrl).catch(err => {
+    streamManager.startStream(id).catch(err => {
       console.warn(`[Monitor] Auto-record failed for ${id}:`, err instanceof Error ? err.message : err);
     });
   }

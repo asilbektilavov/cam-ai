@@ -131,11 +131,14 @@ class StreamManager {
       },
     });
 
-    // Build ffmpeg args — explicit override wins, then per-camera flag, then direct RTSP.
-    // Routing through go2rtc lets one producer feed both HLS recording and the
-    // browser viewer instead of opening two sessions to the camera.
-    const { getEffectiveStreamUrl } = await import('./go2rtc-manager');
-    const effectiveStreamUrl = streamUrlOverride || getEffectiveStreamUrl(camera);
+    // Build ffmpeg args. Recording always goes direct to the camera, even
+    // when other AI consumers route through go2rtc — the proxy needs a
+    // warm-up window we can't guarantee on cold boot, and a missed segment
+    // breaks the archive permanently. Direct RTSP costs one extra session
+    // per camera but each cam holds 4 slots and recording is the most
+    // operationally important consumer. An explicit override (e.g. test
+    // harness pointing at a fixture) still wins.
+    const effectiveStreamUrl = streamUrlOverride || camera.streamUrl;
     const ffmpegArgs = this.buildFfmpegArgs(effectiveStreamUrl, liveDir, recordDir);
 
     // Spawn ffmpeg
