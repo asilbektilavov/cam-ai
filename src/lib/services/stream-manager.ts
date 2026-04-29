@@ -328,14 +328,14 @@ class StreamManager {
     ];
 
     // --- Output: archive segments (HLS recording only) ---
-    // 5-minute segments are easier to scrub than 1-minute fragments and
-    // halve the directory chatter. ffmpeg cuts cleanly on the next keyframe
-    // so playback stays seamless.
+    // 10-minute segments balance scrub-ability against the on-demand
+    // HEVC→H264 transcode delay when an operator opens an archive clip.
+    // ffmpeg cuts on the next keyframe so playback stays seamless.
     const archiveSegmentPattern = path.join(recordDir, '%Y-%m-%d_%H-%M-%S.ts');
     const archivePlaylist = path.join(recordDir, 'index.m3u8');
     const archiveArgs: string[] = [
       '-f', 'segment',
-      '-segment_time', '300',
+      '-segment_time', '600',
       '-segment_format', 'mpegts',
       '-strftime', '1',
       '-segment_list', archivePlaylist,

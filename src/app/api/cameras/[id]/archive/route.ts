@@ -214,7 +214,7 @@ async function listSegments(
     parsed.push({ file, size: s, startMs, mtimeMs });
   }
 
-  const SEGMENT_TIME_S = 300; // recorder's -segment_time, used as a sane default
+  const SEGMENT_TIME_S = 600; // recorder's -segment_time, used as a sane default
   const segments: SegmentInfo[] = parsed.map((p, i) => {
     let duration = SEGMENT_TIME_S;
     if (p.startMs !== null) {
