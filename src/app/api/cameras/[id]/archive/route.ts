@@ -190,14 +190,18 @@ async function listSegments(
     .sort();
 
   // Parse start times from filenames: "2026-04-26_14-26-16.ts" → epoch ms.
-  // Duration of segment N = startTime[N+1] - startTime[N].
-  // The recorder uses segment_time=60 so the last segment is ~60s by default.
-  type Parsed = { file: string; size: number; startMs: number | null };
+  // Duration of segment N = startTime[N+1] - startTime[N]. For the last
+  // (still-recording) segment we fall back to mtime - startTime, which
+  // tracks an in-progress file as it grows.
+  type Parsed = { file: string; size: number; startMs: number | null; mtimeMs: number };
   const parsed: Parsed[] = [];
   for (const file of tsFiles) {
     let s = 0;
+    let mtimeMs = 0;
     try {
-      s = (await stat(path.join(dirPath, file))).size;
+      const st = await stat(path.join(dirPath, file));
+      s = st.size;
+      mtimeMs = st.mtimeMs;
     } catch { continue; }
 
     // Match YYYY-MM-DD_HH-MM-SS.ts (ffmpeg strftime output)
@@ -207,21 +211,27 @@ async function listSegments(
       // Treat as UTC to avoid TZ-induced negative gaps; only the diff matters
       startMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
     }
-    parsed.push({ file, size: s, startMs });
+    parsed.push({ file, size: s, startMs, mtimeMs });
   }
 
+  const SEGMENT_TIME_S = 300; // recorder's -segment_time, used as a sane default
   const segments: SegmentInfo[] = parsed.map((p, i) => {
-    let duration = 60; // default — matches segment_time in stream-manager
+    let duration = SEGMENT_TIME_S;
     if (p.startMs !== null) {
       const next = parsed[i + 1];
       if (next?.startMs && next.startMs > p.startMs) {
         const diff = (next.startMs - p.startMs) / 1000;
-        // Sanity: clamp to [0.5s, 600s]
-        if (diff >= 0.5 && diff <= 600) duration = diff;
+        if (diff >= 0.5 && diff <= 1800) duration = diff;
+      } else if (p.mtimeMs > p.startMs) {
+        // Last file (no following segment) — use mtime to reflect the
+        // current length of the in-progress recording. Caps at the
+        // configured segment_time to avoid showing stale clock skew.
+        const mtimeDiff = (p.mtimeMs - p.startMs) / 1000;
+        if (mtimeDiff > 0 && mtimeDiff <= SEGMENT_TIME_S * 2) duration = mtimeDiff;
       }
     } else {
-      // Fallback for non-strftime names: assume 2 Mbps
-      duration = Math.max(1, Math.min(600, p.size / 250_000));
+      // Fallback for non-strftime names: assume ~2 Mbps
+      duration = Math.max(1, Math.min(1800, p.size / 250_000));
     }
     return {
       name: p.file,
