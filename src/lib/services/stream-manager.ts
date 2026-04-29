@@ -290,14 +290,14 @@ class StreamManager {
     ];
 
     if (!isHttp) {
-      // RTSP input with TCP transport. -rw_timeout fires if the camera
-      // stops sending data mid-stream (10s) — without it ffmpeg can hang
-      // forever on a half-open WiFi connection until our 5s SIGINT timer
-      // wins. -stimeout is the connect deadline.
+      // RTSP input with TCP transport. ffmpeg 8.x renamed -stimeout to
+      // -timeout for RTSP and folded the read/write deadlines into the
+      // same flag, so we just set one generous value: connect AND read
+      // both have to finish within 10s before ffmpeg gives up and we
+      // restart.
       inputArgs.push(
         '-rtsp_transport', 'tcp',
-        '-stimeout', '5000000',
-        '-rw_timeout', '10000000',
+        '-timeout', '10000000',
       );
     }
 
