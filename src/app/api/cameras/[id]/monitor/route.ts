@@ -117,6 +117,7 @@ async function stopPlateCamera(cameraId: string) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ camera_id: cameraId }),
+    signal: AbortSignal.timeout(4000),
   });
   if (!resp.ok) {
     const err = await resp.text();
@@ -128,10 +129,14 @@ async function stopExternalCamera(serviceUrl: string, cameraId: string) {
   const form = new URLSearchParams();
   form.append('camera_id', cameraId);
 
+  // 4s timeout — without it the UI hangs forever if the Python service is
+  // wedged. The DB flip already happened by this point so a missed stop
+  // signal is at worst a stale watcher we'll reconcile on the next poll.
   const resp = await fetch(`${serviceUrl}/cameras/stop`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
+    signal: AbortSignal.timeout(4000),
   });
   if (!resp.ok) {
     const err = await resp.text();
@@ -298,56 +303,35 @@ export async function DELETE(
   });
   if (!camera) return notFound('Camera not found');
 
+  // Flip DB first so the UI button stops spinning even if a downstream
+  // service is wedged. Cleanup runs after with strict timeouts.
+  await prisma.camera.update({
+    where: { id },
+    data: { isMonitoring: false, status: 'offline' },
+  });
+
   if (camera.purpose.startsWith('attendance_') || camera.purpose === 'people_search') {
-    try {
-      await stopExternalCamera(ATTENDANCE_SERVICE_URL, id);
-    } catch {
-      // Attendance service may be down, still update DB
-    }
+    void stopExternalCamera(ATTENDANCE_SERVICE_URL, id).catch(() => {});
     void go2rtcManager.removeStream(id);
-    await prisma.camera.update({
-      where: { id },
-      data: { isMonitoring: false, status: 'offline' },
-    });
   } else if (camera.purpose === 'lpr') {
-    try {
-      await stopPlateCamera(id);
-    } catch {
-      // Plate service may be down
-    }
+    void stopPlateCamera(id).catch(() => {});
     void go2rtcManager.removeStream(id);
-    await prisma.camera.update({
-      where: { id },
-      data: { isMonitoring: false, status: 'offline' },
-    });
   } else if (camera.purpose === 'line_crossing') {
-    try {
-      await fetch(`${LINE_CROSSING_SERVICE_URL}/cameras/stop`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cameraId: id }),
-      });
-    } catch {
-      // Service may be down
-    }
+    void fetch(`${LINE_CROSSING_SERVICE_URL}/cameras/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cameraId: id }),
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => {});
     void go2rtcManager.removeStream(id);
-    await prisma.camera.update({
-      where: { id },
-      data: { isMonitoring: false, status: 'offline' },
-    });
   } else {
-    // Stop detection-service watcher
-    try {
-      await stopExternalCamera(DETECTION_SERVICE_URL, id);
-    } catch {
-      // Detection service may be down
-    }
-    // Stop CameraMonitor (motion/Gemini)
-    await cameraMonitor.stopMonitoring(id);
+    // Detection — stop service watcher and cameraMonitor in background
+    void stopExternalCamera(DETECTION_SERVICE_URL, id).catch(() => {});
+    void cameraMonitor.stopMonitoring(id).catch(() => {});
   }
 
-  // Stop recording if active
-  await streamManager.stopStream(id).catch(err => {
+  // Stop recording if active — also async, killProcess has its own 5s timeout
+  void streamManager.stopStream(id).catch((err) => {
     console.warn(`[Monitor] Failed to stop recording for ${id}:`, err instanceof Error ? err.message : err);
   });
 
