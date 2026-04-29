@@ -56,9 +56,12 @@ export async function register() {
         );
       }
 
-      // Resume HLS recording for any camera marked isRecording=true. The DB
-      // flag survived restart but the ffmpeg child process did not, so the
-      // archive silently stopped growing.
+      // Resume HLS recording for every monitoring camera. We used to gate
+      // this on isRecording=true, but graceful container shutdown reset that
+      // flag — so every redeploy silently killed the archive forever. Tying
+      // recording to isMonitoring matches operator intent (autoRecord
+      // defaults true) and is idempotent: streamManager bails early if the
+      // camera is already streaming.
       //
       // StreamManager honours camera.useGo2rtcForStream — if go2rtc is the
       // chosen path it will use the proxy URL. Cold start risk: the proxy
@@ -66,7 +69,7 @@ export async function register() {
       // "Invalid data" and the stream is marked non-recoverable. The
       // re-registration loop above runs first to give go2rtc a head start.
       const recordingCameras = await prisma.camera.findMany({
-        where: { isRecording: true },
+        where: { isMonitoring: true },
         select: { id: true, name: true },
       });
       if (recordingCameras.length > 0) {

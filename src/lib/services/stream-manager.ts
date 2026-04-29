@@ -180,8 +180,12 @@ class StreamManager {
     return this.buildStreamInfo(streamProc);
   }
 
-  /** Stop streaming and recording for a camera. */
-  async stopStream(cameraId: string): Promise<void> {
+  /** Stop streaming and recording for a camera.
+   *  @param preserveDbState — when true (e.g. graceful container shutdown),
+   *  leave isRecording=true in the DB so the next boot's instrumentation
+   *  hook can resume the recorder. Without this every restart silently
+   *  killed the archive. */
+  async stopStream(cameraId: string, preserveDbState = false): Promise<void> {
     const streamProc = this.streams.get(cameraId);
     if (!streamProc) {
       console.log(`[StreamManager] Camera ${cameraId} is not streaming`);
@@ -206,10 +210,12 @@ class StreamManager {
     await this.cleanupLiveSegments(streamProc.liveDir);
 
     // Update camera status
-    await prisma.camera.update({
-      where: { id: cameraId },
-      data: { isStreaming: false, isRecording: false },
-    });
+    if (!preserveDbState) {
+      await prisma.camera.update({
+        where: { id: cameraId },
+        data: { isStreaming: false, isRecording: false },
+      });
+    }
 
     this.streams.delete(cameraId);
 
@@ -246,7 +252,7 @@ class StreamManager {
     );
 
     const stopPromises = Array.from(this.streams.keys()).map((cameraId) =>
-      this.stopStream(cameraId).catch((err) =>
+      this.stopStream(cameraId, true).catch((err) =>
         console.error(
           `[StreamManager] Error stopping stream ${cameraId} during shutdown:`,
           err
@@ -318,11 +324,14 @@ class StreamManager {
     ];
 
     // --- Output: archive segments (HLS recording only) ---
+    // 5-minute segments are easier to scrub than 1-minute fragments and
+    // halve the directory chatter. ffmpeg cuts cleanly on the next keyframe
+    // so playback stays seamless.
     const archiveSegmentPattern = path.join(recordDir, '%Y-%m-%d_%H-%M-%S.ts');
     const archivePlaylist = path.join(recordDir, 'index.m3u8');
     const archiveArgs: string[] = [
       '-f', 'segment',
-      '-segment_time', '60',
+      '-segment_time', '300',
       '-segment_format', 'mpegts',
       '-strftime', '1',
       '-segment_list', archivePlaylist,

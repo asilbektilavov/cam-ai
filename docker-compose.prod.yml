@@ -49,6 +49,12 @@ services:
       # (attendance, line-crossing, go2rtc) and the bridge-network detector.
       # Used to build the URL handed to AI services when useGo2rtcForStream=true.
       - GO2RTC_RTSP_HOST=${GO2RTC_RTSP_HOST:-172.18.0.1}
+      # Container clock is UTC by default but the recorder labels segments via
+      # ffmpeg's strftime — without TZ we get UTC filenames the user has to
+      # mentally translate. Pin to Asia/Tashkent so folders, filenames, and
+      # all the JS Date.getHours() calls in StreamManager line up with the
+      # wall clock the staff sees.
+      - TZ=${TZ:-Asia/Tashkent}
       - LINE_CROSSING_SERVICE_URL=http://127.0.0.1:8004
     volumes:
       - cam-ai-data:/app/data
