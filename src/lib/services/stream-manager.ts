@@ -38,11 +38,10 @@ export interface StreamInfo {
 // ---------------------------------------------------------------------------
 
 const MAX_RESTART_RETRIES = 5;
-// Cheap IP cameras hold an idle RTSP session for 60-120s before reaping it.
-// A 2s retry guarantees we refill every slot the camera frees, so the
-// session pool stays exhausted forever and DESCRIBE returns 454 in a loop.
-// 15s lets the camera drain between attempts and is still responsive.
-const BASE_RESTART_DELAY_MS = 15_000;
+// Base delay for non-454 errors. The 454-specific 3-min cool-down in
+// handleProcessExit handles the session-pool case; for plain disconnects
+// we want to come back fast so the archive has minimal gap.
+const BASE_RESTART_DELAY_MS = 5_000;
 const DATA_DIR = path.join(process.cwd(), 'data');
 const STREAMS_DIR = path.join(DATA_DIR, 'streams');
 const DEFAULT_RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
@@ -291,10 +290,14 @@ class StreamManager {
     ];
 
     if (!isHttp) {
-      // RTSP input with TCP transport
+      // RTSP input with TCP transport. -rw_timeout fires if the camera
+      // stops sending data mid-stream (10s) — without it ffmpeg can hang
+      // forever on a half-open WiFi connection until our 5s SIGINT timer
+      // wins. -stimeout is the connect deadline.
       inputArgs.push(
         '-rtsp_transport', 'tcp',
-        '-timeout', '5000000', // 5 seconds connection timeout (microseconds)
+        '-stimeout', '5000000',
+        '-rw_timeout', '10000000',
       );
     }
 
@@ -324,9 +327,10 @@ class StreamManager {
       // Map video + optional audio (no error if audio absent)
       '-map', '0:v:0',
       '-map', '0:a:0?',
-      // Some cameras emit non-monotonic DTS after a keyframe — fix it so
-      // segments stitch cleanly.
-      '-fflags', '+genpts+igndts',
+      // genpts/igndts: cameras often emit non-monotonic DTS after a
+      // keyframe. discardcorrupt: drop bad packets instead of bailing,
+      // so a momentary WiFi blip doesn't tear down the whole segment.
+      '-fflags', '+genpts+igndts+discardcorrupt',
       '-avoid_negative_ts', 'make_zero',
     ];
 
@@ -339,6 +343,11 @@ class StreamManager {
     const archiveArgs: string[] = [
       '-f', 'segment',
       '-segment_time', '600',
+      // Cut on wall-clock 10-min boundaries (xx:00, xx:10, xx:20…). When
+      // ffmpeg restarts mid-window the next file aligns to the next
+      // boundary instead of starting at an arbitrary offset, so an
+      // operator scanning the archive sees predictable timestamps.
+      '-segment_atclocktime', '1',
       '-segment_format', 'mpegts',
       '-strftime', '1',
       '-segment_list', archivePlaylist,
