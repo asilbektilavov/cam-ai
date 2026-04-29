@@ -29,9 +29,11 @@ export function MaintenanceBanner() {
   if (!state?.active) return null;
 
   return (
-    <div className="bg-amber-500/15 border-b border-amber-500/40 text-amber-300 px-4 py-2 flex items-center gap-3 text-sm">
-      <Wrench className="h-4 w-4 shrink-0 animate-pulse" />
-      <span className="flex-1">{state.message}</span>
+    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[60] max-w-2xl w-[calc(100%-2rem)] pointer-events-none">
+      <div className="pointer-events-auto bg-amber-500 text-black border-2 border-amber-300 shadow-2xl shadow-amber-500/40 rounded-xl px-5 py-3 flex items-center gap-3 text-base font-semibold animate-pulse">
+        <Wrench className="h-6 w-6 shrink-0" />
+        <span className="flex-1 leading-tight">{state.message}</span>
+      </div>
     </div>
   );
 }
