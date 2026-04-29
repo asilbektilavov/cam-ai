@@ -433,8 +433,10 @@ class StreamManager {
       return;
     }
 
-    // Retry with exponential backoff — never give up, cap delay at 60s
-    const MAX_DELAY_MS = 60_000;
+    // Retry with exponential backoff — never give up. Cap at 5 minutes so a
+    // camera with a chronically broken WiFi link doesn't spam logs every
+    // minute; the TCP probe in restartProcess gates on reachability anyway.
+    const MAX_DELAY_MS = 300_000;
     const delay = Math.min(
       BASE_RESTART_DELAY_MS * Math.pow(2, streamProc.restartCount),
       MAX_DELAY_MS
@@ -452,6 +454,26 @@ class StreamManager {
     }, delay);
   }
 
+  /** Lightweight TCP probe for the camera's RTSP port. We use this to gate
+   *  a recorder restart so we don't pour ffmpeg invocations into a dead
+   *  WiFi link — that's how the session pool gets stuck full. */
+  private async checkReachable(streamUrl: string): Promise<boolean> {
+    const m = streamUrl.match(/@?([0-9.]+):(\d+)/) || streamUrl.match(/\/\/([^:/]+)(?::(\d+))?/);
+    if (!m) return true; // can't parse, assume reachable
+    const host = m[1];
+    const port = parseInt(m[2] || '554', 10);
+    return new Promise((resolve) => {
+      const net = require('net') as typeof import('net');
+      const sock = new net.Socket();
+      const done = (alive: boolean) => { try { sock.destroy(); } catch {} resolve(alive); };
+      sock.setTimeout(2500);
+      sock.once('connect', () => done(true));
+      sock.once('timeout', () => done(false));
+      sock.once('error', () => done(false));
+      sock.connect(port, host);
+    });
+  }
+
   private async restartProcess(
     streamProc: StreamProcess,
   ): Promise<void> {
@@ -459,6 +481,21 @@ class StreamManager {
 
     // Check if we were stopped while waiting for restart
     if (streamProc.stopping || this.shuttingDown) return;
+
+    // Don't relaunch ffmpeg if the camera (or the proxy) isn't accepting TCP
+    // right now. Each failed launch leaks an RTSP session into the camera's
+    // pool — once they fill, every subsequent attempt 454s for several
+    // minutes. Reschedule a quick recheck instead.
+    const reachable = await this.checkReachable(streamUrl);
+    if (!reachable) {
+      console.warn(
+        `[StreamManager] ${cameraId}: TCP probe failed, deferring restart 30s`
+      );
+      streamProc.restartTimer = setTimeout(() => {
+        void this.restartProcess(streamProc);
+      }, 30_000);
+      return;
+    }
 
     // Rotate recording directory to current hour — use org-specific storage path
     const recordingsBase = await getRecordingsDir(streamProc.organizationId);
