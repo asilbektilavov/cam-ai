@@ -111,16 +111,29 @@ export async function register() {
 
     // Periodic camera reachability healthcheck. Status field was set to
     // "online" once at monitoring start and never updated when the camera
-    // went physically offline. Now we TCP-ping each camera's RTSP port
-    // every 60s and update Camera.status accordingly.
+    // went physically offline. We TCP-ping each camera's RTSP port every
+    // 15s, update Camera.status when it changes, and stash the per-camera
+    // round-trip into a process-level cache that /api/cameras/health serves
+    // to the dashboard ping panel.
     const HEALTHCHECK_KEY = '__cameraHealthcheckTimer';
-    const proc = process as unknown as { [HEALTHCHECK_KEY]?: ReturnType<typeof setInterval> };
+    const HEALTH_CACHE_KEY = '__cameraHealthCache';
+    const proc = process as unknown as {
+      [HEALTHCHECK_KEY]?: ReturnType<typeof setInterval>;
+      [HEALTH_CACHE_KEY]?: Map<string, { latencyMs: number | null; alive: boolean; checkedAt: number }>;
+    };
     if (proc[HEALTHCHECK_KEY]) clearInterval(proc[HEALTHCHECK_KEY]);
+    if (!proc[HEALTH_CACHE_KEY]) proc[HEALTH_CACHE_KEY] = new Map();
+    const cache = proc[HEALTH_CACHE_KEY];
     const net = await import('net');
-    const checkOne = (host: string, port: number): Promise<boolean> =>
+    const measureOne = (host: string, port: number): Promise<{ alive: boolean; latencyMs: number | null }> =>
       new Promise((resolve) => {
         const sock = new net.Socket();
-        const done = (alive: boolean) => { try { sock.destroy(); } catch {} resolve(alive); };
+        const t0 = Date.now();
+        const done = (alive: boolean) => {
+          const latencyMs = alive ? Date.now() - t0 : null;
+          try { sock.destroy(); } catch {}
+          resolve({ alive, latencyMs });
+        };
         sock.setTimeout(2500);
         sock.once('connect', () => done(true));
         sock.once('timeout', () => done(false));
@@ -137,7 +150,8 @@ export async function register() {
           cams.map(async (c) => {
             const m = c.streamUrl.match(/@?([0-9.]+):(\d+)/);
             if (!m) return;
-            const alive = await checkOne(m[1], parseInt(m[2], 10));
+            const { alive, latencyMs } = await measureOne(m[1], parseInt(m[2], 10));
+            cache.set(c.id, { alive, latencyMs, checkedAt: Date.now() });
             const want = alive ? 'online' : 'offline';
             if (c.status !== want) {
               await prisma.camera.update({ where: { id: c.id }, data: { status: want } });
@@ -148,8 +162,8 @@ export async function register() {
         console.warn('[Healthcheck] error:', err instanceof Error ? err.message : err);
       }
     };
-    proc[HEALTHCHECK_KEY] = setInterval(runHealthcheck, 60_000);
-    setTimeout(runHealthcheck, 10_000); // initial run shortly after boot
-    console.log('[Init] Camera reachability healthcheck started (60s interval)');
+    proc[HEALTHCHECK_KEY] = setInterval(runHealthcheck, 15_000);
+    setTimeout(runHealthcheck, 5_000); // initial run shortly after boot
+    console.log('[Init] Camera reachability healthcheck started (15s interval)');
   }
 }

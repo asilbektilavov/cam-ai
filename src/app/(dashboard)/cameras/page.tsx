@@ -166,6 +166,22 @@ export default function CamerasPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Poll camera reachability cache for the per-card ping badge.
+  // Server already TCP-pings every 15s — this just reads the cache.
+  const [healthMap, setHealthMap] = useState<Record<string, { latencyMs: number | null; alive: boolean; checkedAt: number }>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const data = await apiGet<Record<string, { latencyMs: number | null; alive: boolean; checkedAt: number }>>('/api/cameras/health');
+        if (!cancelled) setHealthMap(data || {});
+      } catch { /* ignore */ }
+    };
+    void tick();
+    const id = setInterval(tick, 5_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   // Build RTSP/HTTP URL from separate fields
   const buildStreamUrl = () => {
     if (camCreds.protocol === 'http') {
@@ -1151,6 +1167,22 @@ export default function CamerasPage() {
                   <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
                     <span>{camera.resolution}</span>
                     <span>{camera.fps} FPS</span>
+                    {(() => {
+                      const h = healthMap[camera.id];
+                      if (!h) return null;
+                      if (!h.alive) {
+                        return <span className="inline-flex items-center gap-1 font-mono text-red-500"><span className="h-1.5 w-1.5 rounded-full bg-red-500" />offline</span>;
+                      }
+                      const ms = h.latencyMs ?? 0;
+                      const color = ms < 30 ? 'text-green-500 bg-green-500' : ms < 100 ? 'text-amber-500 bg-amber-500' : 'text-red-500 bg-red-500';
+                      const [textColor, bgColor] = color.split(' ');
+                      return (
+                        <span className={cn('inline-flex items-center gap-1 font-mono', textColor)}>
+                          <span className={cn('h-1.5 w-1.5 rounded-full', bgColor)} />
+                          {ms}ms
+                        </span>
+                      );
+                    })()}
                     {camera.isMonitoring && (
                       <Badge variant="secondary" className="text-[10px]">
                         Мониторинг
