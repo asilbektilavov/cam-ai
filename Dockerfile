@@ -54,6 +54,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# tzdata so the TZ env var resolves — without it Alpine silently falls back
+# to UTC and the recording archive ends up labelled in the wrong timezone.
+RUN apk add --no-cache tzdata
+
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
