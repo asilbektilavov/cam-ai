@@ -38,7 +38,11 @@ export interface StreamInfo {
 // ---------------------------------------------------------------------------
 
 const MAX_RESTART_RETRIES = 5;
-const BASE_RESTART_DELAY_MS = 2_000; // 2 seconds, doubles each retry
+// Cheap IP cameras hold an idle RTSP session for 60-120s before reaping it.
+// A 2s retry guarantees we refill every slot the camera frees, so the
+// session pool stays exhausted forever and DESCRIBE returns 454 in a loop.
+// 15s lets the camera drain between attempts and is still responsive.
+const BASE_RESTART_DELAY_MS = 15_000;
 const DATA_DIR = path.join(process.cwd(), 'data');
 const STREAMS_DIR = path.join(DATA_DIR, 'streams');
 const DEFAULT_RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
