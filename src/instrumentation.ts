@@ -74,21 +74,23 @@ export async function register() {
       });
       if (recordingCameras.length > 0) {
         const { streamManager } = await import('@/lib/services/stream-manager');
-        // Stagger after go2rtc registration so the proxy producers have time
-        // to warm up before ffmpeg connects. Cold-start "Invalid data" used
-        // to mark streams non-recoverable; we now retry, but the warm-up
-        // delay still avoids a noisy first minute of restart spam.
+        // Stagger boot recording start: 8s pause for go2rtc to warm, then
+        // launch one camera per second. Firing all 16 at once hammers
+        // go2rtc's transcoders, the network, and the camera RTSP pools in
+        // parallel, kicking everyone into a 454/Invalid-data death loop.
         setTimeout(() => {
-          for (const cam of recordingCameras) {
-            streamManager.startStream(cam.id).catch((err) =>
-              console.warn(
-                `[Init] Failed to resume recording for ${cam.name}:`,
-                err instanceof Error ? err.message : err
-              )
-            );
-          }
+          recordingCameras.forEach((cam, i) => {
+            setTimeout(() => {
+              streamManager.startStream(cam.id).catch((err) =>
+                console.warn(
+                  `[Init] Failed to resume recording for ${cam.name}:`,
+                  err instanceof Error ? err.message : err
+                )
+              );
+            }, i * 1_000);
+          });
           console.log(
-            `[Init] Resumed HLS recording for ${recordingCameras.length} camera(s)`
+            `[Init] Resuming HLS recording for ${recordingCameras.length} camera(s) (staggered 1s apart)`
           );
         }, 8_000);
       }
