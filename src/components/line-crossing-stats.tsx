@@ -41,13 +41,19 @@ export function LineCrossingStats() {
       .finally(() => setLoading(false));
   }, [days]);
 
-  // Build sorted list of days in range
+  // Build day list in Asia/Tashkent so the keys line up with the API's
+  // tzFormatter buckets — toISOString() uses UTC and rolls over five hours
+  // before local midnight, so the chart was looking at the wrong column
+  // and counts looked like they were drifting between days.
+  const tashkentFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tashkent',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
   const today = new Date();
   const dayList: string[] = [];
   for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    dayList.push(d.toISOString().slice(0, 10));
+    const d = new Date(today.getTime() - i * 86_400_000);
+    dayList.push(tashkentFormatter.format(d));
   }
 
   const dayTotals = dayList.map((d) =>
