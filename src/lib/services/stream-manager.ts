@@ -433,14 +433,15 @@ class StreamManager {
       return;
     }
 
-    // Retry with exponential backoff — never give up. Cap at 5 minutes so a
-    // camera with a chronically broken WiFi link doesn't spam logs every
-    // minute; the TCP probe in restartProcess gates on reachability anyway.
+    // 454 Session Not Found means the camera's RTSP pool is exhausted —
+    // hammering it again just keeps the pool full. Force a long cool-down
+    // (3 min) so the camera can reap idle sessions; otherwise use the
+    // normal exponential backoff capped at 5 min.
+    const isSessionExhausted = /454.*Session Not Found/i.test(reason);
     const MAX_DELAY_MS = 300_000;
-    const delay = Math.min(
-      BASE_RESTART_DELAY_MS * Math.pow(2, streamProc.restartCount),
-      MAX_DELAY_MS
-    );
+    const delay = isSessionExhausted
+      ? 180_000
+      : Math.min(BASE_RESTART_DELAY_MS * Math.pow(2, streamProc.restartCount), MAX_DELAY_MS);
     streamProc.restartCount++;
 
     // Reset retry counter after sustained success (will be reset in restartProcess on success)
