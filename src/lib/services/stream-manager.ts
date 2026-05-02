@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { prisma } from '@/lib/prisma';
 import { appEvents } from './event-emitter';
+import { getEffectiveStreamUrl } from './go2rtc-manager';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -130,14 +131,15 @@ class StreamManager {
       },
     });
 
-    // Build ffmpeg args. Recording always goes direct to the camera, even
-    // when other AI consumers route through go2rtc — the proxy needs a
-    // warm-up window we can't guarantee on cold boot, and a missed segment
-    // breaks the archive permanently. Direct RTSP costs one extra session
-    // per camera but each cam holds 4 slots and recording is the most
-    // operationally important consumer. An explicit override (e.g. test
-    // harness pointing at a fixture) still wins.
-    const effectiveStreamUrl = streamUrlOverride || camera.streamUrl;
+    // Build ffmpeg args. By default recording goes direct to the camera so
+    // a single missed boot of the proxy doesn't break the archive. For
+    // cameras with multiple AI consumers that exceed the camera's RTSP
+    // session pool (DSS substream tops out at 2), `useGo2rtcForStream=true`
+    // routes the recorder through go2rtc — the proxy multiplexes one camera
+    // session across all consumers. An explicit override (e.g. test harness)
+    // still wins.
+    const effectiveStreamUrl =
+      streamUrlOverride || getEffectiveStreamUrl(camera);
     const ffmpegArgs = this.buildFfmpegArgs(effectiveStreamUrl, liveDir, recordDir);
 
     // Spawn ffmpeg
