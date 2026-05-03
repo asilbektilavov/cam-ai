@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getEffectiveStreamUrl } from '@/lib/services/go2rtc-manager';
+
+// attendance-service ALWAYS reads through the go2rtc proxy. The DSS substream
+// caps at 2 concurrent RTSP sessions; the recorder takes one directly, and
+// every additional consumer (browser preview, attendance, etc.) shares the
+// proxy's single connection. Direct RTSP from attendance was burning the
+// second slot and starving go2rtc, which surfaced as constant 454 errors
+// in browser previews.
+const GO2RTC_RTSP_HOST = process.env.GO2RTC_RTSP_HOST || '172.18.0.1';
+const GO2RTC_RTSP_PORT = process.env.GO2RTC_RTSP_PORT || '8554';
 
 // GET /api/attendance/cameras — list active attendance + people_search cameras (for attendance-service auto-recovery)
 export async function GET() {
@@ -27,7 +35,7 @@ export async function GET() {
     cameras.map((c) => ({
       id: c.id,
       name: c.name,
-      streamUrl: getEffectiveStreamUrl(c),
+      streamUrl: `rtsp://${GO2RTC_RTSP_HOST}:${GO2RTC_RTSP_PORT}/${c.id}`,
       direction: c.purpose === 'attendance_entry' ? 'entry'
         : c.purpose === 'attendance_exit' ? 'exit'
         : 'search',

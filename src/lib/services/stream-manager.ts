@@ -457,11 +457,17 @@ class StreamManager {
     // pushes the next retry out further so we stop spamming dozens of
     // 6-second segments per minute on a chronically-bad link.
     const isSessionExhausted = /454.*Session Not Found/i.test(reason);
+    // Cold-start / proxy-not-ready signatures from go2rtc when its producer
+    // hasn't finished pulling the camera yet. Retrying in 2s (instead of
+    // the exponential 5/10/20/40s) lets us catch the producer the moment
+    // it's ready instead of sliding into a 5-min backoff.
+    const isColdStart =
+      /404 Not Found|Invalid data found|Connection refused|method DESCRIBE failed: 404/i.test(reason);
     const uptimeMs = Date.now() - streamProc.startedAt.getTime();
     if (uptimeMs > 60_000) {
       // Stable run — last failure cycle is over, reset escalation
       streamProc.restartCount = 0;
-    } else if (uptimeMs < 30_000) {
+    } else if (uptimeMs < 30_000 && !isColdStart) {
       // Camera is closing on us within seconds — escalate harder so we
       // stop carving the disk into 6-second fragments on bad WiFi.
       streamProc.restartCount++;
@@ -469,7 +475,9 @@ class StreamManager {
     const MAX_DELAY_MS = 300_000;
     const delay = isSessionExhausted
       ? 180_000
-      : Math.min(BASE_RESTART_DELAY_MS * Math.pow(2, streamProc.restartCount), MAX_DELAY_MS);
+      : isColdStart
+        ? 2_000
+        : Math.min(BASE_RESTART_DELAY_MS * Math.pow(2, streamProc.restartCount), MAX_DELAY_MS);
     streamProc.restartCount++;
 
     // Reset retry counter after sustained success (will be reset in restartProcess on success)

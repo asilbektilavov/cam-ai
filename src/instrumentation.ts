@@ -54,6 +54,59 @@ export async function register() {
         console.log(
           `[Init] Re-registered go2rtc streams for ${otherCameras.length} camera(s)`
         );
+
+        // Pre-warm: actively pull a snapshot from each go2rtc stream so its
+        // producer connects to the camera before recorder/attendance ffmpeg
+        // start. Without this, downstream consumers race the producer and
+        // get 404 / "Invalid data" → 5-min backoff. Hitting frame.jpeg also
+        // makes us a real consumer, which keeps lazy producers alive long
+        // enough for the next consumer to attach.
+        const proxyHost = process.env.GO2RTC_RTSP_HOST || '172.18.0.1';
+        const proxyApi = process.env.GO2RTC_API_URL || `http://${proxyHost}:1984`;
+        const PRE_WARM_DEADLINE_MS = 60_000;
+        const PER_TRY_TIMEOUT_MS = 8_000;
+        const wantIds = otherCameras.map((c) => c.id);
+        const warmedIds = new Set<string>();
+        const t0 = Date.now();
+
+        async function pingOne(id: string): Promise<void> {
+          if (warmedIds.has(id)) return;
+          try {
+            const res = await fetch(
+              `${proxyApi}/api/frame.jpeg?src=${encodeURIComponent(id)}`,
+              { signal: AbortSignal.timeout(PER_TRY_TIMEOUT_MS) }
+            );
+            if (res.ok) {
+              const buf = await res.arrayBuffer();
+              if (buf.byteLength > 1_000) warmedIds.add(id);
+            }
+          } catch {
+            /* camera unreachable, will be retried next pass */
+          }
+        }
+
+        // First pass: hit every stream in parallel with batched-of-4 to keep
+        // the camera RTSP pools and our CPU sane.
+        for (let i = 0; i < wantIds.length; i += 4) {
+          const batch = wantIds.slice(i, i + 4);
+          await Promise.all(batch.map(pingOne));
+        }
+        // Retry stragglers until deadline
+        while (
+          warmedIds.size < wantIds.length &&
+          Date.now() - t0 < PRE_WARM_DEADLINE_MS
+        ) {
+          await new Promise((r) => setTimeout(r, 2_000));
+          const stragglers = wantIds.filter((id) => !warmedIds.has(id));
+          for (let i = 0; i < stragglers.length; i += 4) {
+            const batch = stragglers.slice(i, i + 4);
+            await Promise.all(batch.map(pingOne));
+          }
+        }
+        console.log(
+          `[Init] go2rtc pre-warm: ${warmedIds.size}/${wantIds.length} producers ready ` +
+            `in ${Math.round((Date.now() - t0) / 1000)}s`
+        );
       }
 
       // Resume HLS recording for every monitoring camera. We used to gate
@@ -74,25 +127,23 @@ export async function register() {
       });
       if (recordingCameras.length > 0) {
         const { streamManager } = await import('@/lib/services/stream-manager');
-        // Stagger boot recording start: 8s pause for go2rtc to warm, then
-        // launch one camera per second. Firing all 16 at once hammers
-        // go2rtc's transcoders, the network, and the camera RTSP pools in
-        // parallel, kicking everyone into a 454/Invalid-data death loop.
-        setTimeout(() => {
-          recordingCameras.forEach((cam, i) => {
-            setTimeout(() => {
-              streamManager.startStream(cam.id).catch((err) =>
-                console.warn(
-                  `[Init] Failed to resume recording for ${cam.name}:`,
-                  err instanceof Error ? err.message : err
-                )
-              );
-            }, i * 1_000);
-          });
-          console.log(
-            `[Init] Resuming HLS recording for ${recordingCameras.length} camera(s) (staggered 1s apart)`
-          );
-        }, 8_000);
+        // The pre-warm loop above already blocked until go2rtc producers
+        // had bytes flowing, so we can launch recorders immediately. Still
+        // staggered 1s apart to avoid a synchronous spike of 16 ffmpeg
+        // spawns (mostly a CPU/disk-IO concern, not a network one).
+        recordingCameras.forEach((cam, i) => {
+          setTimeout(() => {
+            streamManager.startStream(cam.id).catch((err) =>
+              console.warn(
+                `[Init] Failed to resume recording for ${cam.name}:`,
+                err instanceof Error ? err.message : err
+              )
+            );
+          }, i * 1_000);
+        });
+        console.log(
+          `[Init] Resuming HLS recording for ${recordingCameras.length} camera(s) (staggered 1s apart)`
+        );
       }
 
       // Reconcile attendance-service: stop stale watchers not in DB
