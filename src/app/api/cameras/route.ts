@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
       ...(branchId && { branchId }),
     },
     include: { branch: { select: { id: true, name: true } } },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
   });
 
   return NextResponse.json(cameras);

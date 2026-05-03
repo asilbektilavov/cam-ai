@@ -55,6 +55,46 @@ export async function register() {
           `[Init] Re-registered go2rtc streams for ${otherCameras.length} camera(s)`
         );
 
+        // Drop zombie streams (stale registrations from deleted cameras).
+        // These accumulate in go2rtc.yaml because the manager only adds —
+        // never prunes. A zombie with the wrong RTSP path can keep retrying
+        // a real camera's IP and steal a substream slot, which manifests as
+        // periodic 1-2s loading on the live preview. Compare go2rtc's stream
+        // list against the DB and delete anything not in the DB.
+        try {
+          const proxyApiCleanup =
+            process.env.GO2RTC_API_URL ||
+            `http://${process.env.GO2RTC_RTSP_HOST || '172.18.0.1'}:1984`;
+          const wantedIds = new Set(otherCameras.map((c) => c.id));
+          const sres = await fetch(`${proxyApiCleanup}/api/streams`, {
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (sres.ok) {
+            const streams = (await sres.json()) as Record<string, unknown>;
+            const zombies = Object.keys(streams).filter(
+              (id) => !wantedIds.has(id)
+            );
+            if (zombies.length > 0) {
+              await Promise.allSettled(
+                zombies.map((id) =>
+                  fetch(
+                    `${proxyApiCleanup}/api/streams?src=${encodeURIComponent(id)}`,
+                    { method: 'DELETE', signal: AbortSignal.timeout(3_000) }
+                  )
+                )
+              );
+              console.log(
+                `[Init] Pruned ${zombies.length} zombie go2rtc stream(s): ${zombies.join(', ')}`
+              );
+            }
+          }
+        } catch (err) {
+          console.warn(
+            '[Init] go2rtc zombie cleanup failed:',
+            err instanceof Error ? err.message : err
+          );
+        }
+
         // Pre-warm: actively pull a snapshot from each go2rtc stream so its
         // producer connects to the camera before recorder/attendance ffmpeg
         // start. Without this, downstream consumers race the producer and
@@ -107,6 +147,44 @@ export async function register() {
           `[Init] go2rtc pre-warm: ${warmedIds.size}/${wantIds.length} producers ready ` +
             `in ${Math.round((Date.now() - t0) / 1000)}s`
         );
+
+        // Keep producers alive: poll every 20s and re-ping any stream that
+        // has gone cold. go2rtc producers shut down once consumers drop —
+        // when a recorder is in backoff there's nothing else holding the
+        // producer, so the next recorder retry hits a 404 and the cycle
+        // repeats. By staying as a "background consumer" we keep producers
+        // warm and break the loop.
+        const KEEP_ALIVE_MS = 20_000;
+        const proc = process as unknown as {
+          __go2rtcKeepAliveTimer?: ReturnType<typeof setInterval>;
+        };
+        if (proc.__go2rtcKeepAliveTimer) clearInterval(proc.__go2rtcKeepAliveTimer);
+        proc.__go2rtcKeepAliveTimer = setInterval(() => {
+          (async () => {
+            try {
+              const sres = await fetch(`${proxyApi}/api/streams`, {
+                signal: AbortSignal.timeout(2000),
+              });
+              if (!sres.ok) return;
+              const streams = (await sres.json()) as Record<
+                string,
+                { producers?: Array<{ bytes_recv?: number }> }
+              >;
+              const cold = wantIds.filter((id) => {
+                const recv = streams[id]?.producers?.[0]?.bytes_recv ?? 0;
+                return recv < 1; // never received any data → producer dead/lazy
+              });
+              if (cold.length > 0) {
+                for (let i = 0; i < cold.length; i += 4) {
+                  const batch = cold.slice(i, i + 4);
+                  await Promise.all(batch.map(pingOne));
+                }
+              }
+            } catch {
+              /* ignore — try next tick */
+            }
+          })().catch(() => {});
+        }, KEEP_ALIVE_MS);
       }
 
       // Resume HLS recording for every monitoring camera. We used to gate

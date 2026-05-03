@@ -125,6 +125,9 @@ model Camera {
   // tune the "approach distance" — only people who came close enough to
   // recognise are counted, ignoring background passers-by.
   visitorMinFacePx Int              @default(80)
+  // Display order on the /cameras grid. Lower goes first; ties fall back
+  // to createdAt. Operators reorder via drag-and-drop in the UI.
+  displayOrder    Int               @default(0)
 }
 
 model AnalysisSession {

@@ -970,13 +970,37 @@ export default function CamerasPage() {
         </Card>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {cameras.map((camera) => {
+          {cameras.map((camera, idx) => {
             const motionActive = hasMotion(camera.id);
             return (
               <Card
                 key={camera.id}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', String(idx));
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                  const toIdx = idx;
+                  if (Number.isNaN(fromIdx) || fromIdx === toIdx) return;
+                  setCameras((prev) => {
+                    const next = [...prev];
+                    const [moved] = next.splice(fromIdx, 1);
+                    next.splice(toIdx, 0, moved);
+                    void apiPost('/api/cameras/reorder', {
+                      order: next.map((c) => c.id),
+                    }).catch(() => {});
+                    return next;
+                  });
+                }}
                 className={cn(
-                  'overflow-hidden transition-all duration-300',
+                  'overflow-hidden transition-all duration-300 cursor-move',
                   motionActive && 'ring-2 ring-green-500 shadow-lg shadow-green-500/20'
                 )}
               >
