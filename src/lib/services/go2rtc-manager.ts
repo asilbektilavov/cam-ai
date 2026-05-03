@@ -66,10 +66,20 @@ class Go2rtcManager {
       if (!(await this.isAvailable())) return false;
 
       let go2rtcSrc = streamUrl;
-      // Force TCP transport + H264 transcoding for RTSP streams
-      // H264 needed because many cameras stream H265 which browsers don't support
-      if (streamUrl.toLowerCase().startsWith('rtsp://') && !streamUrl.includes('#')) {
-        go2rtcSrc = 'ffmpeg:' + streamUrl + '#video=h264';
+      // Wrap RTSP in go2rtc's ffmpeg subprocess with `#video=copy` (no
+      // re-encode). The native go2rtc Go client kept getting hit with
+      // "connection reset by peer" / "i/o timeout" against these DSS units,
+      // even when only one consumer was attached. ffmpeg's RTSP client is
+      // more lenient about session negotiation. We previously used
+      // `#video=h264` to transcode HEVC → H.264 for browser playback;
+      // since the cameras are now H.264 natively, `copy` saves the libx264
+      // CPU cost AND keeps the stream stable.
+      if (
+        streamUrl.toLowerCase().startsWith('rtsp://') &&
+        !streamUrl.includes('#') &&
+        !streamUrl.startsWith('ffmpeg:')
+      ) {
+        go2rtcSrc = 'ffmpeg:' + streamUrl + '#video=copy';
       }
       if (!streamUrl.toLowerCase().startsWith('rtsp://')) {
         // Ensure we point to the MJPEG stream endpoint, not the base URL

@@ -31,7 +31,6 @@ const navItems = [
   { href: '/dashboard', label: 'Дашборд', icon: LayoutDashboard },
   { href: '/cameras', label: 'Камеры', icon: Camera },
   { href: '/archive', label: 'Архив', icon: Archive },
-  { href: '/person-search', label: 'Поиск людей', icon: ScanFace },
   { href: '/attendance', label: 'Посещаемость', icon: UserCheck },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3 },
   { href: '/storage', label: 'Хранилище', icon: HardDrive },

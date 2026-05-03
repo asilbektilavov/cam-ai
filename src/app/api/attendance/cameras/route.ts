@@ -19,6 +19,7 @@ export async function GET() {
       onvifPort: true,
       onvifUser: true,
       onvifPass: true,
+      visitorMinFacePx: true,
     },
   });
 
@@ -34,6 +35,7 @@ export async function GET() {
       onvifPort: c.onvifPort || 80,
       onvifUser: c.onvifUser || 'admin',
       onvifPass: c.onvifPass || '',
+      visitorMinFacePx: c.visitorMinFacePx,
     }))
   );
 }

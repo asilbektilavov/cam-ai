@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
   // Convert to Detection format
   const detections = faces.map((f) => ({
     type: 'face',
-    label: f.name || 'Unknown',
+    label: f.name || 'Посетитель',
     confidence: f.confidence,
     bbox: f.bbox,
     classId: -1,

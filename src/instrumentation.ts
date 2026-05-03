@@ -157,11 +157,16 @@ export async function register() {
           where: { isMonitoring: true },
           select: { id: true, status: true, streamUrl: true },
         });
+        // Probe HTTP (web UI port 80), NOT RTSP (554). DSS substream tops out
+        // at 2 concurrent RTSP sessions — recorder + go2rtc already hold both,
+        // so a parallel healthcheck on 554 just times out and falsely flags
+        // every camera offline. Port 80 is the camera web UI, always served,
+        // separate from the RTSP session pool.
         await Promise.all(
           cams.map(async (c) => {
-            const m = c.streamUrl.match(/@?([0-9.]+):(\d+)/);
+            const m = c.streamUrl.match(/@?([0-9.]+):/);
             if (!m) return;
-            const { alive, latencyMs } = await measureOne(m[1], parseInt(m[2], 10));
+            const { alive, latencyMs } = await measureOne(m[1], 80);
             cache.set(c.id, { alive, latencyMs, checkedAt: Date.now() });
             const want = alive ? 'online' : 'offline';
             if (c.status !== want) {

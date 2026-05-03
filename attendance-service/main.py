@@ -36,6 +36,36 @@ POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "0.5"))  # seconds between fram
 MATCH_TOLERANCE = float(os.getenv("MATCH_TOLERANCE", "0.55"))  # lower = stricter
 COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "120"))  # 2 min cooldown per (person, camera)
 
+# --- Visitor counter ---
+# Attraction-entry counter for an amusement-park camera. ONE count per
+# actual approach: a person walks up to the entrance, is registered, joins
+# the queue, rides, leaves. They only count again if they come back later
+# for another ride. The trick is doing this without timed cooldowns
+# (which over-count anyone who lingers in queue >cooldown).
+#
+# Algorithm: in-frame tracking. Every poll cycle we refresh the
+# `last_seen_ts` of any face that's still visible. A face is considered to
+# have "left the area" only if we don't see it for VISITOR_GRACE_SECONDS
+# — long enough to actually ride the attraction. When the same face
+# reappears after that grace, it counts as a new entry.
+#
+# Net result:
+#   - person stays in queue 30 minutes → ONE count
+#   - person briefly occluded by someone else → still ONE count
+#   - server restart → recent visitors hydrated from DB so queue isn't
+#     recounted; very old visitors (>HYDRATE window) might be recounted on
+#     return (acceptable false positive once after restart)
+VISITOR_GRACE_SECONDS = int(os.getenv("VISITOR_GRACE_SECONDS", "90"))
+VISITOR_HYDRATE_SECONDS = int(os.getenv("VISITOR_HYDRATE_SECONDS", "600"))
+VISITOR_MIN_FACE_PX = int(os.getenv("VISITOR_MIN_FACE_PX", "60"))
+VISITOR_TOLERANCE = float(os.getenv("VISITOR_TOLERANCE", "0.55"))
+# Wait N seconds of continuous detection before crediting a visitor. Gives
+# the recogniser several frames to MATCH against employees before we
+# commit to "this is a stranger". Without it, a single bad-angle frame
+# would count an employee as a visitor in the first 100ms before the
+# next clean frame matches them.
+VISITOR_CONFIRM_SECONDS = float(os.getenv("VISITOR_CONFIRM_SECONDS", "3"))
+
 
 def _distance_to_confidence(distance: float) -> float:
     """Convert face_recognition distance to human-friendly confidence (0-1).
@@ -106,6 +136,19 @@ _watchers_lock = threading.Lock()
 _cooldowns: dict[tuple[str, str], float] = {}
 _cooldowns_lock = threading.Lock()
 
+# In-frame face tracker per camera. Each entry:
+#   {encoding, first_seen, last_seen, counted, is_employee}
+# - first_seen: when this face was first observed → confirm window starts here
+# - last_seen: refreshed each frame the face is visible → grace eviction
+# - counted: True once we've POSTed the visitor event (don't double-count)
+# - is_employee: True if recogniser ever matched this face to an employee
+#                during the confirm window — such faces are NEVER counted
+# Hydrated on startup from recent DB visitors so a restart doesn't re-count
+# people still in the queue.
+_in_frame: dict[str, list[dict]] = {}
+_in_frame_lock = threading.Lock()
+_in_frame_hydrated: set[str] = set()
+
 # Recent attendance events (ring buffer for /status endpoint)
 _recent_events: list[dict] = []
 _recent_events_lock = threading.Lock()
@@ -166,6 +209,157 @@ def _report_event(employee_id: str, employee_name: str, camera_id: str,
     threading.Thread(target=_push, daemon=True).start()
     log.info("ATTENDANCE: %s %s (%s) via camera %s (conf=%.2f)",
              direction.upper(), employee_name, employee_id, camera_id, confidence)
+
+
+def _hydrate_in_frame(camera_id: str) -> None:
+    """Pre-populate in-frame tracker from recent DB visitors.
+
+    Lazily called the first time a face is seen on a given camera after the
+    service starts. Without this, the first wave of detections after a
+    restart would re-count anyone who's still in the queue.
+    Hydrated entries are marked counted=True so they only act as dedup
+    anchors — not pending visits waiting for confirmation.
+    """
+    if camera_id in _in_frame_hydrated:
+        return
+    _in_frame_hydrated.add(camera_id)
+    try:
+        resp = httpx.get(
+            f"{CAM_AI_API_URL}/api/visitors/recent-encodings",
+            params={"cameraId": camera_id, "seconds": VISITOR_HYDRATE_SECONDS},
+            headers={"x-attendance-sync": "true",
+                     **({"x-api-key": API_KEY} if API_KEY else {})},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return
+        data = resp.json()
+        now = time.time()
+        seeded = []
+        for item in data.get("items", []):
+            enc = np.array(item["encoding"])
+            ts_str = item.get("timestamp", "")
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                ts = now
+            seeded.append({
+                "encoding": enc,
+                "first_seen": ts,
+                "last_seen": ts,
+                "counted": True,        # already in DB
+                "is_employee": False,
+            })
+        if seeded:
+            with _in_frame_lock:
+                _in_frame.setdefault(camera_id, []).extend(seeded)
+            log.info("Visitor dedup hydrated for %s: %d recent encodings", camera_id, len(seeded))
+    except Exception as e:
+        log.debug("Visitor hydrate %s failed: %s", camera_id, e)
+
+
+def _track_face(camera_id: str, encoding: np.ndarray, face_width_px: int,
+                min_face_px: int, is_employee: bool) -> bool:
+    """Update in-frame tracker for one detected face.
+
+    Caller passes `is_employee=True` when the recogniser matched this face
+    to an employee on the current frame (so we permanently mark the entry
+    as staff and never count them as a visitor). For unknown faces, we wait
+    VISITOR_CONFIRM_SECONDS of continuous visibility before crediting a
+    visitor — that window gives the recogniser several attempts to match
+    them as an employee from a better angle.
+
+    Returns True iff THIS call promoted a pending unknown face to a counted
+    visitor (one True per actual visitor count).
+    """
+    _hydrate_in_frame(camera_id)
+    now = time.time()
+    cutoff = now - VISITOR_GRACE_SECONDS
+
+    promoted = False
+    with _in_frame_lock:
+        recent = _in_frame.setdefault(camera_id, [])
+        recent[:] = [r for r in recent if r["last_seen"] >= cutoff]
+
+        match: dict | None = None
+        if recent:
+            recent_encs = np.array([r["encoding"] for r in recent])
+            distances = np.linalg.norm(recent_encs - encoding, axis=1)
+            best_idx = int(np.argmin(distances))
+            if distances[best_idx] <= VISITOR_TOLERANCE:
+                match = recent[best_idx]
+
+        if match is None:
+            # First time we see this face — start the confirm timer.
+            match = {
+                "encoding": encoding.copy(),
+                "first_seen": now,
+                "last_seen": now,
+                "counted": False,
+                "is_employee": is_employee,
+            }
+            recent.append(match)
+        else:
+            match["last_seen"] = now
+            if is_employee:
+                # Once we've ever matched as employee, stay employee.
+                match["is_employee"] = True
+
+        # Decide whether to promote to a counted visitor.
+        if (
+            not match["counted"]
+            and not match["is_employee"]
+            and face_width_px >= min_face_px
+            and (now - match["first_seen"]) >= VISITOR_CONFIRM_SECONDS
+        ):
+            match["counted"] = True
+            promoted = True
+
+    return promoted
+
+
+def _report_visitor(camera_id: str, encoding: np.ndarray, frame: np.ndarray,
+                    bbox: tuple[int, int, int, int], min_face_px: int) -> bool:
+    """Wrapper kept for compatibility — handles the unknown-face path.
+
+    Detection loop calls this for every face WITHOUT an employee match.
+    We update the in-frame tracker and POST a visitor event only when the
+    face has been visibly continuous long enough (VISITOR_CONFIRM_SECONDS)
+    to rule out a missed employee match.
+    """
+    top, right, bottom, left = bbox
+    face_width = right - left
+
+    if not _track_face(camera_id, encoding, face_width, min_face_px,
+                       is_employee=False):
+        return False
+
+    payload = {
+        "cameraId": camera_id,
+        "faceDescriptor": encoding.tolist(),
+        "faceWidthPx": int(face_width),
+        "confidence": 0.85,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    def _push():
+        try:
+            resp = httpx.post(
+                f"{CAM_AI_API_URL}/api/visitors/event",
+                json=payload,
+                headers={"x-attendance-sync": "true",
+                         **({"x-api-key": API_KEY} if API_KEY else {})},
+                timeout=10,
+            )
+            if resp.status_code >= 400:
+                log.warning("Visitor API %s: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            log.warning("Failed to push visitor: %s", e)
+
+    threading.Thread(target=_push, daemon=True).start()
+    log.info("VISITOR counted on camera %s (face %dpx, confirmed)",
+             camera_id, face_width)
+    return True
 
 
 def _report_search_sighting(person_id: str, person_name: str, camera_id: str,
@@ -391,11 +585,17 @@ class CameraWatcher(threading.Thread):
                  auto_zoom_enabled: bool = False,
                  ptz_host: str = "", ptz_port: int = 80,
                  ptz_user: str = "admin", ptz_pass: str = "",
+                 visitor_min_face_px: int | None = None,
                  **_kwargs):
         super().__init__(daemon=True)
         self.camera_id = camera_id
         self.stream_url = stream_url
         self.direction = direction  # "entry", "exit", or "search"
+        # Per-camera distance threshold for the visitor counter. Falls back to
+        # the global VISITOR_MIN_FACE_PX env when the API doesn't supply one.
+        self.visitor_min_face_px = (
+            visitor_min_face_px if visitor_min_face_px is not None else VISITOR_MIN_FACE_PX
+        )
         self._stop_event = threading.Event()
         self.fps = 0.0
         self.last_frame_time = 0.0
@@ -689,13 +889,14 @@ class CameraWatcher(threading.Thread):
 
             is_search = self.direction == "search"
 
-            # Load employee encodings (for attendance cameras)
-            emp_encodings = emp_ids = emp_names = []
-            if not is_search:
-                with _employees_lock:
-                    emp_encodings = [e["encoding"] for e in _employees] if _employees else []
-                    emp_ids = [e["id"] for e in _employees] if _employees else []
-                    emp_names = [e["name"] for e in _employees] if _employees else []
+            # Load employee encodings. Need them on every camera (including
+            # `search`/visitor-counter cameras) so we can EXCLUDE staff from
+            # the visitor count. Attendance check-in events are still only
+            # emitted by entry/exit cameras (gated below by direction).
+            with _employees_lock:
+                emp_encodings = [e["encoding"] for e in _employees] if _employees else []
+                emp_ids = [e["id"] for e in _employees] if _employees else []
+                emp_names = [e["name"] for e in _employees] if _employees else []
 
             # Load search person encodings (for ALL cameras)
             sp_encodings = sp_ids = sp_names = []
@@ -732,7 +933,9 @@ class CameraWatcher(threading.Thread):
                         )
                         self.matches_found += 1
 
-                # 2) Check employees (only for attendance cameras)
+                # 2) Check employees. On entry/exit cameras this records
+                # attendance; on search/visitor cameras it only flags the
+                # face as recognised so the visitor counter skips it.
                 if not matched_name and emp_encodings:
                     emp_distances = face_recognition.face_distance(emp_encodings, enc)
                     emp_best_idx = int(np.argmin(emp_distances))
@@ -741,20 +944,40 @@ class CameraWatcher(threading.Thread):
                     if emp_best_dist <= MATCH_TOLERANCE:
                         matched_name = emp_names[emp_best_idx]
                         confidence = _distance_to_confidence(emp_best_dist)
-                        snapshot = _frame_to_b64_jpeg(frame)
-                        direction = "check_in" if self.direction == "entry" else "check_out"
-                        _report_event(
-                            emp_ids[emp_best_idx],
-                            matched_name,
-                            self.camera_id,
-                            direction,
-                            confidence,
-                            snapshot,
-                        )
+                        if not is_search:
+                            snapshot = _frame_to_b64_jpeg(frame)
+                            direction = "check_in" if self.direction == "entry" else "check_out"
+                            _report_event(
+                                emp_ids[emp_best_idx],
+                                matched_name,
+                                self.camera_id,
+                                direction,
+                                confidence,
+                                snapshot,
+                            )
                         self.matches_found += 1
 
                 if matched_name:
                     recognized_faces[i] = matched_name
+                    # Mark this face as employee in the in-frame tracker so
+                    # any pending visitor count for it (started a few frames
+                    # ago when we hadn't matched yet) is cancelled.
+                    _track_face(
+                        self.camera_id, enc, right - left,
+                        self.visitor_min_face_px, is_employee=True,
+                    )
+                else:
+                    # Unknown face — track it; counted only after
+                    # VISITOR_CONFIRM_SECONDS of continuous detection
+                    # without ever matching an employee. The per-camera
+                    # min-face threshold filters out background passers-by.
+                    _report_visitor(
+                        self.camera_id,
+                        enc,
+                        frame,
+                        bbox=(top, right, bottom, left),
+                        min_face_px=self.visitor_min_face_px,
+                    )
 
                 # Normalized bbox (0-1) for browser overlay
                 face_events.append({
@@ -963,7 +1186,8 @@ async def start_camera(camera_id: str = Form(...),
                        onvif_port: int = Form(80),
                        onvif_user: str = Form(""),
                        onvif_pass: str = Form(""),
-                       auto_zoom: bool = Form(False)):
+                       auto_zoom: bool = Form(False),
+                       visitor_min_face_px: int = Form(0)):
     """Start watching a camera for face recognition."""
     if direction not in ("entry", "exit", "search"):
         raise HTTPException(status_code=400, detail="direction must be 'entry', 'exit', or 'search'")
@@ -979,12 +1203,14 @@ async def start_camera(camera_id: str = Form(...),
             ptz_port=onvif_port,
             ptz_user=onvif_user,
             ptz_pass=onvif_pass,
+            visitor_min_face_px=visitor_min_face_px or None,
         )
         watcher.start()
         _watchers[camera_id] = watcher
 
     return {"status": "started", "camera_id": camera_id, "direction": direction,
-            "auto_zoom": auto_zoom, "ptz_host": onvif_host}
+            "auto_zoom": auto_zoom, "ptz_host": onvif_host,
+            "visitor_min_face_px": watcher.visitor_min_face_px}
 
 
 @app.post("/cameras/stop")
@@ -1191,6 +1417,7 @@ async def _startup():
                 ptz_port = cam.get("onvifPort", 80)
                 ptz_user = cam.get("onvifUser", "admin")
                 ptz_pass = cam.get("onvifPass", "")
+                visitor_min_face = cam.get("visitorMinFacePx") or None
                 with _watchers_lock:
                     if cam_id in _watchers and _watchers[cam_id].is_alive():
                         continue
@@ -1199,6 +1426,7 @@ async def _startup():
                         auto_zoom_enabled=bool(ptz_host),
                         ptz_host=ptz_host, ptz_port=ptz_port,
                         ptz_user=ptz_user, ptz_pass=ptz_pass,
+                        visitor_min_face_px=visitor_min_face,
                     )
                     watcher.start()
                     _watchers[cam_id] = watcher

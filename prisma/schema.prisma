@@ -33,6 +33,7 @@ model Organization {
   automationRules AutomationRule[]
   employees       Employee[]
   telegramSubs    TelegramSubscriber[]
+  visitors        Visitor[]
 }
 
 model TelegramSubscriber {
@@ -117,8 +118,13 @@ model Camera {
   recordings      Recording[]
   detectionZones  DetectionZone[]
   plateDetections PlateDetection[]
+  visitors        Visitor[]
   privacyMasks    String?           // JSON array of mask zones
   tripwireLine    String?           // JSON: {x1,y1,x2,y2,enabled} normalized 0-1 coords
+  // Minimum face width (px) before a visitor is counted. Lets each camera
+  // tune the "approach distance" — only people who came close enough to
+  // recognise are counted, ignoring background passers-by.
+  visitorMinFacePx Int              @default(80)
 }
 
 model AnalysisSession {
@@ -477,4 +483,25 @@ model AutomationRule {
   triggerCount   Int          @default(0)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+// --- Visitor Counter ---
+// One row per unique unknown face that approached a camera. Employees never
+// land here — they go to AttendanceRecord. Same person re-appearing within
+// the cooldown window is deduped by the attendance-service via face-distance
+// comparison against recent encodings.
+model Visitor {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cameraId        String
+  camera          Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  faceDescriptor  String       // 128-D face encoding (JSON array) — for de-dup across detections
+  snapshotPath    String?      // path under data/visitor-snapshots/<orgId>/
+  faceWidthPx     Int          @default(0) // distance proxy: bigger = closer
+  confidence      Float        @default(0)
+  timestamp       DateTime     @default(now())
+
+  @@index([organizationId, timestamp])
+  @@index([cameraId, timestamp])
 }

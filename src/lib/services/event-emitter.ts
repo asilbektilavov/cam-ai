@@ -42,7 +42,8 @@ export interface CameraEvent {
     | 'behavior_alert'
     | 'speed_alert'
     | 'occupancy_update'
-    | 'face_detected';
+    | 'face_detected'
+    | 'visitor_counted';
   cameraId: string;
   organizationId: string;
   branchId: string;

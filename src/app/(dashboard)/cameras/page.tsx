@@ -98,7 +98,7 @@ export default function CamerasPage() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [togglingMonitor, setTogglingMonitor] = useState<string | null>(null);
   const [snapshotTick, setSnapshotTick] = useState(0);
-  const [editForm, setEditForm] = useState({ streamUrl: '', name: '', location: '', purpose: 'detection' });
+  const [editForm, setEditForm] = useState({ streamUrl: '', name: '', location: '', purpose: 'people_search' });
   const [saving, setSaving] = useState(false);
   const [newCamera, setNewCamera] = useState({
     name: '',
@@ -106,7 +106,7 @@ export default function CamerasPage() {
     streamUrl: '',
     resolution: '1920x1080',
     fps: 30,
-    purpose: 'detection',
+    purpose: 'people_search',
   });
   const [camCreds, setCamCreds] = useState({
     ip: '',
@@ -135,7 +135,7 @@ export default function CamerasPage() {
   const [showCredentials, setShowCredentials] = useState(false);
   const [addingCameraIp, setAddingCameraIp] = useState<string | null>(null);
   const [testingCameraIp, setTestingCameraIp] = useState<string | null>(null);
-  const [quickAddPurpose, setQuickAddPurpose] = useState('detection');
+  const [quickAddPurpose, setQuickAddPurpose] = useState('people_search');
 
   const router = useRouter();
   const { hasMotion } = useMotionTracker();
@@ -405,7 +405,7 @@ export default function CamerasPage() {
         venueType: purposeVenueMap[newCamera.purpose] || 'retail',
       });
       toast.success(`Камера "${newCamera.name}" добавлена`);
-      setNewCamera({ name: '', location: '', streamUrl: '', resolution: '1920x1080', fps: 30, purpose: 'detection' });
+      setNewCamera({ name: '', location: '', streamUrl: '', resolution: '1920x1080', fps: 30, purpose: 'people_search' });
       setCamCreds({ ip: '', port: '554', username: 'admin', password: '', path: '/stream1', protocol: 'rtsp' });
       setDialogOpen(false);
       fetchCameras();
@@ -464,7 +464,7 @@ export default function CamerasPage() {
 
   const openSettings = (camera: ApiCamera) => {
     setSelectedCamera(camera.id);
-    setEditForm({ streamUrl: camera.streamUrl, name: camera.name, location: camera.location, purpose: camera.purpose || 'detection' });
+    setEditForm({ streamUrl: camera.streamUrl, name: camera.name, location: camera.location, purpose: camera.purpose || 'people_search' });
     setSettingsDialogOpen(true);
   };
 
@@ -534,25 +534,8 @@ export default function CamerasPage() {
                   onChange={(e) => setNewCamera({ ...newCamera, location: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Назначение</Label>
-                <Select
-                  value={newCamera.purpose}
-                  onValueChange={(v) => setNewCamera({ ...newCamera, purpose: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="detection">Обнаружение объектов</SelectItem>
-                    <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
-                    <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
-                    <SelectItem value="people_search">Поиск людей</SelectItem>
-                    <SelectItem value="lpr">Распознавание номеров</SelectItem>
-                    <SelectItem value="line_crossing">Пересечение линии</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* Все камеры по умолчанию работают как «people_search» — лица
+                  гостей засчитываются, сотрудники игнорируются. */}
               <div className="space-y-2">
                 <Label>Протокол</Label>
                 <Select
@@ -744,26 +727,6 @@ export default function CamerasPage() {
             )}
           </div>
 
-          {/* Purpose selector for quick add */}
-          {!scanning && discoveredCameras.length > 0 && (
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground whitespace-nowrap">Назначение:</Label>
-              <Select value={quickAddPurpose} onValueChange={setQuickAddPurpose}>
-                <SelectTrigger className="h-8 text-xs w-[200px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="detection">Обнаружение объектов</SelectItem>
-                  <SelectItem value="attendance_entry">Посещаемость — вход</SelectItem>
-                  <SelectItem value="attendance_exit">Посещаемость — выход</SelectItem>
-                  <SelectItem value="people_search">Поиск людей</SelectItem>
-                  <SelectItem value="lpr">Распознавание номеров (LPR)</SelectItem>
-                  <SelectItem value="line_crossing">Пересечение линии</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
           {/* Rescan button */}
           {!scanning && discoveredCameras.length > 0 && (
             <Button variant="outline" size="sm" onClick={handleScanNetwork} className="w-fit gap-2">
@@ -945,25 +908,6 @@ export default function CamerasPage() {
                     placeholder="http://192.168.1.100:8080"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Назначение</Label>
-                  <Select
-                    value={editForm.purpose}
-                    onValueChange={(v) => setEditForm({ ...editForm, purpose: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="detection">Обнаружение объектов</SelectItem>
-                      <SelectItem value="attendance_entry">Посещаемость — камера входа</SelectItem>
-                      <SelectItem value="attendance_exit">Посещаемость — камера выхода</SelectItem>
-                      <SelectItem value="people_search">Поиск людей</SelectItem>
-                      <SelectItem value="lpr">Распознавание номеров</SelectItem>
-                      <SelectItem value="line_crossing">Пересечение линии</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <p className="text-muted-foreground">Статус</p>
@@ -1112,6 +1056,14 @@ export default function CamerasPage() {
                     <div>
                       <h3 className="font-semibold">{camera.name}</h3>
                       <p className="text-sm text-muted-foreground">{camera.location}</p>
+                      {(() => {
+                        const m = camera.streamUrl?.match(/@?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
+                        return m ? (
+                          <p className="text-xs text-muted-foreground/70 font-mono mt-0.5">
+                            IP: {m[1]}
+                          </p>
+                        ) : null;
+                      })()}
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>

@@ -23,17 +23,21 @@ export async function GET() {
     dbStatus = 'error';
   }
 
-  // ── YOLO service check ───────────────────────────────────────
-  let yoloStatus = 'ok';
+  // ── YOLO service check (optional) ────────────────────────────
+  // detection-service is deprecated — line-crossing/attendance/lpr each
+  // have their own embedded YOLO. We probe the legacy service if it
+  // happens to be running but treat its absence as `not_configured` so
+  // the overall status stays healthy.
+  let yoloStatus = 'not_configured';
   let yoloLatency = 0;
   try {
     const t = Date.now();
     const yoloUrl = process.env.YOLO_SERVICE_URL || 'http://localhost:8001';
-    const res = await fetch(`${yoloUrl}/health`, { signal: AbortSignal.timeout(5000) });
+    const res = await fetch(`${yoloUrl}/health`, { signal: AbortSignal.timeout(2000) });
     yoloLatency = Date.now() - t;
-    if (!res.ok) yoloStatus = 'error';
+    yoloStatus = res.ok ? 'ok' : 'not_configured';
   } catch {
-    yoloStatus = 'offline';
+    yoloStatus = 'not_configured';
   }
 
   // ── System metrics ───────────────────────────────────────────
@@ -192,8 +196,10 @@ export async function GET() {
     prisma.notification.count({ where: { organizationId: orgId, status: 'failed', createdAt: { gte: last24h } } }),
   ]);
 
-  const overallStatus = dbStatus === 'ok' && yoloStatus === 'ok' ? 'healthy' :
-    dbStatus === 'error' ? 'critical' : 'degraded';
+  // Overall status hinges on the database — that's the one truly required
+  // dependency. Other services (YOLO/attendance/go2rtc) are reported per
+  // line; missing one of them isn't a system-level outage.
+  const overallStatus = dbStatus === 'error' ? 'critical' : 'healthy';
 
   return NextResponse.json({
     overall: overallStatus,

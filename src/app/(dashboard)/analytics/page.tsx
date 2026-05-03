@@ -35,6 +35,7 @@ import { useAppStore } from '@/lib/store';
 import AnalyticsHeatmap from '@/components/analytics-heatmap';
 import PeopleCounterWidget from '@/components/people-counter-widget';
 import { LineCrossingStats } from '@/components/line-crossing-stats';
+import { VisitorStats } from '@/components/visitor-stats';
 
 interface AnalyticsData {
   period: string;
@@ -170,6 +171,9 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
+      {/* Visitor counter (face-based unique people, employees excluded) */}
+      <VisitorStats />
+
       {/* Line crossing stats — at top, always visible */}
       <LineCrossingStats />
 
