@@ -1,32 +1,40 @@
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Python 3.11 + OpenCV/InsightFace runtime deps. The CUDA libraries the
-# nvidia-container-runtime injects from the host take care of the rest.
+# OpenCV/InsightFace runtime deps + build tools for any wheel that needs them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3.11-venv python3-pip \
+        build-essential cmake \
+        libgl1 libglib2.0-0 libsm6 libxrender1 libxext6 \
+        && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+# onnxruntime-gpu wheels ship their own CUDA + cuDNN, so the slim base is
+# fine — we only need the host's NVIDIA driver injected by
+# nvidia-container-runtime (handled by docker compose `gpus: all`).
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download the buffalo_l ONNX models so first request is instant
+# and the container works in air-gapped deployments.
+RUN python -c "from insightface.app import FaceAnalysis; \
+    app = FaceAnalysis(name='buffalo_l', allowed_modules=['detection', 'recognition'], providers=['CPUExecutionProvider']); \
+    app.prepare(ctx_id=-1, det_size=(640, 640))"
+
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 libglib2.0-0 libsm6 libxrender1 libxext6 \
         ca-certificates \
         && rm -rf /var/lib/apt/lists/*
 
-RUN ln -sf /usr/bin/python3.11 /usr/local/bin/python && \
-    ln -sf /usr/bin/python3.11 /usr/local/bin/python3
-
-COPY requirements.txt .
-
-# Bootstrap a modern pip for Python 3.11 directly. The system pip from
-# python3-pip on Ubuntu 22.04 is too old for --break-system-packages and
-# nvidia/cuda Ubuntu doesn't ship PEP 668 markers on its python anyway.
-RUN python3.11 -m ensurepip --upgrade && \
-    python3.11 -m pip install --no-cache-dir --upgrade pip && \
-    python3.11 -m pip install --no-cache-dir -r requirements.txt
-
-# Pre-download the buffalo_l model so the first request doesn't pay the
-# download cost (and so the container works in air-gapped deployments).
-RUN python -c "from insightface.app import FaceAnalysis; \
-    app = FaceAnalysis(name='buffalo_l', allowed_modules=['detection', 'recognition'], providers=['CPUExecutionProvider']); \
-    app.prepare(ctx_id=-1, det_size=(640, 640))"
+# Bring over installed wheels and the pre-downloaded buffalo_l model.
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /root/.insightface /root/.insightface
 
 COPY main.py gpu_face.py ./
 
