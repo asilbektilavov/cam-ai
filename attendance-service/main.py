@@ -706,8 +706,11 @@ class CameraWatcher(threading.Thread):
             # Tier 0: YOLO person detection (~35ms at 320px) — zoom trigger when face too small
             # Tier 1: Fast HOG face detector (~30ms at 500px) — find faces after zoom
             # Tier 2: CNN face encoding (only AFTER zoom, when face is large) — recognize identity
-            DETECT_WIDTH = 500   # HOG face detection resolution
-            ENCODE_WIDTH = 700   # CNN encoding resolution
+            DETECT_WIDTH = 1280  # HOG face detection resolution.
+                                 # Visitor counter feeds 1920x1080 MAIN — at 500
+                                 # the downscale shrank 60-70 px faces to 16 px and
+                                 # HOG missed everyone past ~2 m from the camera.
+            ENCODE_WIDTH = 1280  # CNN encoding resolution (kept in sync)
             MIN_ENCODE_FACE_PX = 35  # min face size at DETECT_WIDTH for encoding (~200px original)
 
             if w > DETECT_WIDTH:
