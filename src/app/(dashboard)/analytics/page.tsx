@@ -34,7 +34,6 @@ import { apiGet } from '@/lib/api-client';
 import { useAppStore } from '@/lib/store';
 import AnalyticsHeatmap from '@/components/analytics-heatmap';
 import PeopleCounterWidget from '@/components/people-counter-widget';
-import { LineCrossingStats } from '@/components/line-crossing-stats';
 import { VisitorStats } from '@/components/visitor-stats';
 
 interface AnalyticsData {
@@ -173,9 +172,6 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       {/* Visitor counter (face-based unique people, employees excluded) */}
       <VisitorStats />
-
-      {/* Line crossing stats — at top, always visible */}
-      <LineCrossingStats />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
