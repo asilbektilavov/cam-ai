@@ -55,17 +55,38 @@ export async function register() {
           `[Init] Re-registered go2rtc streams for ${otherCameras.length} camera(s)`
         );
 
+        // Visitor-counter cameras (people_search) need a separate go2rtc
+        // stream pointing at the camera's MAIN sub-channel (1920x1080) so
+        // the face detector has enough pixels per face — substream's
+        // 800x448 makes faces too small for HOG to find. We register
+        // `<id>-main` next to `<id>` and the attendance-cameras endpoint
+        // hands out the -main URL for people_search cameras.
+        const visitorCams = otherCameras.filter((c) => c.purpose === 'people_search');
+        if (visitorCams.length > 0) {
+          await Promise.allSettled(
+            visitorCams.map((c) => {
+              const mainUrl = c.streamUrl.replace(/\/SUB(\?|$)/, '/MAIN$1');
+              return go2rtcManager.addStream(`${c.id}-main`, mainUrl);
+            })
+          );
+          console.log(
+            `[Init] Re-registered MAIN go2rtc streams for ${visitorCams.length} visitor-counter camera(s)`
+          );
+        }
+
         // Drop zombie streams (stale registrations from deleted cameras).
         // These accumulate in go2rtc.yaml because the manager only adds —
         // never prunes. A zombie with the wrong RTSP path can keep retrying
         // a real camera's IP and steal a substream slot, which manifests as
         // periodic 1-2s loading on the live preview. Compare go2rtc's stream
-        // list against the DB and delete anything not in the DB.
+        // list against the DB and delete anything not in the DB. Keep the
+        // `<id>-main` aliases we registered above.
         try {
           const proxyApiCleanup =
             process.env.GO2RTC_API_URL ||
             `http://${process.env.GO2RTC_RTSP_HOST || '172.18.0.1'}:1984`;
           const wantedIds = new Set(otherCameras.map((c) => c.id));
+          for (const c of visitorCams) wantedIds.add(`${c.id}-main`);
           const sres = await fetch(`${proxyApiCleanup}/api/streams`, {
             signal: AbortSignal.timeout(5_000),
           });

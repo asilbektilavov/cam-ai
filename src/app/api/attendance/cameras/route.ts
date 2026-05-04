@@ -32,18 +32,25 @@ export async function GET() {
   });
 
   return NextResponse.json(
-    cameras.map((c) => ({
-      id: c.id,
-      name: c.name,
-      streamUrl: `rtsp://${GO2RTC_RTSP_HOST}:${GO2RTC_RTSP_PORT}/${c.id}`,
-      direction: c.purpose === 'attendance_entry' ? 'entry'
-        : c.purpose === 'attendance_exit' ? 'exit'
-        : 'search',
-      onvifHost: c.onvifHost || '',
-      onvifPort: c.onvifPort || 80,
-      onvifUser: c.onvifUser || 'admin',
-      onvifPass: c.onvifPass || '',
-      visitorMinFacePx: c.visitorMinFacePx,
-    }))
+    cameras.map((c) => {
+      // Visitor counter (people_search) reads MAIN at 1920x1080 — faces on
+      // the 800x448 substream are too small (28-34 px) for the HOG detector.
+      // attendance_entry/_exit stay on substream because those cameras are
+      // mounted close to the doorway and faces fill the frame already.
+      const streamId = c.purpose === 'people_search' ? `${c.id}-main` : c.id;
+      return {
+        id: c.id,
+        name: c.name,
+        streamUrl: `rtsp://${GO2RTC_RTSP_HOST}:${GO2RTC_RTSP_PORT}/${streamId}`,
+        direction: c.purpose === 'attendance_entry' ? 'entry'
+          : c.purpose === 'attendance_exit' ? 'exit'
+          : 'search',
+        onvifHost: c.onvifHost || '',
+        onvifPort: c.onvifPort || 80,
+        onvifUser: c.onvifUser || 'admin',
+        onvifPass: c.onvifPass || '',
+        visitorMinFacePx: c.visitorMinFacePx,
+      };
+    })
   );
 }
