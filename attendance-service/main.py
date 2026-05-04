@@ -20,7 +20,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
-import face_recognition
+import gpu_face as face_recognition  # GPU-backed RetinaFace + ArcFace shim
 import httpx
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse

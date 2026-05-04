@@ -94,12 +94,24 @@ services:
     container_name: camai-attendance
     restart: unless-stopped
     network_mode: host
+    # GPU access for InsightFace (RetinaFace + ArcFace ONNX). Falls back
+    # to CPU automatically if the host has no NVIDIA driver — providers
+    # are listed in priority order in gpu_face.py.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     environment:
       - CAM_AI_API_URL=http://127.0.0.1:3000
       - ATTENDANCE_API_KEY=${ATTENDANCE_API_KEY:-}
       - POLL_INTERVAL=0.5
       - MATCH_TOLERANCE=0.45
       - COOLDOWN_SECONDS=300
+      - INSIGHTFACE_DET_SIZE=1024
+      - INSIGHTFACE_PROVIDERS=CUDAExecutionProvider,CPUExecutionProvider
 
   line-crossing:
     image: camai-line-crossing:latest
