@@ -15,10 +15,12 @@ RUN ln -sf /usr/bin/python3.11 /usr/local/bin/python && \
 
 COPY requirements.txt .
 
-# Install with --break-system-packages because Ubuntu 22.04 ships PEP 668
-# and we control this image. CPython 3.11 is the only python here.
-RUN pip install --no-cache-dir --break-system-packages --upgrade pip && \
-    pip install --no-cache-dir --break-system-packages -r requirements.txt
+# Bootstrap a modern pip for Python 3.11 directly. The system pip from
+# python3-pip on Ubuntu 22.04 is too old for --break-system-packages and
+# nvidia/cuda Ubuntu doesn't ship PEP 668 markers on its python anyway.
+RUN python3.11 -m ensurepip --upgrade && \
+    python3.11 -m pip install --no-cache-dir --upgrade pip && \
+    python3.11 -m pip install --no-cache-dir -r requirements.txt
 
 # Pre-download the buffalo_l model so the first request doesn't pay the
 # download cost (and so the container works in air-gapped deployments).
