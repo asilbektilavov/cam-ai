@@ -622,7 +622,7 @@ export default function CameraDetailPage() {
             {camera.isStreaming || camera.isMonitoring ? (
               <>
                 <Go2rtcInlinePlayer
-                  streamName={cameraId}
+                  streamName={camera.purpose === 'people_search' ? `${cameraId}-main` : cameraId}
                   className="absolute inset-0 w-full h-full"
                   protocol={camera.streamUrl.toLowerCase().startsWith('rtsp://') ? 'rtsp' : 'http'}
                   onVideoRef={handleVideoRef}
