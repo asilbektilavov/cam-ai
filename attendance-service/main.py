@@ -454,6 +454,11 @@ class FrameGrabber(threading.Thread):
         self._frame: Optional[np.ndarray] = None
         self._frame_lock = threading.Lock()
         self._connected = False
+        # Last time a frame was successfully written. The watchdog uses this
+        # to spot grabbers stuck inside cap.read() — when the go2rtc producer
+        # EOFs on a flaky DSS substream, OpenCV blocks for up to 30s before
+        # ffmpeg's own timeout fires.
+        self._last_frame_time = 0.0
         # Detect IP Webcam (HTTP without explicit video path)
         self._is_ipwebcam = (
             stream_url.startswith("http://") and
@@ -543,6 +548,45 @@ class FrameGrabber(threading.Thread):
                               # bails permanently leaves a camera blind until
                               # the whole service is restarted
 
+        # Lower OpenCV/FFMPEG read timeout from the 30s default to 8s. Cap
+        # options must be set via env BEFORE the VideoCapture is constructed.
+        # rw_timeout = 8 000 000 µs = 8s.
+        if self.stream_url.startswith("rtsp://"):
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|"
+                "analyzeduration;2000000|"
+                "fflags;nobuffer|"
+                "rw_timeout;8000000|"
+                "stimeout;8000000"
+            )
+
+        # Background watchdog: if we haven't pushed a frame for stale_secs
+        # we assume cap.read() is stuck and tear the cap down so the next
+        # loop iteration reopens it. Cheap insurance for the chronic .166/.29
+        # producers that EOF and leave the OpenCV reader hanging.
+        STALE_SECS = 8.0
+        watchdog_stop = threading.Event()
+
+        def _watchdog():
+            while not watchdog_stop.is_set():
+                time.sleep(2)
+                if not self._connected:
+                    continue
+                if self._last_frame_time == 0.0:
+                    continue
+                gap = time.time() - self._last_frame_time
+                if gap > STALE_SECS and cap is not None:
+                    log.warning("Grabber %s: no frame for %.1fs — forcing reconnect",
+                                self.camera_id, gap)
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    self._connected = False
+
+        wd = threading.Thread(target=_watchdog, daemon=True)
+        wd.start()
+
         while not self.stopped:
             if cap is None or not cap.isOpened():
                 if retry_count >= max_retries:
@@ -550,8 +594,6 @@ class FrameGrabber(threading.Thread):
                     break
                 cap = cv2.VideoCapture(self.stream_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                if self.stream_url.startswith("rtsp://"):
-                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|analyzeduration;2000000|fflags;nobuffer"
                 if not cap.isOpened():
                     retry_count += 1
                     self._connected = False
@@ -561,6 +603,7 @@ class FrameGrabber(threading.Thread):
                     continue
                 retry_count = 0
                 self._connected = True
+                self._last_frame_time = time.time()
                 log.info("Grabber %s: connected to %s", self.camera_id, self.stream_url)
 
             ret, frame = cap.read()
@@ -575,7 +618,9 @@ class FrameGrabber(threading.Thread):
             # Always overwrite with the latest frame
             with self._frame_lock:
                 self._frame = frame
+            self._last_frame_time = time.time()
 
+        watchdog_stop.set()
         if cap is not None:
             cap.release()
         self._connected = False
