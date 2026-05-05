@@ -6,7 +6,8 @@ WORKDIR /app
 # already in the base image at /usr/local/cuda — onnxruntime-gpu finds them
 # via LD_LIBRARY_PATH that nvidia/cuda sets up automatically.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3.11-venv \
+        python3.11 python3.11-venv python3.11-dev \
+        build-essential \
         libgl1 libglib2.0-0 libsm6 libxrender1 libxext6 \
         ca-certificates \
         && rm -rf /var/lib/apt/lists/*
