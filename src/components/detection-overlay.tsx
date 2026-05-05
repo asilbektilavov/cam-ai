@@ -157,8 +157,10 @@ function drawBox(
   ctx.moveTo(x + w - cl, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - cl);
   ctx.stroke();
 
-  // Label
-  const label = `${det.label} ${Math.round(det.confidence * 100)}%`;
+  // Label — show face width in canvas pixels instead of confidence %.
+  // Operators were asking how big the face actually is (visitor-counter
+  // threshold lives in pixels), the % was just a static 85 in practice.
+  const label = `${det.label} ${Math.round(w)}px`;
   ctx.font = FONT;
   const textW = ctx.measureText(label).width + 8;
   const textH = 18;
