@@ -483,7 +483,9 @@ class FrameGrabber(threading.Thread):
         base = self.stream_url.rstrip("/")
         shot_url = f"{base}/shot.jpg"
         retry_count = 0
-        max_retries = 10
+        max_retries = 999999  # effectively never give up — a watcher that
+                              # bails permanently leaves a camera blind until
+                              # the whole service is restarted
         log.info("Grabber %s: using IP Webcam mode (%s)", self.camera_id, shot_url)
 
         while not self.stopped:
@@ -537,7 +539,9 @@ class FrameGrabber(threading.Thread):
 
         cap = None
         retry_count = 0
-        max_retries = 10
+        max_retries = 999999  # effectively never give up — a watcher that
+                              # bails permanently leaves a camera blind until
+                              # the whole service is restarted
 
         while not self.stopped:
             if cap is None or not cap.isOpened():
