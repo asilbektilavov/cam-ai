@@ -129,7 +129,11 @@ function drawBox(
   const y = det.bbox.y * canvasH;
   const w = det.bbox.w * canvasW;
   const h = det.bbox.h * canvasH;
-  const color = det.color;
+  // Promote to green once the face is big enough to clear the visitor
+  // counter threshold (currently 42 px). Operators glance at the colour to
+  // see who will actually be counted.
+  const VISITOR_PX_THRESHOLD = 41;
+  const color = w > VISITOR_PX_THRESHOLD ? '#22C55E' : det.color;
 
   // Main rectangle
   ctx.strokeStyle = color;
