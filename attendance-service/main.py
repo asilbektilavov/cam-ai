@@ -655,6 +655,11 @@ class CameraWatcher(threading.Thread):
         self._stop_event = threading.Event()
         self.fps = 0.0
         self.last_frame_time = 0.0
+        # Heartbeat for the external health monitor — updated at the top of
+        # every iteration so we can spot watchers that hang inside InsightFace
+        # / cap.read() and respawn them automatically. Init to "now" so we
+        # don't immediately get killed during the first second of startup.
+        self.last_iteration_at = time.time()
         self.faces_detected = 0
         self.matches_found = 0
         # Annotated frame for MJPEG streaming
@@ -739,6 +744,7 @@ class CameraWatcher(threading.Thread):
         first_frame_logged = False
 
         while not self.stopped:
+            self.last_iteration_at = time.time()
             frame = grabber.get_latest_frame()
             if frame is None:
                 if grabber.stopped:
@@ -1497,6 +1503,74 @@ async def _startup():
             log.warning("Camera recovery failed: %s", e)
 
     threading.Thread(target=_initial_sync, daemon=True).start()
+
+    # Health monitor: respawn watchers that have stopped iterating. Both the
+    # OpenCV grabber and the InsightFace inference inside the watcher loop
+    # can hang indefinitely under bad conditions (RTSP framing corruption,
+    # CUDA contention) — without this the operator had to manually call
+    # /cameras/start to revive a frozen camera.
+    WATCHER_STALE_SECS = 45.0
+
+    def _watcher_health_monitor():
+        time.sleep(60)  # let initial recovery finish before we start judging
+        while True:
+            time.sleep(15)
+            try:
+                now = time.time()
+                stale: list[tuple[str, "CameraWatcher"]] = []
+                with _watchers_lock:
+                    for cam_id, w in list(_watchers.items()):
+                        last = getattr(w, "last_iteration_at", 0.0)
+                        if last == 0.0:
+                            continue
+                        gap = now - last
+                        if gap > WATCHER_STALE_SECS:
+                            stale.append((cam_id, w))
+                for cam_id, w in stale:
+                    log.warning(
+                        "HEALTH: watcher %s silent %.1fs — respawning",
+                        cam_id, now - getattr(w, "last_iteration_at", now),
+                    )
+                    try:
+                        # Snapshot enough state to rebuild the watcher
+                        stream_url = w.stream_url
+                        direction = w.direction
+                        ptz_host = getattr(w, "_ptz_host", "")
+                        ptz_port = getattr(w, "_ptz_port", 80)
+                        ptz_user = getattr(w, "_ptz_user", "admin")
+                        ptz_pass = getattr(w, "_ptz_pass", "")
+                        auto_zoom = getattr(w, "_auto_zoom_enabled", False)
+                        min_face_px = getattr(w, "visitor_min_face_px", None)
+                        # Signal old watcher to stop (it may not see the
+                        # flag if hung in InsightFace, but we don't wait)
+                        try:
+                            w.stop()
+                        except Exception:
+                            pass
+                        # Replace in registry — orphan thread will exit on
+                        # its own when (or if) it ever wakes up
+                        new_w = CameraWatcher(
+                            camera_id=cam_id,
+                            stream_url=stream_url,
+                            direction=direction,
+                            auto_zoom_enabled=auto_zoom,
+                            ptz_host=ptz_host, ptz_port=ptz_port,
+                            ptz_user=ptz_user, ptz_pass=ptz_pass,
+                            visitor_min_face_px=min_face_px,
+                        )
+                        with _watchers_lock:
+                            _watchers[cam_id] = new_w
+                        new_w.start()
+                        log.info("HEALTH: watcher %s respawned", cam_id)
+                    except Exception as e:
+                        log.warning(
+                            "HEALTH: respawn failed for %s: %s", cam_id, e
+                        )
+            except Exception as e:
+                log.warning("Health monitor tick failed: %s", e)
+
+    threading.Thread(target=_watcher_health_monitor, daemon=True, name="WatcherHealth").start()
+    log.info("Watcher health monitor started (stale threshold %.0fs)", WATCHER_STALE_SECS)
 
 
 if __name__ == "__main__":

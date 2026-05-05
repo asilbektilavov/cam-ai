@@ -77,14 +77,20 @@ def _get_app():
         return _app
 
 
-# No cache. The first version keyed on id(numpy_array), but Python reuses
-# memory addresses across watcher threads, so a fresh frame from one
-# camera kept hitting another camera's cached detections — every watcher
-# logged identical face sizes. Detection on GPU is fast enough that
-# always re-running it is the right call.
+# Global inference lock: onnxruntime-gpu under heavy multi-threading
+# occasionally blocked indefinitely on CUDA context contention, hanging
+# watchers until the whole service was restarted. Serialising inference
+# costs us multi-thread throughput but the GTX 1650 only has one CUDA
+# context anyway — 14 watchers were waiting on each other under the hood
+# already, only without a deadline. With a single lock, ~80 ms per call
+# × 14 cameras = ~1.1 s per round, well under the 0.5 s POLL_INTERVAL.
+_inference_lock = threading.Lock()
+
+
 def _detect(image_rgb: np.ndarray) -> list:
     bgr = image_rgb[:, :, ::-1] if image_rgb.shape[-1] == 3 else image_rgb
-    return _get_app().get(bgr)
+    with _inference_lock:
+        return _get_app().get(bgr)
 
 
 def face_locations(
@@ -148,7 +154,8 @@ def face_encodings(
         # Aligned 112x112 — recognition model crops + normalises internally
         # via get_feat which accepts an arbitrary BGR face crop.
         try:
-            emb = rec_model.get_feat(crop).flatten()
+            with _inference_lock:
+                emb = rec_model.get_feat(crop).flatten()
             n = np.linalg.norm(emb)
             if n > 0:
                 emb = emb / n
