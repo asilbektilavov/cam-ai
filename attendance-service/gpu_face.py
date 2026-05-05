@@ -1,16 +1,15 @@
-"""GPU-accelerated drop-in for the four face_recognition functions main.py uses.
+"""Drop-in for the four face_recognition functions main.py uses.
 
-InsightFace (RetinaFace + ArcFace) replaces dlib HOG/CNN. The CUDA execution
-provider runs detection and embedding on the host GPU; falls back to CPU if
-the runtime can't see one. Embedding distance uses cosine distance, which has
-roughly the same operating range (~0.4-0.6 between strangers, <0.4 same
-person) as dlib's L2 distance, so the existing MATCH_TOLERANCE / VISITOR_TOLERANCE
-env defaults transfer over.
+Two backends are available:
+- "insightface" (default) — RetinaFace + ArcFace via onnxruntime-gpu, runs
+  on the host GPU. Catches small/profile faces, ~80 ms per call, heavy GPU.
+- "dlib" — classic face_recognition (HOG + ResNet 128-D), CPU only. Misses
+  side profiles and faces under ~80 px on the substream-sized frame, but
+  trivial on GPU (zero usage) and matches the line-crossing service's
+  behaviour from before the InsightFace migration.
 
-The original face_recognition API runs on RGB numpy arrays. InsightFace
-expects BGR. The shim handles the swap and caches the last detection per
-image so the typical `face_locations` -> `face_encodings` pair only runs
-the network once.
+Switch with FACE_BACKEND=dlib|insightface env. No code changes elsewhere —
+main.py keeps doing `import gpu_face as face_recognition`.
 """
 from __future__ import annotations
 
@@ -20,6 +19,9 @@ import threading
 import numpy as np
 
 log = logging.getLogger("gpu_face")
+
+_BACKEND = os.getenv("FACE_BACKEND", "insightface").strip().lower()
+log.info("Face backend selected: %s", _BACKEND)
 
 _app = None
 _app_lock = threading.Lock()
@@ -100,10 +102,11 @@ def face_locations(
 ) -> list[_FaceTuple]:
     """Drop-in for face_recognition.face_locations.
 
-    Returns list of (top, right, bottom, left) tuples like dlib. The model
-    and upsample arguments are accepted but ignored — InsightFace runs the
-    same RetinaFace network either way.
+    Returns list of (top, right, bottom, left) tuples like dlib.
     """
+    if _BACKEND == "dlib":
+        import face_recognition as _fr  # type: ignore
+        return _fr.face_locations(image, number_of_times_to_upsample, model)
     faces = _detect(image)
     return [
         (int(f.bbox[1]), int(f.bbox[2]), int(f.bbox[3]), int(f.bbox[0]))
@@ -123,8 +126,12 @@ def face_encodings(
     re-detecting. Re-detection on a different image (rgb vs enc_small) was
     losing faces that the previous tier's face_locations had found, leaving
     the visitor counter empty even when the camera was full of people.
-    Returns L2-normalised 512-D ArcFace vectors, one per location.
+    Returns L2-normalised 512-D ArcFace vectors (insightface) or
+    128-D dlib encodings, one per location.
     """
+    if _BACKEND == "dlib":
+        import face_recognition as _fr  # type: ignore
+        return _fr.face_encodings(image, known_face_locations, num_jitters, model)
     if not known_face_locations:
         # Detection-driven path — caller wants embeddings for whatever
         # InsightFace finds on this image (used by sync helpers).
@@ -178,6 +185,9 @@ def face_distance(known_encodings: list[np.ndarray], encoding_to_check: np.ndarr
     ArcFace shape is reported as max distance (1.0) so the matcher skips it
     instead of crashing the watcher thread on a matmul shape mismatch.
     """
+    if _BACKEND == "dlib":
+        import face_recognition as _fr  # type: ignore
+        return _fr.face_distance(known_encodings, encoding_to_check)
     if not known_encodings:
         return np.array([], dtype=np.float32)
     target = np.asarray(encoding_to_check, dtype=np.float32)

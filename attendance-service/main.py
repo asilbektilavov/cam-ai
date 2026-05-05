@@ -1508,13 +1508,16 @@ async def _startup():
     # OpenCV grabber and the InsightFace inference inside the watcher loop
     # can hang indefinitely under bad conditions (RTSP framing corruption,
     # CUDA contention) — without this the operator had to manually call
-    # /cameras/start to revive a frozen camera.
-    WATCHER_STALE_SECS = 45.0
+    # /cameras/start to revive a frozen camera. 10s threshold + 3s tick
+    # means worst-case recovery < 13s, so a queue passing the camera doesn't
+    # go uncounted for a minute.
+    WATCHER_STALE_SECS = float(os.getenv("WATCHER_STALE_SECS", "10"))
+    WATCHER_TICK_SECS = float(os.getenv("WATCHER_TICK_SECS", "3"))
 
     def _watcher_health_monitor():
         time.sleep(60)  # let initial recovery finish before we start judging
         while True:
-            time.sleep(15)
+            time.sleep(WATCHER_TICK_SECS)
             try:
                 now = time.time()
                 stale: list[tuple[str, "CameraWatcher"]] = []
@@ -1570,7 +1573,8 @@ async def _startup():
                 log.warning("Health monitor tick failed: %s", e)
 
     threading.Thread(target=_watcher_health_monitor, daemon=True, name="WatcherHealth").start()
-    log.info("Watcher health monitor started (stale threshold %.0fs)", WATCHER_STALE_SECS)
+    log.info("Watcher health monitor started (stale=%.0fs tick=%.0fs)",
+             WATCHER_STALE_SECS, WATCHER_TICK_SECS)
 
 
 if __name__ == "__main__":

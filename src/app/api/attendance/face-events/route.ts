@@ -71,14 +71,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'cameraId and faces required' }, { status: 400 });
   }
 
-  // Convert to Detection format
+  // Convert to Detection format. Faces matched against the Employee table
+  // are labelled "Сотрудник" (not the actual name) so the operator can see
+  // why a face isn't being counted, and rendered grey in the overlay so the
+  // green threshold-cross indicator stays exclusive to actual visitors.
   const detections = faces.map((f) => ({
     type: 'face',
-    label: f.name || 'Посетитель',
+    label: f.name ? 'Сотрудник' : 'Посетитель',
     confidence: f.confidence,
     bbox: f.bbox,
     classId: -1,
-    color: f.name ? '#22C55E' : '#EF4444', // green for recognized, red for unknown
+    color: f.name ? '#9CA3AF' : '#EF4444', // grey for staff, red for visitor (overlay promotes red→green when face crosses size threshold)
   }));
 
   // Store in file-based cache for polling
