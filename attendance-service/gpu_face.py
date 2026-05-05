@@ -39,7 +39,28 @@ def _get_app():
         det_size = int(os.getenv("INSIGHTFACE_DET_SIZE", "1024"))
         model_name = os.getenv("INSIGHTFACE_MODEL", "buffalo_l")
         providers_env = os.getenv("INSIGHTFACE_PROVIDERS", "CUDAExecutionProvider,CPUExecutionProvider")
-        providers = [p.strip() for p in providers_env.split(",") if p.strip()]
+        provider_names = [p.strip() for p in providers_env.split(",") if p.strip()]
+
+        # Cap CUDA memory at ~2 GiB and switch the arena to "same-as-requested"
+        # so onnxruntime stops doubling its arena every time a bigger frame
+        # comes through. On a 4 GiB GTX 1650 the default kNextPowerOfTwo
+        # strategy was creeping to 3.7 GiB and leaving no headroom — peak
+        # frames with many faces were tripping CUDA OOM.
+        gpu_mem_limit = int(os.getenv("INSIGHTFACE_GPU_MEM_LIMIT_MB", "2048")) * 1024 * 1024
+        cuda_options = {
+            "device_id": 0,
+            "arena_extend_strategy": "kSameAsRequested",
+            "gpu_mem_limit": gpu_mem_limit,
+            "cudnn_conv_algo_search": "DEFAULT",
+            "cudnn_conv_use_max_workspace": "0",
+            "do_copy_in_default_stream": "1",
+        }
+        providers: list = []
+        for name in provider_names:
+            if name == "CUDAExecutionProvider":
+                providers.append((name, cuda_options))
+            else:
+                providers.append(name)
 
         app = FaceAnalysis(
             name=model_name,
@@ -49,8 +70,9 @@ def _get_app():
         app.prepare(ctx_id=0, det_size=(det_size, det_size))
         _app = app
         log.info(
-            "InsightFace ready: model=%s det_size=%d providers=%s",
-            model_name, det_size, providers,
+            "InsightFace ready: model=%s det_size=%d providers=%s gpu_mem_cap=%dMiB",
+            model_name, det_size, [p if isinstance(p, str) else p[0] for p in providers],
+            gpu_mem_limit // 1024 // 1024,
         )
         return _app
 
