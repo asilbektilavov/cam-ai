@@ -54,8 +54,12 @@ export async function GET(req: NextRequest) {
   const todayKey = tzFormatter.format(now);
   const byHour: number[] = Array(24).fill(0);
 
-  // Per-camera totals (last 7d only)
+  // Per-camera totals (last N days)
   const byCameraMap: Record<string, number> = {};
+  // Per-camera-per-day so the UI can drill into a specific day without
+  // refetching — the dataset is small enough (90 days × ~20 cameras max)
+  // that the extra payload is negligible.
+  const byCameraDay: Record<string, Record<string, number>> = {};
 
   for (const v of visitors) {
     const day = tzFormatter.format(v.timestamp);
@@ -72,6 +76,9 @@ export async function GET(req: NextRequest) {
       if (hour >= 0 && hour < 24) byHour[hour]++;
     }
     byCameraMap[v.cameraId] = (byCameraMap[v.cameraId] || 0) + 1;
+
+    if (!byCameraDay[day]) byCameraDay[day] = {};
+    byCameraDay[day][v.cameraId] = (byCameraDay[day][v.cameraId] || 0) + 1;
   }
 
   // Pull camera names for byCamera
@@ -89,11 +96,27 @@ export async function GET(req: NextRequest) {
     }))
     .sort((a, b) => b.count - a.count);
 
+  // Same shape as byCamera but keyed by day, so the client can render the
+  // table for a specific day on click.
+  const byDayCamera: Record<string, typeof byCamera> = {};
+  for (const day of dayList) {
+    const dayMap = byCameraDay[day] || {};
+    byDayCamera[day] = Object.entries(dayMap)
+      .map(([id, count]) => ({
+        cameraId: id,
+        cameraName: camMap.get(id)?.name || id,
+        location: camMap.get(id)?.location || '',
+        count,
+      }))
+      .sort((a, b) => b.count - a.count);
+  }
+
   return NextResponse.json({
     total: visitors.length,
     todayCount: byDayMap[todayKey] || 0,
     byDay: dayList.map((d) => ({ day: d, count: byDayMap[d] })),
     byHour: byHour.map((count, hour) => ({ hour, count })),
     byCamera,
+    byDayCamera,
   });
 }
