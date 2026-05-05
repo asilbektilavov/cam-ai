@@ -560,29 +560,26 @@ class FrameGrabber(threading.Thread):
                 "stimeout;8000000"
             )
 
-        # Background watchdog: if we haven't pushed a frame for stale_secs
-        # we assume cap.read() is stuck and tear the cap down so the next
-        # loop iteration reopens it. Cheap insurance for the chronic .166/.29
-        # producers that EOF and leave the OpenCV reader hanging.
-        STALE_SECS = 8.0
+        # Stale frame detection. We only mark a flag here — releasing cap
+        # from the watchdog thread while the reader thread is inside
+        # cv2.VideoCapture.read() is unsafe and was killing watchers in
+        # production. The main loop checks the flag below cap.read() and
+        # tears the cap down itself.
+        STALE_SECS = 12.0
+        self._force_reconnect = False
         watchdog_stop = threading.Event()
 
         def _watchdog():
             while not watchdog_stop.is_set():
-                time.sleep(2)
-                if not self._connected:
-                    continue
-                if self._last_frame_time == 0.0:
+                time.sleep(3)
+                if not self._connected or self._last_frame_time == 0.0:
                     continue
                 gap = time.time() - self._last_frame_time
-                if gap > STALE_SECS and cap is not None:
-                    log.warning("Grabber %s: no frame for %.1fs — forcing reconnect",
-                                self.camera_id, gap)
-                    try:
-                        cap.release()
-                    except Exception:
-                        pass
-                    self._connected = False
+                if gap > STALE_SECS:
+                    if not self._force_reconnect:
+                        log.warning("Grabber %s: no frame for %.1fs — flag reconnect",
+                                    self.camera_id, gap)
+                        self._force_reconnect = True
 
         wd = threading.Thread(target=_watchdog, daemon=True)
         wd.start()
@@ -619,6 +616,16 @@ class FrameGrabber(threading.Thread):
             with self._frame_lock:
                 self._frame = frame
             self._last_frame_time = time.time()
+
+            # Watchdog flagged us as stale — tear down so the next iteration
+            # reopens the cap. Done from the reader thread itself so we never
+            # call .release() from the watchdog while .read() is in flight.
+            if self._force_reconnect:
+                self._force_reconnect = False
+                log.warning("Grabber %s: reconnecting per watchdog flag", self.camera_id)
+                cap.release()
+                cap = None
+                self._connected = False
 
         watchdog_stop.set()
         if cap is not None:
