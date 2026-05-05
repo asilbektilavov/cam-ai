@@ -143,9 +143,25 @@ def face_distance(known_encodings: list[np.ndarray], encoding_to_check: np.ndarr
     so cosine distance is just (1 - dot). The numeric range matches dlib's
     L2 distance closely enough that the existing 0.45-0.55 thresholds in main.py
     keep their meaning (same person <0.4, different >0.5).
+
+    Mixed-dim guard: the database may still hold 128-D dlib encodings from
+    the pre-InsightFace days. Anything that doesn't match the live 512-D
+    ArcFace shape is reported as max distance (1.0) so the matcher skips it
+    instead of crashing the watcher thread on a matmul shape mismatch.
     """
     if not known_encodings:
         return np.array([], dtype=np.float32)
-    known = np.asarray(known_encodings, dtype=np.float32)
     target = np.asarray(encoding_to_check, dtype=np.float32)
-    return 1.0 - known @ target
+    target_dim = target.shape[0]
+
+    # Drop any encodings that aren't the same dim as the live one. Returning
+    # max distance for them keeps the indexing aligned with the caller's
+    # `known_encodings` list and `argmin` will simply skip them.
+    distances = np.empty(len(known_encodings), dtype=np.float32)
+    for i, enc in enumerate(known_encodings):
+        arr = np.asarray(enc, dtype=np.float32)
+        if arr.shape != target.shape:
+            distances[i] = 1.0
+            continue
+        distances[i] = 1.0 - float(arr @ target)
+    return distances
