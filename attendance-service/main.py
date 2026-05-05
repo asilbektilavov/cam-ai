@@ -32,8 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 CAM_AI_API_URL = os.getenv("CAM_AI_API_URL", "http://localhost:3000")
 API_KEY = os.getenv("ATTENDANCE_API_KEY", "")
-POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "0.5"))  # seconds between frames
-MATCH_TOLERANCE = float(os.getenv("MATCH_TOLERANCE", "0.55"))  # lower = stricter
+POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "0.2"))  # seconds between frames (5 fps default for buffalo_s)
+MATCH_TOLERANCE = float(os.getenv("MATCH_TOLERANCE", "0.20"))  # lower = stricter (calibrated for ArcFace cosine, was 0.55 for dlib)
 COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "120"))  # 2 min cooldown per (person, camera)
 
 # --- Visitor counter ---
@@ -55,16 +55,23 @@ COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "120"))  # 2 min cooldown p
 #   - server restart → recent visitors hydrated from DB so queue isn't
 #     recounted; very old visitors (>HYDRATE window) might be recounted on
 #     return (acceptable false positive once after restart)
-VISITOR_GRACE_SECONDS = int(os.getenv("VISITOR_GRACE_SECONDS", "90"))
+# 60s grace window: same person walking back into frame within a minute is
+# treated as the same visit, not double-counted. Tunable per deployment.
+VISITOR_GRACE_SECONDS = int(os.getenv("VISITOR_GRACE_SECONDS", "60"))
 VISITOR_HYDRATE_SECONDS = int(os.getenv("VISITOR_HYDRATE_SECONDS", "600"))
-VISITOR_MIN_FACE_PX = int(os.getenv("VISITOR_MIN_FACE_PX", "60"))
-VISITOR_TOLERANCE = float(os.getenv("VISITOR_TOLERANCE", "0.55"))
-# Wait N seconds of continuous detection before crediting a visitor. Gives
-# the recogniser several frames to MATCH against employees before we
-# commit to "this is a stranger". Without it, a single bad-angle frame
-# would count an employee as a visitor in the first 100ms before the
-# next clean frame matches them.
-VISITOR_CONFIRM_SECONDS = float(os.getenv("VISITOR_CONFIRM_SECONDS", "3"))
+# 43 px ≈ ~5 m from a 1080p MAIN-stream camera with ~88° FOV. Bigger faces
+# (closer people) are always counted; smaller (further) are skipped.
+VISITOR_MIN_FACE_PX = int(os.getenv("VISITOR_MIN_FACE_PX", "43"))
+# 1.2 is the L2 threshold the in-frame tracker uses to decide "same person
+# across frames". Looser than dlib's 0.55 because buffalo_s MobileFaceNet
+# embeddings are noisier than dlib ResNet — same person can drift to L2~0.9
+# between frames under angle/lighting changes. Don't push much past 1.4 or
+# different people start collapsing into one entry.
+VISITOR_TOLERANCE = float(os.getenv("VISITOR_TOLERANCE", "1.2"))
+# 1s of continuous visibility before a visitor is committed. Filters out
+# brief misdetections and gives the employee matcher a chance to recognise
+# staff before the counter fires.
+VISITOR_CONFIRM_SECONDS = float(os.getenv("VISITOR_CONFIRM_SECONDS", "1"))
 
 
 def _distance_to_confidence(distance: float) -> float:
@@ -768,11 +775,11 @@ class CameraWatcher(threading.Thread):
             # Tier 0: YOLO person detection (~35ms at 320px) — zoom trigger when face too small
             # Tier 1: Fast HOG face detector (~30ms at 500px) — find faces after zoom
             # Tier 2: CNN face encoding (only AFTER zoom, when face is large) — recognize identity
-            DETECT_WIDTH = 1280  # HOG face detection resolution.
-                                 # Visitor counter feeds 1920x1080 MAIN — at 500
-                                 # the downscale shrank 60-70 px faces to 16 px and
-                                 # HOG missed everyone past ~2 m from the camera.
-            ENCODE_WIDTH = 1280  # CNN encoding resolution (kept in sync)
+            DETECT_WIDTH = 640   # Detection resolution. Matches InsightFace
+                                 # det_size=640 (buffalo_s SCRFD) — same scale,
+                                 # no extra downscale wasted on the detector.
+                                 # Was 1280 for buffalo_l, 500 for dlib HOG.
+            ENCODE_WIDTH = 640   # CNN encoding resolution (kept in sync)
             MIN_ENCODE_FACE_PX = 35  # min face size at DETECT_WIDTH for encoding (~200px original)
 
             if w > DETECT_WIDTH:

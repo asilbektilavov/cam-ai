@@ -21,11 +21,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Pre-download buffalo_l ONNX models so first request doesn't pay the
-# download cost (and so the container works in air-gapped deployments).
+# Pre-download buffalo_s ONNX models (default) so first request doesn't
+# pay the download cost. Also fetch buffalo_l for callers that opt into
+# higher accuracy via INSIGHTFACE_MODEL=buffalo_l.
 RUN python -c "from insightface.app import FaceAnalysis; \
-    app = FaceAnalysis(name='buffalo_l', allowed_modules=['detection', 'recognition'], providers=['CPUExecutionProvider']); \
-    app.prepare(ctx_id=-1, det_size=(640, 640))"
+    FaceAnalysis(name='buffalo_s', allowed_modules=['detection', 'recognition'], providers=['CPUExecutionProvider']).prepare(ctx_id=-1, det_size=(640, 640)); \
+    FaceAnalysis(name='buffalo_l', allowed_modules=['detection', 'recognition'], providers=['CPUExecutionProvider']).prepare(ctx_id=-1, det_size=(640, 640))"
 
 COPY main.py gpu_face.py ./
 

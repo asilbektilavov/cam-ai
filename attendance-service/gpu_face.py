@@ -38,8 +38,8 @@ def _get_app():
             return _app
         from insightface.app import FaceAnalysis
 
-        det_size = int(os.getenv("INSIGHTFACE_DET_SIZE", "1024"))
-        model_name = os.getenv("INSIGHTFACE_MODEL", "buffalo_l")
+        det_size = int(os.getenv("INSIGHTFACE_DET_SIZE", "640"))
+        model_name = os.getenv("INSIGHTFACE_MODEL", "buffalo_s")
         providers_env = os.getenv("INSIGHTFACE_PROVIDERS", "CUDAExecutionProvider,CPUExecutionProvider")
         provider_names = [p.strip() for p in providers_env.split(",") if p.strip()]
 

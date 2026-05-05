@@ -107,11 +107,24 @@ services:
     environment:
       - CAM_AI_API_URL=http://127.0.0.1:3000
       - ATTENDANCE_API_KEY=${ATTENDANCE_API_KEY:-}
-      - POLL_INTERVAL=0.5
-      - MATCH_TOLERANCE=0.45
+      # Production-tuned visitor counter (calibrated for buffalo_s on GTX 1650
+      # with 1080p MAIN streams). Override via env in your deployment if you
+      # want stricter/looser behaviour — defaults already work out of the box.
+      - POLL_INTERVAL=0.2
+      - MATCH_TOLERANCE=0.20
       - COOLDOWN_SECONDS=300
-      - INSIGHTFACE_DET_SIZE=1024
+      - VISITOR_GRACE_SECONDS=60
+      - VISITOR_CONFIRM_SECONDS=1
+      - VISITOR_MIN_FACE_PX=43
+      - VISITOR_TOLERANCE=1.2
+      - FACE_BACKEND=insightface
+      - INSIGHTFACE_MODEL=buffalo_s
+      - INSIGHTFACE_DET_SIZE=640
       - INSIGHTFACE_PROVIDERS=CUDAExecutionProvider,CPUExecutionProvider
+      - INSIGHTFACE_GPU_MEM_LIMIT_MB=2048
+      - WATCHER_STALE_SECS=10
+      - WATCHER_TICK_SECS=3
+      - TZ=Asia/Tashkent
 
   line-crossing:
     image: camai-line-crossing:latest
