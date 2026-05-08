@@ -152,15 +152,26 @@ export async function GET() {
     processes: Array<{ pid: number; name: string; memoryMb: number }>;
   };
   let gpus: GpuInfo[] = [];
-  try {
-    const lcUrl = process.env.LINE_CROSSING_SERVICE_URL || 'http://localhost:8004';
-    const res = await fetch(`${lcUrl}/gpu`, { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
+  // Attendance is the primary GPU source — it runs InsightFace under
+  // --gpus all. line-crossing was started without --gpus so its /gpu was
+  // returning [] forever. Fall through to it only if attendance is offline,
+  // for older deployments where line-crossing is the only GPU container.
+  for (const url of [
+    process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:8002',
+    process.env.LINE_CROSSING_SERVICE_URL || 'http://localhost:8004',
+  ]) {
+    try {
+      const res = await fetch(`${url}/gpu`, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) continue;
       const data = await res.json();
-      gpus = (data.gpus as GpuInfo[]) || [];
+      const probed = (data.gpus as GpuInfo[]) || [];
+      if (probed.length > 0) {
+        gpus = probed;
+        break;
+      }
+    } catch {
+      /* try next */
     }
-  } catch {
-    // line-crossing offline — leave gpus empty
   }
 
   // ── Disk usage ───────────────────────────────────────────────

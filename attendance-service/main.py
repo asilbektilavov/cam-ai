@@ -1125,6 +1125,95 @@ def status():
     return {"events": events, "total": len(events)}
 
 
+@app.get("/gpu")
+def gpu_info():
+    """Probe nvidia-smi from this container's namespace.
+
+    The diagnostics page used to query line-crossing for GPU stats but that
+    container was started without --gpus, so the call always returned an
+    empty list. Attendance has GPU access (InsightFace) so it can answer
+    this directly.
+    """
+    import subprocess
+    try:
+        # Per-GPU snapshot (single line per GPU).
+        gpu_csv = subprocess.run(
+            ["nvidia-smi",
+             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,driver_version",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=4,
+        )
+        if gpu_csv.returncode != 0:
+            return {"gpus": [], "error": gpu_csv.stderr.strip() or "nvidia-smi failed"}
+
+        # Per-process snapshot, mapped back to its GPU index.
+        proc_csv = subprocess.run(
+            ["nvidia-smi",
+             "--query-compute-apps=gpu_uuid,pid,process_name,used_memory",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=4,
+        )
+        # Fetch UUIDs alongside the per-GPU stats so we can match processes.
+        uuid_csv = subprocess.run(
+            ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=4,
+        )
+        uuids = [u.strip() for u in uuid_csv.stdout.strip().splitlines() if u.strip()]
+
+        procs_by_uuid: dict[str, list] = {u: [] for u in uuids}
+        for line in proc_csv.stdout.strip().splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 4:
+                continue
+            uuid, pid, pname, used = parts[0], parts[1], parts[2], parts[3]
+            try:
+                procs_by_uuid.setdefault(uuid, []).append(
+                    {"pid": int(pid), "name": pname, "memoryMb": int(used or 0)}
+                )
+            except Exception:
+                pass
+
+        gpus = []
+        for idx, line in enumerate(gpu_csv.stdout.strip().splitlines()):
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 7:
+                continue
+            try:
+                used_mb = int(parts[2])
+                total_mb = int(parts[3])
+            except Exception:
+                used_mb = total_mb = 0
+            try:
+                util = int(parts[1])
+            except Exception:
+                util = 0
+            try:
+                temp = int(parts[4])
+            except Exception:
+                temp = 0
+            try:
+                power = float(parts[5])
+            except Exception:
+                power = None
+            uuid = uuids[idx] if idx < len(uuids) else ""
+            gpus.append({
+                "name": parts[0],
+                "utilizationPercent": util,
+                "memoryUsedMb": used_mb,
+                "memoryTotalMb": total_mb,
+                "memoryPercent": round(used_mb / total_mb * 100, 1) if total_mb else 0,
+                "temperatureC": temp,
+                "powerWatts": power,
+                "driverVersion": parts[6],
+                "processes": procs_by_uuid.get(uuid, []),
+            })
+        return {"gpus": gpus}
+    except FileNotFoundError:
+        return {"gpus": [], "error": "nvidia-smi not installed"}
+    except Exception as e:
+        return {"gpus": [], "error": str(e)}
+
+
 def _download_and_encode(emp_id: str, emp_name: str, photo_url: str) -> dict | None:
     """Download employee photo from CamAI API and extract face encoding."""
     try:
