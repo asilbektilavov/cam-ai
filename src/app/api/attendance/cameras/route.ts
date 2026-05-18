@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { isMainStreamPrimary } from '@/lib/services/main-stream-primary';
 
 // attendance-service ALWAYS reads through the go2rtc proxy. The DSS substream
 // caps at 2 concurrent RTSP sessions; the recorder takes one directly, and
@@ -37,7 +38,12 @@ export async function GET() {
       // the 800x448 substream are too small (28-34 px) for the HOG detector.
       // attendance_entry/_exit stay on substream because those cameras are
       // mounted close to the doorway and faces fill the frame already.
-      const streamId = c.purpose === 'people_search' ? `${c.id}-main` : c.id;
+      // Cameras enrolled in the MAIN_STREAM_PRIMARY test serve MAIN under the
+      // bare `<id>` name (no -main suffix), so the bare id IS the main feed.
+      const streamId =
+        c.purpose === 'people_search' && !isMainStreamPrimary(c.id)
+          ? `${c.id}-main`
+          : c.id;
       return {
         id: c.id,
         name: c.name,

@@ -48,8 +48,19 @@ export async function register() {
       });
       if (otherCameras.length > 0) {
         const { go2rtcManager } = await import('@/lib/services/go2rtc-manager');
+        const { isMainStreamPrimary } = await import(
+          '@/lib/services/main-stream-primary'
+        );
+        // For MAIN_STREAM_PRIMARY cameras we register the main channel under
+        // the bare `<id>` name (no -main suffix) so a single producer feeds
+        // every consumer. For everyone else we keep the substream as today.
         await Promise.allSettled(
-          otherCameras.map((c) => go2rtcManager.addStream(c.id, c.streamUrl))
+          otherCameras.map((c) => {
+            const url = isMainStreamPrimary(c.id)
+              ? c.streamUrl.replace(/\/SUB(\?|$)/, '/MAIN$1')
+              : c.streamUrl;
+            return go2rtcManager.addStream(c.id, url);
+          })
         );
         console.log(
           `[Init] Re-registered go2rtc streams for ${otherCameras.length} camera(s)`
@@ -60,8 +71,11 @@ export async function register() {
         // the face detector has enough pixels per face — substream's
         // 800x448 makes faces too small for HOG to find. We register
         // `<id>-main` next to `<id>` and the attendance-cameras endpoint
-        // hands out the -main URL for people_search cameras.
-        const visitorCams = otherCameras.filter((c) => c.purpose === 'people_search');
+        // hands out the -main URL for people_search cameras. Skip cameras
+        // that already serve MAIN as their primary stream (above).
+        const visitorCams = otherCameras.filter(
+          (c) => c.purpose === 'people_search' && !isMainStreamPrimary(c.id)
+        );
         if (visitorCams.length > 0) {
           await Promise.allSettled(
             visitorCams.map((c) => {
